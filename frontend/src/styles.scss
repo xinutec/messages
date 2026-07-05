@@ -1,0 +1,36 @@
+@use '@angular/material' as mat;
+
+html {
+  color-scheme: light dark;
+  @include mat.theme(
+    (
+      color: mat.$azure-palette,
+      typography: Roboto,
+      density: 0,
+    )
+  );
+}
+
+// Universal border-box reset (fleet convention, DL-ANGULAR-BOX-SIZING-RESET):
+// without it `width: 100%` + side padding renders wider than the viewport and
+// the page scrolls sideways on a phone. Previously patched per-element.
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: Roboto, sans-serif;
+  // Paint the page with the theme surface (like the sibling viewers) rather than
+  // relying on the UA canvas colour — the native app reads this to colour the
+  // strips behind the system bars.
+  background-color: var(--mat-sys-surface);
+  color: var(--mat-sys-on-surface);
+}

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- dev-lint: android-webview allow=application/@android:enableOnBackInvokedCallback -->
+<!-- Sanctioned deviation: messages' MainActivity is modernised to
+     OnBackPressedDispatcher, so it opts into predictive back. The other WebView
+     shells still override the deprecated onBackPressed, so they must NOT enable
+     this flag until they're modernised too (with the flag on, a legacy
+     onBackPressed stops being called on API 33+). Roll this into the canonical
+     template once every shell is modernised. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:allowBackup="false"
+        android:enableOnBackInvokedCallback="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MessagesWeb">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

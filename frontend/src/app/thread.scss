@@ -1,0 +1,164 @@
+// The Thread host is the right-hand pane and the scroll container (the shell's
+// grid places it; App owns the grid + mobile show/hide). Vertical padding lives
+// on the head/messages, not the host, so the sticky head pins flush to the top.
+:host {
+  display: block;
+  height: 100%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 1.5rem;
+  // We anchor the viewport ourselves when prepending/collapsing (thread.ts);
+  // the browser's native scroll-anchoring would compound with that.
+  overflow-anchor: none;
+}
+
+// Pinned so the conversation title stays visible even though we open scrolled to
+// the latest message. Opaque + above the day headers so messages scroll under it.
+.thread-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  // Fixed, border-box height so the day headers can be offset just below it with
+  // a known clearance (they must never overlap the head — the overlap check
+  // treats two pinned/sticky elements sharing pixels as a stacked-header bug).
+  height: 3rem;
+  box-sizing: border-box;
+  // The theme surface (never a hardcoded fallback — `mat.theme` always defines
+  // the sys tokens, and they adapt to dark mode), so messages scroll under it.
+  background: var(--mat-sys-surface);
+  .back {
+    display: none; // desktop: two-pane, no back needed
+  }
+  h2 {
+    margin: 0;
+    font: var(--mat-sys-title-medium);
+  }
+}
+
+.placeholder {
+  opacity: 0.5;
+  padding-top: 2rem;
+}
+
+.error {
+  color: var(--mat-sys-error);
+}
+
+.loading-older {
+  padding: 0.25rem 0;
+}
+
+// Height-only stand-ins for messages collapsed out of the DOM; they keep the
+// scrollbar geometry roughly right while the viewport is kept correct by the
+// anchor logic in thread.ts.
+.spacer {
+  flex: none;
+}
+
+// Each day is its own section, so its sticky header pins ONLY within that day's
+// messages and is replaced by the next day's header — the "current top message's
+// date" behaviour, with no stacking. Offset below the pinned head.
+.day {
+  position: sticky;
+  top: 3.25rem;
+  z-index: 2;
+  text-align: center;
+  margin: 0.5rem 0;
+  pointer-events: none; // a floating label; let clicks reach messages beneath
+
+  span {
+    display: inline-block;
+    background: color-mix(in srgb, var(--mat-sys-inverse-surface) 82%, transparent); // translucent pill, legible over content in either theme
+    color: var(--mat-sys-inverse-on-surface);
+    font: var(--mat-sys-label-small);
+    padding: 0.1rem 0.6rem;
+    border-radius: 1rem;
+  }
+}
+
+.msg {
+  max-width: 70%;
+  margin: 0.4rem 0;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--mat-sys-on-surface) 5%, transparent);
+  // NB no `content-visibility: auto` here: the window is capped (thread.ts), so
+  // the bubbles are cheap to render in full. content-visibility would render
+  // off-screen rows at a GUESSED height and resize them to real when scrolled
+  // into view — and with native scroll-anchoring disabled that resize shifts the
+  // viewport (the "history jumps as you scroll up" bug).
+
+  &.out {
+    margin-left: auto;
+    background: color-mix(in srgb, var(--mat-sys-primary) 15%, transparent);
+  }
+  .meta {
+    font: var(--mat-sys-label-small);
+    opacity: 0.7;
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .body {
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    &.deleted {
+      font-style: italic;
+      opacity: 0.6;
+    }
+  }
+  .tag {
+    font-style: italic;
+  }
+  .attach {
+    margin-top: 0.3rem;
+    img {
+      max-width: min(320px, 100%);
+      max-height: 320px;
+      border-radius: 0.4rem;
+      display: block;
+    }
+    a,
+    .unavailable {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.2rem;
+      font: var(--mat-sys-body-medium);
+    }
+    .unavailable {
+      opacity: 0.6;
+    }
+    mat-icon {
+      font-size: 1rem;
+      width: 1rem;
+      height: 1rem;
+    }
+  }
+  .reactions {
+    margin-top: 0.25rem;
+    .chip {
+      font: var(--mat-sys-label-medium);
+      background: color-mix(in srgb, var(--mat-sys-on-surface) 8%, transparent);
+      border-radius: 1rem;
+      padding: 0 0.4rem;
+      margin-right: 0.25rem;
+    }
+  }
+}
+
+// Phone: full-width pane with a working back button and roomier bubbles.
+@media (max-width: 767px) {
+  :host {
+    padding: 0 0.9rem;
+  }
+  .thread-head .back {
+    display: inline-flex;
+  }
+  .msg {
+    max-width: 85%;
+  }
+}

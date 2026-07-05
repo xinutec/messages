@@ -1,0 +1,73 @@
+@if (loading()) {
+  <mat-progress-bar mode="indeterminate" />
+} @else if (me(); as user) {
+  <mat-toolbar class="bar">
+    <span class="brand">messages</span>
+    <span class="spacer"></span>
+    <span class="user">{{ user.display_name }}</span>
+    <button mat-button (click)="signOut()">Sign out</button>
+  </mat-toolbar>
+
+  <div class="shell" [class.has-selection]="active()">
+    <aside class="list">
+      <form class="search" (ngSubmit)="runSearch()">
+        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+          <mat-icon matPrefix>search</mat-icon>
+          <input matInput placeholder="Search messages" name="q" [(ngModel)]="query" />
+          @if (query()) {
+            <button matSuffix mat-icon-button type="button" (click)="clearSearch()" aria-label="Clear">
+              <mat-icon>close</mat-icon>
+            </button>
+          }
+        </mat-form-field>
+      </form>
+
+      @if (results() !== null) {
+        <!-- Search results replace the conversation list until cleared. -->
+        @if (searching()) {
+          <mat-progress-bar mode="indeterminate" />
+        }
+        <mat-action-list>
+          @for (h of results(); track h.origin + h.conversation_id + h.ts) {
+            <button mat-list-item (click)="openHit(h)">
+              <span matListItemTitle>{{ h.conversation_name || '(unnamed)' }}</span>
+              <span matListItemLine>{{ h.sender }}: {{ h.snippet }}</span>
+              <span matListItemMeta>{{ h.ts | date: 'shortDate' }}</span>
+            </button>
+          } @empty {
+            <p class="empty">No matches.</p>
+          }
+        </mat-action-list>
+      } @else {
+        <div class="filters">
+          <button mat-button [class.active]="originFilter() === 'all'" (click)="setFilter('all')">All</button>
+          <button mat-button [class.active]="originFilter() === 'signal'" (click)="setFilter('signal')">Signal</button>
+          <button mat-button [class.active]="originFilter() === 'gchat'" (click)="setFilter('gchat')">Google Chat</button>
+        </div>
+        <mat-action-list>
+          @for (c of visibleConversations(); track c.origin + c.id) {
+            <button mat-list-item [class.active]="isActive(c)" (click)="open(c)">
+              <span matListItemTitle>{{ title(c) }}</span>
+              <span matListItemLine>
+                {{ c.origin === 'signal' ? 'Signal' : 'Google Chat' }} · {{ c.message_count }} msgs
+                @if (c.last_ts) {
+                  · {{ c.last_ts | date: 'mediumDate' }}
+                }
+              </span>
+            </button>
+          } @empty {
+            <p class="empty">No conversations.</p>
+          }
+        </mat-action-list>
+      }
+    </aside>
+
+    <div class="pane"><router-outlet /></div>
+  </div>
+} @else {
+  <div class="signin">
+    <h1>messages</h1>
+    <p>Your Signal &amp; Google Chat archive.</p>
+    <a mat-flat-button href="/login">Sign in with Nextcloud</a>
+  </div>
+}

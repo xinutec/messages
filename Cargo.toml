@@ -1,0 +1,40 @@
+[package]
+name = "messages"
+version = "0.1.0"
+edition = "2024"
+
+# Read-only viewer for the message archive (Signal + Google Chat) that lives in
+# the `signal` MariaDB on isis. Auth is Nextcloud OAuth2 (identity-only), copied
+# from the `life` app, restricted to an explicit user allow-list. See README.md.
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = "0.8"
+tower-http = { version = "0.7", features = ["fs"] }
+axum-extra = { version = "0.12", features = ["cookie"] }
+sqlx = { version = "0.9", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls-ring",
+    "mysql",
+    "chrono",
+    "derive",
+    "macros",
+] }
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
+    "form",
+    "rustls",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+hmac = "0.13"
+sha2 = "0.11"
+hex = "0.4"
+rand = "0.10"
+url = "2"
+time = "0.3"
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

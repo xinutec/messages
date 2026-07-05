@@ -1,0 +1,8 @@
+/node_modules
+/dist
+/out-tsc
+/.angular
+/test-results
+/playwright-report
+# Per-run eye-check screenshots left by the ui-harness layout checks.
+/ui-snapshots/

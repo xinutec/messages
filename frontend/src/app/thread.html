@@ -1,0 +1,74 @@
+@if (routed()) {
+  <div class="thread-head">
+    <button mat-icon-button class="back" (click)="back()" aria-label="Back">
+      <mat-icon>arrow_back</mat-icon>
+    </button>
+    <h2>{{ headTitle() }}</h2>
+  </div>
+
+  @if (loadingThread()) {
+    <mat-progress-bar mode="indeterminate" />
+  } @else if (threadError()) {
+    <p class="error">Couldn't load this conversation. <button mat-button (click)="reload()">Retry</button></p>
+  } @else {
+    <!-- Fetching still-older messages after scrolling to the very top. -->
+    @if (loadingOlder()) {
+      <div class="loading-older"><mat-progress-bar mode="indeterminate" /></div>
+    }
+    <!-- Stands in for older messages collapsed out of the DOM (see thread.ts). -->
+    <div class="spacer" [style.height.px]="topSpacer()"></div>
+
+    <div class="messages" #messagesEl>
+      @for (g of dayGroups(); track g.key) {
+        <section class="day-group">
+          <div class="day"><span>{{ g.ts | date: 'fullDate' }}</span></div>
+          @for (m of g.items; track m.id) {
+            <div class="msg" [class.out]="m.is_outgoing" [attr.data-id]="m.id" [attr.data-ts]="m.ts">
+              <div class="meta">
+                <span class="sender">{{ m.sender }}</span>
+                <span class="time">{{ m.ts | date: 'shortTime' }}</span>
+                @if (m.edited) {
+                  <span class="tag">edited</span>
+                }
+              </div>
+              @if (m.body) {
+                <!-- interpolation flush with the tags: white-space:pre-wrap
+                     would otherwise render the template indent as a leading space -->
+                <div class="body" [class.deleted]="m.deleted">{{ m.deleted ? '(deleted)' : m.body }}</div>
+              }
+              @for (a of m.attachments; track a.id) {
+                <div class="attach">
+                  @if (a.available && a.is_image) {
+                    <a [href]="'/api/attachments/' + a.id" target="_blank" rel="noopener">
+                      <img [src]="'/api/attachments/' + a.id" [alt]="a.file_name || 'image'" loading="lazy" />
+                    </a>
+                  } @else if (a.available) {
+                    <a [href]="'/api/attachments/' + a.id" target="_blank" rel="noopener">
+                      <mat-icon>attach_file</mat-icon>{{ a.file_name || a.content_type || 'attachment' }}
+                    </a>
+                  } @else {
+                    <span class="unavailable">
+                      <mat-icon>attach_file</mat-icon>{{ a.file_name || a.content_type || 'attachment' }} (not stored)
+                    </span>
+                  }
+                </div>
+              }
+              @if (m.reactions.length) {
+                <div class="reactions">
+                  @for (r of m.reactions; track r.emoji) {
+                    <span class="chip">{{ r.emoji }} {{ r.count }}</span>
+                  }
+                </div>
+              }
+            </div>
+          }
+        </section>
+      }
+    </div>
+
+    <!-- Stands in for newer messages collapsed out of the DOM. -->
+    <div class="spacer" [style.height.px]="bottomSpacer()"></div>
+  }
+} @else {
+  <div class="placeholder">Pick a conversation.</div>
+}

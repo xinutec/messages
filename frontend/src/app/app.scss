@@ -1,0 +1,100 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.bar {
+  flex: 0 0 auto;
+  .brand {
+    font-weight: 500;
+  }
+  .spacer {
+    flex: 1 1 auto;
+  }
+  .user {
+    margin-right: 0.5rem;
+    opacity: 0.85;
+    max-width: 40vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+// Two-pane on desktop; the list and the routed thread pane fill the space under
+// the toolbar.
+.shell {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 320px 1fr;
+}
+
+.list {
+  border-right: 1px solid var(--mat-sys-outline-variant);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+
+  .search {
+    padding: 0.5rem 0.5rem 0;
+    mat-form-field {
+      width: 100%;
+    }
+  }
+
+  .filters {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0.5rem;
+    flex-wrap: wrap;
+    button.active {
+      font-weight: 600;
+      text-decoration: underline;
+    }
+  }
+  .active {
+    background: color-mix(in srgb, var(--mat-sys-on-surface) 6%, transparent);
+  }
+  .empty {
+    padding: 1rem;
+    opacity: 0.6;
+  }
+}
+
+// Grid cell for the routed Thread component (which is itself the scroll container).
+.pane {
+  min-height: 0;
+}
+
+// Phone: single pane. Show the list; when a conversation is open (a child route
+// is active), swap to the thread pane full-width.
+@media (max-width: 767px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+  .list {
+    display: block;
+    border-right: none;
+  }
+  .pane {
+    display: none;
+  }
+  .shell.has-selection .list {
+    display: none;
+  }
+  .shell.has-selection .pane {
+    display: block;
+  }
+}
+
+.signin {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  text-align: center;
+  padding: 1rem;
+}
