@@ -94,6 +94,8 @@ export class Thread {
 
   /** All fetched messages, ascending by ts. Retained in full (text is cheap);
    *  only a window of them is ever rendered. */
+  // dev-lint: allow-component-list — `messages` is an infinite-scroll pagination
+  // buffer, not a retained catalog; a thread re-fetches fresh on entry by design.
   readonly messages = signal<Message[]>([]);
   /** Older messages collapsed above the window; newer ones collapsed below.
    *  `above[last]`/`below[last]` are the chunks nearest the rendered window, so
