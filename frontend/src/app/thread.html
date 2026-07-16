@@ -15,8 +15,9 @@
     @if (loadingOlder()) {
       <div class="loading-older"><mat-progress-bar mode="indeterminate" /></div>
     }
-    <!-- Stands in for older messages collapsed out of the DOM (see thread.ts). -->
-    <div class="spacer" [style.height.px]="topSpacer()"></div>
+    <!-- Stands in for older messages collapsed out of the DOM (see thread.ts);
+         a height-only box that keeps the scrollbar geometry roughly right. -->
+    <div [style.height.px]="topSpacer()"></div>
 
     <div class="messages" #messagesEl>
       @for (g of dayGroups(); track g.key) {
@@ -70,7 +71,7 @@
     </div>
 
     <!-- Stands in for newer messages collapsed out of the DOM. -->
-    <div class="spacer" [style.height.px]="bottomSpacer()"></div>
+    <div [style.height.px]="bottomSpacer()"></div>
   }
 } @else {
   <div class="placeholder">Pick a conversation.</div>

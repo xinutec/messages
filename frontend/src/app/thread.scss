@@ -51,13 +51,6 @@
   padding: 0.25rem 0;
 }
 
-// Height-only stand-ins for messages collapsed out of the DOM; they keep the
-// scrollbar geometry roughly right while the viewport is kept correct by the
-// anchor logic in thread.ts.
-.spacer {
-  flex: none;
-}
-
 // Each day is its own section, so its sticky header pins ONLY within that day's
 // messages and is replaced by the next day's header — the "current top message's
 // date" behaviour, with no stacking. Offset below the pinned head.
