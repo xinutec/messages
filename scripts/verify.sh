@@ -16,7 +16,11 @@ nix develop -c bash -c '
   # around by re-running verify. Harmless on Linux/CI, which build cleanly.
   export NG_BUILD_MAX_WORKERS=1
   cargo fmt --all --check
-  cargo clippy --all-targets -- -D warnings
+  # Clippy gets its own target dir: clippy-driver and rustc fingerprint the
+  # workspace differently and evict each other in a shared dir, forcing a full
+  # recompile. A dedicated dir keeps both caches warm.
+  CARGO_TARGET_DIR="${CARGO_CLIPPY_TARGET_DIR:-$HOME/.cache/cargo/clippy-target}" \
+    cargo clippy --all-targets -- -D warnings
   # ui-check (L2 phone-width layout harness) runs after the build — it serves
   # the freshly-built dist via e2e/serve.mjs and asserts no overlap/overflow at
   # Pixel width. See @xinutec/ui-harness + dev-lint/docs/layout-quality-architecture.md.
