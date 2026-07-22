@@ -82,10 +82,9 @@ async fn seed(pool: &MySqlPool) {
         "gchat_conversations",
         "sessions",
     ] {
-        sqlx::query(AssertSqlSafe(format!("DROP TABLE IF EXISTS {t}")))
+        let _ = sqlx::query(AssertSqlSafe(format!("DROP TABLE IF EXISTS {t}")))
             .execute(pool)
-            .await
-            .ok();
+            .await;
     }
     let ddl = [
         "CREATE TABLE conversations (thread_id VARCHAR(80) PRIMARY KEY, type ENUM('dm','group') NOT NULL, name VARCHAR(255) NULL) DEFAULT CHARSET=utf8mb4",
