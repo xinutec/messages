@@ -9,10 +9,12 @@ use anyhow::anyhow;
 use axum::extract::{Query, State};
 use axum::response::Redirect;
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
+use chrono::Utc;
 use serde::Deserialize;
 
 use crate::error::AppError;
 use crate::nextcloud::identity;
+use crate::pending_login;
 use crate::session::{COOKIE_NAME, UserSession, create_session, destroy_session};
 use crate::state::AppState;
 
@@ -23,6 +25,18 @@ fn session_cookie(value: String) -> Cookie<'static> {
         .secure(true)
         .same_site(SameSite::Lax)
         .max_age(time::Duration::days(7))
+        .build()
+}
+
+/// The login-in-progress cookie. `Lax`, because the callback arrives as a
+/// top-level navigation from Nextcloud and a `Strict` cookie would not be sent.
+fn pending_cookie(value: String) -> Cookie<'static> {
+    Cookie::build((pending_login::COOKIE_NAME, value))
+        .path("/")
+        .http_only(true)
+        .secure(true)
+        .same_site(SameSite::Lax)
+        .max_age(time::Duration::seconds(pending_login::ttl().num_seconds()))
         .build()
 }
 
@@ -39,10 +53,18 @@ pub struct LoginQuery {
     return_to: Option<String>,
 }
 
-/// GET /login → redirect to NC's OAuth2 authorize endpoint.
-pub async fn login(State(app): State<AppState>, Query(q): Query<LoginQuery>) -> Redirect {
-    let state = app.create_oauth_state(q.return_to);
-    Redirect::to(&identity::authorize_url(&app.cfg, &state))
+/// GET /login → redirect to NC's OAuth2 authorize endpoint, remembering the login
+/// in a signed cookie (see [`pending_login`] for why the `state` echo isn't enough).
+pub async fn login(
+    State(app): State<AppState>,
+    jar: CookieJar,
+    Query(q): Query<LoginQuery>,
+) -> (CookieJar, Redirect) {
+    let (nonce, cookie) = pending_login::issue(&app.cfg.session_secret, q.return_to, Utc::now());
+    (
+        jar.add(pending_cookie(cookie)),
+        Redirect::to(&identity::authorize_url(&app.cfg, &nonce)),
+    )
 }
 
 #[derive(Deserialize)]
@@ -58,10 +80,13 @@ pub async fn callback(
     jar: CookieJar,
     Query(q): Query<CallbackQuery>,
 ) -> Result<(CookieJar, Redirect), AppError> {
-    let state = q.state.unwrap_or_default();
-    let pending = app
-        .consume_oauth_state(&state)
-        .ok_or(AppError::Unauthorized)?;
+    let pending = pending_login::accept(
+        &app.cfg.session_secret,
+        jar.get(pending_login::COOKIE_NAME).map(Cookie::value),
+        q.state.as_deref(),
+        Utc::now(),
+    )
+    .ok_or(AppError::Unauthorized)?;
     let code = q
         .code
         .ok_or_else(|| anyhow!("missing authorization code"))?;
@@ -83,6 +108,8 @@ pub async fn callback(
     };
     let signed = create_session(&app.pool, &app.cfg.session_secret, &user).await?;
     let dest = validate_return_to(pending.return_to.as_deref());
+    // The login is over: drop its cookie so a stale one can't be replayed.
+    let jar = jar.remove(Cookie::from(pending_login::COOKIE_NAME));
     Ok((jar.add(session_cookie(signed)), Redirect::to(&dest)))
 }
 

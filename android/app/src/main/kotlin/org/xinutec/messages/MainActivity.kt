@@ -88,7 +88,7 @@ class MainActivity : ComponentActivity() {
                             isReload: Boolean,
                         ) {
                             super.doUpdateVisitedHistory(view, url, isReload)
-                            if (url.startsWith(MESSAGES_URL)) {
+                            if (Restore.isRestorable(MESSAGES_URL, url)) {
                                 prefs.edit { putString(KEY_LAST_URL, url) }
                             }
                             syncBackEnabled()
