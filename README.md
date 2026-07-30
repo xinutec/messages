@@ -35,7 +35,9 @@ Three layers, strongest first:
   builds the DB DSN from `DB_*` so it reuses `signal-secret` in-namespace. The
   only table this app owns is `sessions` (created on boot, `src/db.rs`).
 - `frontend/` — Angular (login gate → conversation list with origin filter →
-  thread view with reactions / edited / deleted markers).
+  thread view with reactions / edited / deleted markers). `src/app/generated/` is
+  written by ts-rs from the Rust wire types (`scripts/gen-types.sh`) and imported
+  through `src/app/models.ts`; don't hand-edit either.
 - `k8s/` — `00-letsencrypt-dns-issuer.yaml` (one-time isis setup), `01-app.yaml`
   (Deployment+Service in the `signal` namespace), `02-ingress.yaml`, `secret.sh`.
 - `Dockerfile` — multi-stage (Angular + Rust → one image), `xinutec/messages:latest`.
@@ -50,7 +52,9 @@ Three layers, strongest first:
 - `GET /api/search?q=` — substring search across both origins.
 
 `{origin}` is `signal` or `gchat`; `{id}` is the Signal `thread_id` or the gchat
-`group_id`.
+`group_id`. `origin` and a conversation's `kind` (`dm`/`group`) are Rust enums
+(`archive::Origin`, `archive::ConversationKind`), so they reach the frontend as
+string unions rather than `string`, and an unknown `{origin}` is a 404.
 
 ## Local dev
 ```
@@ -88,12 +92,17 @@ run the manifest steps from that checkout.
    `kubectl -n signal get certificate messages-tls`.
 
 ## Tests
+`scripts/verify.sh` is the whole gate (and the pre-commit hook): fmt, clippy,
+generated-type drift, the Rust suite against a throwaway MariaDB, then the
+frontend's lint + build + unit tests + phone-layout harness.
+
 - **Backend** `tests/archive.rs` — pure units (timestamp/kind/LIKE-escape) always
   run; end-to-end DB tests seed a fixture into a throwaway MariaDB and assert the
   real queries (cross-origin sort, the `before` pagination cursor, Signal reaction
   aggregation, edit/delete flags, µs→ms, attachments available-flag + blob lookup,
-  search). They run when `MESSAGES_TEST_DATABASE_URL` is set (CI provides a MariaDB
-  service); skipped otherwise.
+  search). They run when `MESSAGES_TEST_DATABASE_URL` is set — CI provides a
+  MariaDB service, and locally `scripts/with-test-db.sh` starts an ephemeral one
+  (`scripts/with-test-db.sh cargo test` to run them by hand); skipped otherwise.
 - **Frontend** `frontend/src/app/app.spec.ts` — vitest (Angular `unit-test`
   builder, same as health): conversation load, origin filter, pagination cursor +
   load-older prepend, search/clear, search-hit open, day grouping, title fallback.
@@ -104,8 +113,9 @@ Login (+ allow-list) → conversation list (both origins, filter) → thread vie
 **pagination** ("load older" via `before`), date separators, edit/deleted markers,
 reactions, and **attachments** (Signal: inline images / file links served from the
 attachments PVC mounted read-only; metadata-only history rows shown but marked not
-stored) → cross-origin **search**. CI gates clippy + seeded DB tests + angular-eslint
-+ vitest + a prod build; the pod has readiness/liveness probes on `/healthz`.
+stored) → cross-origin **search**. CI gates clippy + seeded DB tests + generated-type
+drift + angular-eslint + vitest + a prod build; the pod has readiness/liveness
+probes on `/healthz`.
 Remaining: richer Signal edit-history threading; the Signal reaction count
 approximates live state as distinct non-removed authors per emoji (ignores a
 same-author add-then-remove within a page). Google Chat has no attachments (the

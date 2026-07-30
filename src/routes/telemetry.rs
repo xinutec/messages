@@ -28,6 +28,8 @@ use crate::session::AuthUser;
 /// `kind` is `nav` for a route change, where `label` is absent, or `tap` for a
 /// control, where `label` is its visible text, verbatim.
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 pub struct TelemetryEvent {
     pub kind: String,
     pub path: String,
@@ -37,6 +39,7 @@ pub struct TelemetryEvent {
     ///
     /// Kept because a batch arrives all at once, so the server's receive time
     /// cannot order the events inside it and the client's can.
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub at: i64,
 }
 

@@ -13,7 +13,10 @@ use crate::error::AppError;
 use crate::session::AuthUser;
 use crate::state::AppState;
 
+/// Identity echo for /api/me — drives the UI login gate.
 #[derive(Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 pub struct Me {
     user_id: String,
     display_name: String,
@@ -49,13 +52,13 @@ pub async fn messages(
     Path((origin, id)): Path<(String, String)>,
     Query(q): Query<MessagesQuery>,
 ) -> Result<Json<archive::MessagesPage>, AppError> {
-    if !archive::valid_origin(&origin) {
-        return Err(AppError::NotFound);
-    }
+    // An unknown origin is a 404, not a 400: the URL names a conversation that
+    // does not exist, and no origin the archive holds is spelled that way.
+    let origin = archive::Origin::parse(&origin).ok_or(AppError::NotFound)?;
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
     // A malformed cursor just falls back to the newest page (treated as absent).
     let cursor = q.cursor.as_deref().and_then(archive::parse_cursor);
-    let page = archive::messages_page(&app.pool, &origin, &id, cursor, limit).await?;
+    let page = archive::messages_page(&app.pool, origin, &id, cursor, limit).await?;
     Ok(Json(page))
 }
 

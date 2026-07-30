@@ -5,11 +5,14 @@
 //! ordering, the `before` pagination cursor, Signal reaction aggregation, edit/
 //! delete flags, the µs→ms conversion, and cross-origin search. They run when
 //! `MESSAGES_TEST_DATABASE_URL` points at a *throwaway* database (the test
-//! drops+recreates the archive tables), and are skipped otherwise — CI sets it
-//! to a service MariaDB. NEVER point it at the real signal DB.
+//! drops+recreates the archive tables), and are skipped otherwise. CI sets it
+//! from a MariaDB service; locally `scripts/with-test-db.sh` starts one and
+//! `scripts/verify.sh` runs the suite through it, so the pre-commit gate covers
+//! them too. NEVER point it at the real signal DB.
 
 use messages::archive::{
-    self, encode_cursor, escape_like, kind_from_is_dm, parse_cursor, us_to_ms, valid_origin,
+    self, ConversationKind, Origin, encode_cursor, escape_like, kind_from_is_dm, parse_cursor,
+    us_to_ms,
 };
 
 // ---- pure units (no DB) -----------------------------------------------------
@@ -22,8 +25,41 @@ fn us_to_ms_truncates_to_millis() {
 
 #[test]
 fn kind_from_is_dm_maps_both() {
-    assert_eq!(kind_from_is_dm(true), "dm");
-    assert_eq!(kind_from_is_dm(false), "group");
+    assert_eq!(kind_from_is_dm(true), ConversationKind::Dm);
+    assert_eq!(kind_from_is_dm(false), ConversationKind::Group);
+}
+
+#[test]
+fn conversation_kind_parses_the_enum_column_and_nothing_else() {
+    assert_eq!(ConversationKind::parse("dm"), Some(ConversationKind::Dm));
+    assert_eq!(
+        ConversationKind::parse("group"),
+        Some(ConversationKind::Group)
+    );
+    // The column is ENUM('dm','group'); anything else means the schema moved,
+    // and list_conversations errors rather than defaulting to a kind.
+    assert_eq!(ConversationKind::parse("channel"), None);
+    assert_eq!(ConversationKind::parse("DM"), None);
+}
+
+/// The wire spelling is the frontend's contract — `Origin` and `ConversationKind`
+/// are string unions in the generated TS, so a renamed variant would silently
+/// change the JSON. Serialised here so that change fails a test instead.
+#[test]
+fn enums_serialise_to_the_spellings_the_frontend_expects() {
+    assert_eq!(
+        serde_json::to_string(&Origin::Signal).unwrap(),
+        r#""signal""#
+    );
+    assert_eq!(serde_json::to_string(&Origin::Gchat).unwrap(), r#""gchat""#);
+    assert_eq!(
+        serde_json::to_string(&ConversationKind::Dm).unwrap(),
+        r#""dm""#
+    );
+    assert_eq!(
+        serde_json::to_string(&ConversationKind::Group).unwrap(),
+        r#""group""#
+    );
 }
 
 #[test]
@@ -34,11 +70,11 @@ fn escape_like_neutralises_wildcards() {
 }
 
 #[test]
-fn valid_origin_only_accepts_known() {
-    assert!(valid_origin("signal"));
-    assert!(valid_origin("gchat"));
-    assert!(!valid_origin("email"));
-    assert!(!valid_origin(""));
+fn origin_only_parses_known_path_segments() {
+    assert_eq!(Origin::parse("signal"), Some(Origin::Signal));
+    assert_eq!(Origin::parse("gchat"), Some(Origin::Gchat));
+    assert_eq!(Origin::parse("email"), None);
+    assert_eq!(Origin::parse(""), None);
 }
 
 #[test]
@@ -66,6 +102,30 @@ async fn test_pool() -> Option<MySqlPool> {
         .connect(&url)
         .await
         .expect("connect to MESSAGES_TEST_DATABASE_URL");
+    Some(pool)
+}
+
+/// The fixture is seeded once per process, not once per test.
+///
+/// `seed` DROPs and recreates the archive tables, so seeding per test races when
+/// the tests run in parallel against the one database — each dropping the tables
+/// another has just filled. That was survivable only because the single place
+/// these tests ran, CI, passed `--test-threads=1`; the moment the local gate ran
+/// them the way cargo runs tests by default, five of six failed on the DDL.
+///
+/// Seeding once removes the need for that flag, so CI and the local gate can run
+/// the suite the same way — a race is worth catching wherever it appears, not
+/// suppressing in the one environment that had learned to avoid it.
+///
+/// One shared fixture is sound *because* every test here only reads — this app
+/// is a read-only viewer and none of the queries under test write. A test that
+/// ever mutates needs its own database, not a slot in this one.
+static FIXTURE: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
+
+/// A pool onto the seeded fixture, or None when the DB tests are being skipped.
+async fn seeded_pool() -> Option<MySqlPool> {
+    let pool = test_pool().await?;
+    FIXTURE.get_or_init(|| seed(&pool)).await;
     Some(pool)
 }
 
@@ -175,11 +235,10 @@ async fn seed(pool: &MySqlPool) {
 
 #[tokio::test]
 async fn conversations_normalise_and_sort_across_origins() {
-    let Some(pool) = test_pool().await else {
+    let Some(pool) = seeded_pool().await else {
         eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
         return;
     };
-    seed(&pool).await;
 
     let convs = archive::list_conversations(&pool).await.unwrap();
     // Newest activity first: gc1(7000), group:g1(5000), dm:alice(4000),
@@ -194,25 +253,25 @@ async fn conversations_normalise_and_sort_across_origins() {
     let by = |id: &str| convs.iter().find(|c| c.id == id).unwrap();
     assert_eq!(
         (
-            by("dm:alice").origin.as_str(),
-            by("dm:alice").kind.as_str(),
+            by("dm:alice").origin,
+            by("dm:alice").kind,
             by("dm:alice").message_count,
             by("dm:alice").last_ts
         ),
-        ("signal", "dm", 4, Some(4000))
+        (Origin::Signal, ConversationKind::Dm, 4, Some(4000))
     );
     assert_eq!(
-        (by("group:g1").kind.as_str(), by("group:g1").message_count),
-        ("group", 1)
+        (by("group:g1").kind, by("group:g1").message_count),
+        (ConversationKind::Group, 1)
     );
     assert_eq!(
         (
-            by("gc1").origin.as_str(),
-            by("gc1").kind.as_str(),
+            by("gc1").origin,
+            by("gc1").kind,
             by("gc1").message_count,
             by("gc1").last_ts
         ),
-        ("gchat", "dm", 2, Some(7000))
+        (Origin::Gchat, ConversationKind::Dm, 2, Some(7000))
     );
     assert_eq!(
         (by("gc2").message_count, by("gc2").last_ts),
@@ -223,12 +282,11 @@ async fn conversations_normalise_and_sort_across_origins() {
 
 #[tokio::test]
 async fn signal_messages_flags_reactions_and_pagination() {
-    let Some(pool) = test_pool().await else {
+    let Some(pool) = seeded_pool().await else {
         return;
     };
-    seed(&pool).await;
 
-    let page = archive::messages_page(&pool, "signal", "dm:alice", None, 100)
+    let page = archive::messages_page(&pool, Origin::Signal, "dm:alice", None, 100)
         .await
         .unwrap();
     let ts: Vec<_> = page.messages.iter().map(|m| m.ts).collect();
@@ -252,7 +310,7 @@ async fn signal_messages_flags_reactions_and_pagination() {
     let mut seen = Vec::new();
     let mut cursor = None;
     loop {
-        let p = archive::messages_page(&pool, "signal", "dm:alice", cursor, 2)
+        let p = archive::messages_page(&pool, Origin::Signal, "dm:alice", cursor, 2)
             .await
             .unwrap();
         if p.messages.is_empty() {
@@ -273,10 +331,9 @@ async fn signal_messages_flags_reactions_and_pagination() {
 
 #[tokio::test]
 async fn pagination_never_skips_messages_sharing_a_timestamp() {
-    let Some(pool) = test_pool().await else {
+    let Some(pool) = seeded_pool().await else {
         return;
     };
-    seed(&pool).await;
 
     // dm:tie has 4 messages all at server_ts=1500. Walk two-at-a-time: a bare-ts
     // cursor would fetch the first page, set the cursor to 1500, then `server_ts <
@@ -285,7 +342,7 @@ async fn pagination_never_skips_messages_sharing_a_timestamp() {
     let mut seen = Vec::new();
     let mut cursor = None;
     loop {
-        let p = archive::messages_page(&pool, "signal", "dm:tie", cursor, 2)
+        let p = archive::messages_page(&pool, Origin::Signal, "dm:tie", cursor, 2)
             .await
             .unwrap();
         if p.messages.is_empty() {
@@ -303,12 +360,11 @@ async fn pagination_never_skips_messages_sharing_a_timestamp() {
 
 #[tokio::test]
 async fn signal_attachments_available_flag_and_blob_lookup() {
-    let Some(pool) = test_pool().await else {
+    let Some(pool) = seeded_pool().await else {
         return;
     };
-    seed(&pool).await;
 
-    let page = archive::messages_page(&pool, "signal", "dm:alice", None, 100)
+    let page = archive::messages_page(&pool, Origin::Signal, "dm:alice", None, 100)
         .await
         .unwrap();
     let m0 = &page.messages[0]; // ts=1000 'hi'
@@ -348,12 +404,11 @@ async fn signal_attachments_available_flag_and_blob_lookup() {
 
 #[tokio::test]
 async fn gchat_messages_convert_us_and_self() {
-    let Some(pool) = test_pool().await else {
+    let Some(pool) = seeded_pool().await else {
         return;
     };
-    seed(&pool).await;
 
-    let page = archive::messages_page(&pool, "gchat", "gc1", None, 100)
+    let page = archive::messages_page(&pool, Origin::Gchat, "gc1", None, 100)
         .await
         .unwrap();
     let ts: Vec<_> = page.messages.iter().map(|m| m.ts).collect();
@@ -369,10 +424,9 @@ async fn gchat_messages_convert_us_and_self() {
 
 #[tokio::test]
 async fn search_spans_origins_excludes_deleted_newest_first() {
-    let Some(pool) = test_pool().await else {
+    let Some(pool) = seeded_pool().await else {
         return;
     };
-    seed(&pool).await;
 
     let hits = archive::search(&pool, "findme", 50).await.unwrap();
     assert_eq!(
@@ -381,7 +435,8 @@ async fn search_spans_origins_excludes_deleted_newest_first() {
         "gchat 'hello findme' + signal 'grp findme msg'"
     );
     assert_eq!(
-        hits[0].origin, "gchat",
+        hits[0].origin,
+        Origin::Gchat,
         "newest first (gc1 m1 @6000 > group @5000)"
     );
     assert_eq!(hits[1].conversation_id, "group:g1");

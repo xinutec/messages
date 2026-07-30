@@ -37,7 +37,26 @@ jobs:
       - uses: actions/checkout@v6
       - run: rustup component add clippy
       - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test -- --test-threads=1
+      # Default (parallel) test threads, same as the local gate: the archive
+      # tests seed one shared fixture instead of one per test, so they no longer
+      # need serialising, and both places now exercise the same thing.
+      - run: cargo test
+      # The frontend's types are generated from the Rust wire types; fail if the
+      # committed output drifted from them. Does in CI what scripts/check-types.sh
+      # does locally, without the nix dev shell. Deleting the directory first so a
+      # type REMOVED from Rust shows up as a leftover file, and asking git for
+      # status rather than diff so an ADDED one (untracked) counts too — a plain
+      # `git diff --exit-code` is blind to both.
+      - run: rm -rf frontend/src/app/generated
+      - run: cargo test --features ts export_bindings
+      - name: generated types match the Rust types
+        run: |
+          if [ -n "$(git status --porcelain -- frontend/src/app/generated)" ]; then
+            echo "generated types drifted; run scripts/gen-types.sh and commit" >&2
+            git status --porcelain -- frontend/src/app/generated >&2
+            git diff -- frontend/src/app/generated >&2
+            exit 1
+          fi
 
   fe-verify:
     permissions:

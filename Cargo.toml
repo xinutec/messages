@@ -7,6 +7,11 @@ edition = "2024"
 # the `signal` MariaDB on isis. Auth is Nextcloud OAuth2 (identity-only), copied
 # from the `life` app, restricted to an explicit user allow-list. See README.md.
 
+[features]
+# Turns on ts-rs, which exports the wire types as TypeScript (scripts/gen-types.sh).
+# Off by default: the image and every normal build carry no ts-rs at all.
+ts = ["dep:ts-rs"]
+
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
@@ -27,6 +32,9 @@ reqwest = { version = "0.13", default-features = false, features = [
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# serde-compat so the exported TS honours the serde attributes (the lowercase
+# rename on Origin / ConversationKind is what makes them string unions).
+ts-rs = { version = "12", optional = true, features = ["serde-compat"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 hmac = "0.13"
 sha2 = "0.11"

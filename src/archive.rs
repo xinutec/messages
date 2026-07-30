@@ -7,15 +7,65 @@
 //! common `Conversation` / `Message` so the frontend has one model. All access
 //! is SELECT-only; nothing here writes to the archive tables.
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use serde::Serialize;
 use sqlx::{AssertSqlSafe, MySqlPool, Row};
 
-pub const ORIGIN_SIGNAL: &str = "signal";
-pub const ORIGIN_GCHAT: &str = "gchat";
+/// Which archive a conversation came from.
+///
+/// One type for the URL path segment, the `origin` field the frontend reads and
+/// every per-origin match arm, replacing the `"signal"`/`"gchat"` strings those
+/// three used to agree on by convention. The match in [`messages_page`] is now
+/// exhaustive, so adding a third origin is a compile error at every site that
+/// has to handle it rather than a silently empty page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub enum Origin {
+    Signal,
+    Gchat,
+}
 
-pub fn valid_origin(origin: &str) -> bool {
-    origin == ORIGIN_SIGNAL || origin == ORIGIN_GCHAT
+impl Origin {
+    /// Parse the `{origin}` URL segment; None for anything else, which the API
+    /// turns into a 404 (no such conversation, rather than a malformed request).
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "signal" => Some(Origin::Signal),
+            "gchat" => Some(Origin::Gchat),
+            _ => None,
+        }
+    }
+}
+
+/// Whether a conversation is one-to-one or a group.
+///
+/// The same distinction the writer calls `ThreadKind` (see the `signal` repo's
+/// `parse.rs`) and the `conversations.type` ENUM stores; named for the reader's
+/// model, where it is a field of [`Conversation`] and where "thread" already
+/// means Google Chat's in-group threading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub enum ConversationKind {
+    Dm,
+    Group,
+}
+
+impl ConversationKind {
+    /// Parse a `conversations.type` ENUM value. The column is `ENUM('dm','group')`,
+    /// so None means the schema moved underneath us — the caller errors rather
+    /// than guessing a kind, which would mislabel every conversation of the new
+    /// sort as a DM.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "dm" => Some(ConversationKind::Dm),
+            "group" => Some(ConversationKind::Group),
+            _ => None,
+        }
+    }
 }
 
 /// Google Chat stores microsecond timestamps; the unified API uses milliseconds.
@@ -24,8 +74,12 @@ pub fn us_to_ms(us: i64) -> i64 {
 }
 
 /// Conversation kind from the gchat `is_dm` flag.
-pub fn kind_from_is_dm(is_dm: bool) -> &'static str {
-    if is_dm { "dm" } else { "group" }
+pub fn kind_from_is_dm(is_dm: bool) -> ConversationKind {
+    if is_dm {
+        ConversationKind::Dm
+    } else {
+        ConversationKind::Group
+    }
 }
 
 /// Escape a user search term for a SQL `LIKE` (so `%` and `_` are literal). The
@@ -58,26 +112,37 @@ pub fn parse_cursor(s: &str) -> Option<(i64, i64)> {
 }
 
 #[derive(Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 pub struct Conversation {
-    pub origin: String,
+    pub origin: Origin,
     pub id: String,
     pub name: Option<String>,
-    pub kind: String, // "dm" | "group"
+    pub kind: ConversationKind,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub message_count: i64,
-    pub last_ts: Option<i64>, // ms epoch
+    /// Epoch milliseconds; None for a conversation with no messages.
+    #[cfg_attr(feature = "ts", ts(type = "number | null"))]
+    pub last_ts: Option<i64>,
 }
 
 #[derive(Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 pub struct Reaction {
     pub emoji: String,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub count: i64,
 }
 
 #[derive(Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 pub struct Attachment {
     pub id: String,
     pub content_type: Option<String>,
     pub file_name: Option<String>,
+    #[cfg_attr(feature = "ts", ts(type = "number | null"))]
     pub size: Option<i64>,
     /// Whether the bytes are present (downloaded to the PVC). Metadata-only
     /// history rows are `false` — the UI shows them but can't fetch the blob.
@@ -86,9 +151,13 @@ pub struct Attachment {
 }
 
 #[derive(Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 pub struct Message {
     pub id: String,
-    pub ts: i64, // ms epoch
+    /// Epoch milliseconds (Google Chat's native µs are converted on the way out).
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub ts: i64,
     pub sender: String,
     pub is_outgoing: bool,
     pub body: Option<String>,
@@ -124,10 +193,14 @@ pub async fn attachment_blob(
 }
 
 #[derive(Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 pub struct MessagesPage {
-    pub messages: Vec<Message>, // ascending by ts
+    /// Ascending by ts.
+    pub messages: Vec<Message>,
     pub has_more: bool,
-    pub next_cursor: Option<String>, // opaque cursor to fetch the next older page
+    /// Opaque cursor to fetch the next older page; pass back as `?cursor`.
+    pub next_cursor: Option<String>,
 }
 
 /// All conversations across both origins, newest activity first.
@@ -144,11 +217,15 @@ pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
     .fetch_all(pool)
     .await?;
     for r in signal {
+        let kind: String = r.try_get("kind")?;
+        let Some(kind) = ConversationKind::parse(&kind) else {
+            bail!("conversations.type holds an unknown kind: {kind:?}");
+        };
         out.push(Conversation {
-            origin: ORIGIN_SIGNAL.into(),
+            origin: Origin::Signal,
             id: r.try_get("id")?,
             name: r.try_get("name")?,
-            kind: r.try_get("kind")?,
+            kind,
             message_count: r.try_get("cnt")?,
             last_ts: r.try_get("last_ts")?,
         });
@@ -167,10 +244,10 @@ pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
         let is_dm: i8 = r.try_get("is_dm")?;
         let last_us: Option<i64> = r.try_get("last_ts_us")?;
         out.push(Conversation {
-            origin: ORIGIN_GCHAT.into(),
+            origin: Origin::Gchat,
             id: r.try_get("id")?,
             name: r.try_get("name")?,
-            kind: kind_from_is_dm(is_dm != 0).into(),
+            kind: kind_from_is_dm(is_dm != 0),
             message_count: r.try_get("cnt")?,
             last_ts: last_us.map(us_to_ms),
         });
@@ -186,7 +263,7 @@ pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
 /// native ts, so it round-trips at full precision.
 pub async fn messages_page(
     pool: &MySqlPool,
-    origin: &str,
+    origin: Origin,
     id: &str,
     cursor: Option<(i64, i64)>,
     limit: i64,
@@ -194,9 +271,8 @@ pub async fn messages_page(
     // Each fetcher returns its page (DESC, newest first) plus the cursor for the
     // next older page — it alone knows the native ts unit + row id.
     let (mut msgs, next_cursor) = match origin {
-        ORIGIN_SIGNAL => signal_messages(pool, id, cursor, limit).await?,
-        ORIGIN_GCHAT => gchat_messages(pool, id, cursor, limit).await?,
-        _ => (Vec::new(), None),
+        Origin::Signal => signal_messages(pool, id, cursor, limit).await?,
+        Origin::Gchat => gchat_messages(pool, id, cursor, limit).await?,
     };
     let has_more = msgs.len() as i64 == limit;
     msgs.reverse(); // present ascending
@@ -409,10 +485,13 @@ async fn gchat_messages(
 }
 
 #[derive(Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 pub struct SearchHit {
-    pub origin: String,
+    pub origin: Origin,
     pub conversation_id: String,
     pub conversation_name: Option<String>,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub ts: i64,
     pub sender: String,
     pub snippet: String,
@@ -438,7 +517,7 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
     .await?;
     for r in srows {
         hits.push(SearchHit {
-            origin: ORIGIN_SIGNAL.into(),
+            origin: Origin::Signal,
             conversation_id: r.try_get("cid")?,
             conversation_name: r.try_get("cname")?,
             ts: r.try_get("ts")?,
@@ -462,7 +541,7 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
     for r in grows {
         let ts_us: i64 = r.try_get("ts_us")?;
         hits.push(SearchHit {
-            origin: ORIGIN_GCHAT.into(),
+            origin: Origin::Gchat,
             conversation_id: r.try_get("cid")?,
             conversation_name: r.try_get("cname")?,
             ts: us_to_ms(ts_us),

@@ -1,0 +1,6 @@
+# Pin ts-rs's TS export directory so EVERY `cargo test` (local, CI, the drift
+# gate) writes the generated types to the same place — the frontend's generated/
+# dir — instead of ts-rs's default ./bindings. `relative = true` resolves it
+# against this crate root.
+[env]
+TS_RS_EXPORT_DIR = { value = "frontend/src/app/generated", relative = true }
