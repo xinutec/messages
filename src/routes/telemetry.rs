@@ -53,6 +53,70 @@ const MAX_EVENTS: usize = 100;
 /// split down the middle.
 const MAX_LABEL: usize = 160;
 
+/// Format characters that are invisible, or that reorder what is displayed.
+///
+/// `char::is_control` covers categories Cc and nothing else, and Rust's std has
+/// no Unicode category table — so these are named explicitly. Two reasons they
+/// matter here, and the second is the sharper one:
+///
+/// - **Zero-width characters** (U+200B, U+FEFF, the word joiners) are invisible,
+///   so a label made of them reads as empty while occupying the whole cap.
+/// - **Bidi overrides** (U+202A–202E, U+2066–2069) reorder the *rendering* of
+///   the text around them. A log line containing one can be made to display
+///   something other than what it says — the Trojan Source trick, pointed at the
+///   record rather than at source code.
+///
+/// A deny-list of what can deceive rather than all of category Cf, because
+/// pulling a Unicode tables crate in for this would be disproportionate. Stated
+/// so the limit is known rather than assumed.
+fn is_deceptive_format(c: char) -> bool {
+    matches!(c,
+        '\u{00ad}'
+        | '\u{200b}'..='\u{200f}'
+        | '\u{202a}'..='\u{202e}'
+        | '\u{2060}'..='\u{2064}'
+        | '\u{2066}'..='\u{2069}'
+        | '\u{feff}'
+    )
+}
+
+/// Flatten a client-supplied label to a single harmless log field.
+///
+/// **This is the security boundary of the endpoint, not tidiness.** A label is
+/// verbatim UI text and it is written into a log line as `label=…`. A label
+/// containing a newline therefore forges *whole log lines* — including further
+/// `client-event` lines attributed to someone else, or lines that look like they
+/// came from another component entirely. The log stops being evidence, which is
+/// the one thing it exists to be.
+///
+/// Control characters become spaces, runs of whitespace collapse, and the result
+/// is capped. `char::is_control` covers C0 and C1 but *not* U+2028 and U+2029,
+/// which end a line in some renderers; `split_whitespace` catches those, so the
+/// two passes together cover both. Capped in `chars` rather than bytes so a
+/// multi-byte glyph is never split down the middle.
+///
+/// Public so `tests/telemetry.rs` can exercise it directly: it is the one part
+/// of this endpoint an attacker chooses the input to.
+pub fn one_line(label: &str, max: usize) -> String {
+    let unbroken: String = label
+        .chars()
+        .map(|c| {
+            if c.is_control() || is_deceptive_format(c) {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    unbroken
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(max)
+        .collect()
+}
+
 /// `POST /api/telemetry` — fold the client's events into the log stream.
 ///
 /// Always 204. Telemetry is best-effort: the client neither reads the response
@@ -64,12 +128,7 @@ pub async fn record(
     Json(events): Json<Vec<TelemetryEvent>>,
 ) -> StatusCode {
     for e in events.into_iter().take(MAX_EVENTS) {
-        let label: String = e
-            .label
-            .unwrap_or_default()
-            .chars()
-            .take(MAX_LABEL)
-            .collect();
+        let label = one_line(&e.label.unwrap_or_default(), MAX_LABEL);
         tracing::info!(
             user = %user.user_id,
             kind = %e.kind,
