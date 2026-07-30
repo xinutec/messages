@@ -2,6 +2,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod telemetry;
 
 use axum::Router;
 use axum::routing::{get, post};
@@ -15,7 +16,9 @@ pub fn router(state: AppState) -> Router {
         .route("/conversations", get(api::conversations))
         .route("/conversations/{origin}/{id}/messages", get(api::messages))
         .route("/attachments/{id}", get(api::attachment))
-        .route("/search", get(api::search));
+        .route("/search", get(api::search))
+        // What the person did, folded into the same log as what the API saw.
+        .route("/telemetry", post(telemetry::record));
 
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))

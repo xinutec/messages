@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { Conversation, Me, MessagesPage, Origin, SearchHit } from './models';
+import { Conversation, Me, MessagesPage, Origin, SearchHit, TelemetryEvent } from './models';
 
 /** Thin client over the messages backend. Same-origin in prod; via the dev
  *  proxy (proxy.conf.json) in `ng serve`. Session cookie rides along. */
@@ -14,6 +14,13 @@ export class MessagesApi {
   }
   logout(): Observable<unknown> {
     return this.http.post('/logout', {});
+  }
+
+  /** Send a batch of client events to be logged. Fire-and-forget at the call
+   *  site: a trace that surfaces its own failures interferes with the app it
+   *  observes. */
+  sendTelemetry(events: readonly TelemetryEvent[]): Observable<void> {
+    return this.http.post<void>('/api/telemetry', events);
   }
 
   conversations(): Observable<Conversation[]> {

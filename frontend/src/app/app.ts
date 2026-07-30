@@ -15,6 +15,7 @@ import { Subject, catchError, filter, of, switchMap } from 'rxjs';
 
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
+import { Telemetry } from './telemetry';
 import { Conversation, Origin, SearchHit } from './models';
 
 @Component({
@@ -39,6 +40,9 @@ export class App {
   private store = inject(MessagesStore);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
+  // Instrumented from the shell alone: a trace each screen had to remember to
+  // join would have holes in exactly the screens nobody thought about.
+  private telemetry = inject(Telemetry);
 
   readonly me = this.store.me;
   readonly loading = this.store.loading;
@@ -79,6 +83,7 @@ export class App {
 
   constructor() {
     this.store.init();
+    this.telemetry.init();
     this.search$
       .pipe(
         switchMap((q) => this.api.search(q).pipe(catchError(() => of<SearchHit[]>([])))),

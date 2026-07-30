@@ -56,3 +56,14 @@ export interface SearchHit {
   sender: string;
   snippet: string;
 }
+
+/** One thing that happened in the client, POSTed to /api/telemetry to be logged.
+ *  `kind` is 'nav' (a route change, no label) or 'tap' (a control, `label` its
+ *  visible text verbatim). `at` is the client's clock in epoch ms — a batch
+ *  arrives at once, so the server's receive time cannot order events within it. */
+export interface TelemetryEvent {
+  kind: string;
+  path: string;
+  label: string | null;
+  at: number;
+}
