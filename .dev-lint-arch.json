@@ -1,0 +1,9 @@
+{
+  "boundaries": [
+    {
+      "path": "frontend/src/app/generated",
+      "importableBy": ["frontend/src/app/models.ts"],
+      "why": "ts-rs writes one file per wire type here and scripts/gen-types.sh replaces the whole directory on every run, so a renamed or retired Rust type must break one barrel import rather than scatter dead paths through the app"
+    }
+  ]
+}
