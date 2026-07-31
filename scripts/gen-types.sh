@@ -40,8 +40,15 @@ if [ "$count" -eq 0 ]; then
   exit 1
 fi
 
+# Copy the generated TYPES, not the scratch dir's contents. Anything else a build
+# step decides to drop in $TMP would be copied into the committed output and then
+# reported by the drift gate as unexplained drift — a confusing failure whose
+# cause is invisible in the diff. Naming known strays one at a time only works for
+# the ones already met.
+#
+# The whole output is replaced rather than merged, so a type deleted on the Rust
+# side does not linger as a committed file nothing generates any more.
 rm -rf "$OUT"
-mkdir -p "$(dirname "$OUT")"
-cp -R "$TMP" "$OUT"
-rm -f "$OUT/cargo.log"
+mkdir -p "$OUT"
+find "$TMP" -maxdepth 1 -name '*.ts' -exec cp {} "$OUT"/ \;
 echo "generated $count type(s) -> $OUT"
