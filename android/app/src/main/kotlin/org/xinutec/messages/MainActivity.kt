@@ -15,7 +15,14 @@ import org.xinutec.shell.WebShellActivity
  * leave the app from a page that visibly has a parent.
  */
 class MainActivity : WebShellActivity() {
-    override val shell = ShellConfig(url = MESSAGES_URL)
+    override val shell =
+        ShellConfig(
+            url = MESSAGES_URL,
+            // The app plus the Nextcloud login hop — without the second, the OAuth
+            // round-trip would be ejected to the browser and the app could never
+            // sign in again. Everything else opens in the real browser.
+            allowedHosts = setOf("messages.xinutec.org", NC_HOST),
+        )
 
     // Set when a back press escapes a deep cold-start (a conversation opened with
     // no in-app history) up to the list: the list then replaces the thread as the
@@ -58,5 +65,8 @@ class MainActivity : WebShellActivity() {
     companion object {
         // The messages archive viewer (HTTPS, VPN-only, behind a login).
         private const val MESSAGES_URL = "https://messages.xinutec.org/"
+
+        // The Nextcloud identity provider the login bounces through.
+        private const val NC_HOST = "dash.xinutec.org"
     }
 }
