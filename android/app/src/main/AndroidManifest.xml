@@ -1,11 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- dev-lint: android-webview allow=application/@android:enableOnBackInvokedCallback -->
-<!-- Sanctioned deviation: messages' MainActivity is modernised to
-     OnBackPressedDispatcher, so it opts into predictive back. The other WebView
-     shells still override the deprecated onBackPressed, so they must NOT enable
-     this flag until they're modernised too (with the flag on, a legacy
-     onBackPressed stops being called on API 33+). Roll this into the canonical
-     template once every shell is modernised. -->
+<!-- dev-lint: android-webview (held identical to dev-lint's canonical WebView manifest) -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
