@@ -19,7 +19,7 @@ import harness from './e2e/harness.mjs';
  * app's behavioural specs (smoke/routing/thread-scroll) were written and tuned
  * against `ng serve` (dev) and land differently on a production build, so they
  * keep their own dev-serve config in playwright.behaviour.config.ts — run
- * on-demand via `npm run e2e:behaviour`, not part of the pre-push layout gate.
+ * on-demand via `pnpm run e2e:behaviour`, not part of the pre-push layout gate.
  */
 export default defineConfig(
   phoneConfig(harness, devices, { testMatch: '**/ui-pages.spec.ts', goldens: true }),

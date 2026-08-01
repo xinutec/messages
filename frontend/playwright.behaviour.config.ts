@@ -13,7 +13,7 @@ import { defineConfig, devices } from "@playwright/test";
  * serve.mjs. thread-scroll's "lands at the newest message after image reflow"
  * re-pin fires on a different tick under a production build and only lands
  * reliably under the dev server it was written against. Run on-demand:
- *   npm run e2e:behaviour
+ *   pnpm run e2e:behaviour
  * They are not part of the pre-push layout gate (they never were).
  */
 export default defineConfig({

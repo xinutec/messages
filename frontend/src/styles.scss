@@ -34,3 +34,14 @@ body {
   background-color: var(--mat-sys-surface);
   color: var(--mat-sys-on-surface);
 }
+
+/* An icon has exactly one correct size, so it must never absorb flex shrink.
+ * Material ships `mat-icon` with `overflow: hidden`, which costs a flex/grid item
+ * its `min-width: auto` floor — the floor becomes 0, and a squeezed icon is then
+ * CLIPPED rather than scaled, showing a fragment of a glyph. Said once here
+ * rather than per component: it is unconditionally correct, so repeating it in
+ * every stylesheet that happens to flex an icon is noise that also rots
+ * (DL-ANGULAR-ICON-SHRINK). */
+mat-icon {
+  flex-shrink: 0;
+}

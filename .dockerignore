@@ -1,0 +1,22 @@
+# A build context is copied wholesale to the daemon, whether or not a COPY names
+# it. Without this file that is the whole working tree — ~300 MB of installed
+# node_modules and the Android sources, none of which the image uses.
+#
+# The frontend stage installs its dependencies in a layer of its own, so the
+# later `COPY frontend/ .` would put the developer's node_modules straight back
+# on top of it: the image would ship whatever they happened to have. CI never saw
+# it, building from a clean checkout. pnpm makes it a hard failure rather than a
+# wasted layer, because its node_modules is a tree of symlinks into
+# node_modules/.pnpm that does not survive being copied out of context.
+target/
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+frontend/test-results/
+frontend/playwright-report/
+
+# Not part of any image.
+android/
+.git/
+result
+result-*

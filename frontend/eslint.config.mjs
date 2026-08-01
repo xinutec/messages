@@ -4,7 +4,7 @@
 // for usage bugs tsc/syntactic-lint miss (floating/misused promises, unsafe
 // `any`, await-thenable), plus the Angular rules (forbid inline template:/styles:
 // — the team's angular-external-template-style rule — and template a11y).
-// It's fast (~2s) so it runs as the normal lint in CI; `npm run lint`.
+// It's fast (~2s) so it runs as the normal lint in CI; `pnpm run lint`.
 
 import angular from "angular-eslint";
 import tseslint from "typescript-eslint";

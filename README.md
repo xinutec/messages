@@ -65,7 +65,7 @@ NC_REDIRECT_URI=http://localhost:4200/auth/callback \
 SESSION_SECRET=$(openssl rand -hex 32) ALLOWED_USERS=pippijn \
   cargo run
 # frontend (proxies /api,/login,/auth,/logout to :8080)
-cd frontend && npm ci && npm start    # http://localhost:4200
+cd frontend && pnpm install && pnpm start  # http://localhost:4200
 ```
 
 ## Deploy (isis, namespace `signal`)
@@ -106,7 +106,7 @@ frontend's lint + build + unit tests + phone-layout harness.
 - **Frontend** `frontend/src/app/app.spec.ts` — vitest (Angular `unit-test`
   builder, same as health): conversation load, origin filter, pagination cursor +
   load-older prepend, search/clear, search-hit open, day grouping, title fallback.
-  `npm test`.
+  `pnpm test`.
 
 ## Status
 Login (+ allow-list) → conversation list (both origins, filter) → thread view with
