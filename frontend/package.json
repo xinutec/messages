@@ -21,7 +21,7 @@
     "@angular/material": "^22.0.3",
     "@angular/platform-browser": "^22.0.4",
     "@angular/router": "^22.0.4",
-    "@xinutec/ui-harness": "github:xinutec/ui-harness#1a7b61dad398158611f109964c9778df28e35626",
+    "@xinutec/ui-harness": "github:xinutec/ui-harness#8d8340ff672392ac472c1fb16e0d8fdfecbd710d",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0"
   },
