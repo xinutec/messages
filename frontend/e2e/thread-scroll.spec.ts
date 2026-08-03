@@ -60,14 +60,16 @@ async function mockApi(page: Page): Promise<void> {
   await page.route("**/api/me", (r) => r.fulfill({ json: ME }));
   await page.route("**/api/conversations", (r) => r.fulfill({ json: CONVERSATIONS }));
   await page.route("**/api/attachments/**", (r) => r.fulfill({ contentType: "image/svg+xml", body: IMAGE_SVG }));
-  await page.route("**/api/conversations/**/messages**", (route) => {
+  await page.route("**/api/conversations/**/messages**", async (route) => {
     const cursor = new URL(route.request().url()).searchParams.get("cursor");
     // Newest page (no cursor); opening at the bottom needs only this page.
     // Older history exists (has_more) but is fetched lazily on scroll-up.
     if (cursor) {
-      route.fulfill({ json: { messages: [], has_more: false, next_cursor: null } });
+      await route.fulfill({ json: { messages: [], has_more: false, next_cursor: null } });
     } else {
-      route.fulfill({ json: { messages: newestPage(100), has_more: true, next_cursor: "1000000" } });
+      await route.fulfill({
+        json: { messages: newestPage(100), has_more: true, next_cursor: "1000000" },
+      });
     }
   });
 }
@@ -82,9 +84,15 @@ test("opening a long conversation lands at the latest message", async ({ page })
   // they load would give a false pass.
   await expect
     .poll(async () =>
-      page.locator(".attach img").evaluateAll((imgs) =>
-        imgs.length > 0 && imgs.every((i) => (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalHeight > 0),
-      ),
+      // The element type is a parameter of `evaluateAll`, so asking for
+      // `HTMLImageElement` up front is what makes `.complete` and
+      // `.naturalHeight` legal — an assertion inside the callback would claim
+      // the same thing without anything checking it.
+      page
+        .locator(".attach img")
+        .evaluateAll<boolean, HTMLImageElement>(
+          (imgs) => imgs.length > 0 && imgs.every((i) => i.complete && i.naturalHeight > 0),
+        ),
     )
     .toBe(true);
   await page.waitForTimeout(150); // let any post-load reflow settle

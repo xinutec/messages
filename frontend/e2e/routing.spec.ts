@@ -73,12 +73,16 @@ async function mockApiPaged(page: Page): Promise<void> {
   await page.route("**/api/**", (r) => r.fulfill({ status: 204, body: "" }));
   await page.route("**/api/me", (r) => r.fulfill({ json: ME }));
   await page.route("**/api/conversations", (r) => r.fulfill({ json: CONVERSATIONS }));
-  await page.route("**/api/conversations/**/messages**", (route) => {
+  await page.route("**/api/conversations/**/messages**", async (route) => {
     const cursor = new URL(route.request().url()).searchParams.get("cursor");
     if (cursor) {
-      route.fulfill({ json: { messages: bulk("antique", 1000, 30), has_more: false, next_cursor: null } });
+      await route.fulfill({
+        json: { messages: bulk("antique", 1000, 30), has_more: false, next_cursor: null },
+      });
     } else {
-      route.fulfill({ json: { messages: bulk("fresh", 5000, 30), has_more: true, next_cursor: "5000" } });
+      await route.fulfill({
+        json: { messages: bulk("fresh", 5000, 30), has_more: true, next_cursor: "5000" },
+      });
     }
   });
 }
