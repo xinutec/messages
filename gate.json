@@ -42,7 +42,8 @@
         "develop",
         "--no-warn-dirty",
         "--command",
-        "scripts/check-types.sh"
+        "scripts/gen-types.sh",
+        "--check"
       ],
       "cwd": ".",
       "env": {},

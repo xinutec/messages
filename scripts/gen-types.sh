@@ -1,54 +1,27 @@
 #!/usr/bin/env bash
-# Generate the frontend TS interfaces from the Rust API types via ts-rs, so the
-# backend↔frontend wire shapes are consistent by construction (not transcribed).
+# Generate the frontend TS interfaces from the Rust types via ts-rs, so the
+# backend↔frontend wire shapes are consistent by construction, not transcribed.
 #
-# Run inside the messages dev shell (cargo on PATH):
-#   nix develop --command scripts/gen-types.sh
+#   nix develop --command scripts/gen-types.sh            # regenerate + install
+#   nix develop --command scripts/gen-types.sh --check    # report drift, write nothing
 #
-# Output lands in frontend/src/app/generated/ (committed; imported via
-# frontend/src/app/models.ts). The drift gate re-runs this and fails if the
-# committed output no longer matches the Rust types — see scripts/check-types.sh.
+# The second form is what the gate's generated-types row runs, so the cargo
+# invocation below is stated once and both paths use it.
+#
+# All this file holds is the part that is this repository's: where the bindings
+# live and how to make cargo emit them. The rest — generate into a scratch
+# directory and install only on success, refuse a generation that emitted
+# nothing, copy the types and not whatever else landed beside them, compare by
+# content rather than by asking git — is dev-lint#gen-types, shared with the
+# four other repositories that had each grown their own version of it.
+# scripts/check-types.sh is gone with it.
+#
+# `--features ts` turns on ts-rs (off by default: normal builds carry none). The
+# export tests are named export_bindings_*, so the filter runs generation only —
+# tests/archive.rs's end-to-end cases need MariaDB and are not selected.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-OUT="frontend/src/app/generated"
-
-# Generate FIRST, into a scratch dir, and only replace the committed output once
-# it has actually worked — a generator that fails must leave the previous output
-# exactly where it was, rather than deleting the frontend's types and reporting
-# nothing. (Learned in coach, where the reverse order did exactly that.)
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
-
-# ts-rs emits one file per #[ts(export)] type; the export tests are named
-# export_bindings_*, so this filter runs only generation — tests/archive.rs's
-# end-to-end cases need MariaDB and are not selected. The output dir is pinned in
-# .cargo/config.toml (TS_RS_EXPORT_DIR), overridden here so a failed run can't
-# touch the committed types.
-#
-# --features ts turns on ts-rs (off by default: normal builds carry none).
-if ! TS_RS_EXPORT_DIR="$TMP" cargo test --features ts export_bindings >"$TMP/cargo.log" 2>&1; then
-  echo "gen-types: generation failed — committed types left untouched." >&2
-  # The compile errors are the whole point of running this; show them.
-  grep -E '^(error|warning: unused)|^ *-->' "$TMP/cargo.log" >&2 || tail -30 "$TMP/cargo.log" >&2
-  exit 1
-fi
-
-count="$(find "$TMP" -name '*.ts' | wc -l | tr -d ' ')"
-if [ "$count" -eq 0 ]; then
-  echo "gen-types: generation produced no types — committed types left untouched." >&2
-  exit 1
-fi
-
-# Copy the generated TYPES, not the scratch dir's contents. Anything else a build
-# step decides to drop in $TMP would be copied into the committed output and then
-# reported by the drift gate as unexplained drift — a confusing failure whose
-# cause is invisible in the diff. Naming known strays one at a time only works for
-# the ones already met.
-#
-# The whole output is replaced rather than merged, so a type deleted on the Rust
-# side does not linger as a committed file nothing generates any more.
-rm -rf "$OUT"
-mkdir -p "$OUT"
-find "$TMP" -maxdepth 1 -name '*.ts' -exec cp {} "$OUT"/ \;
-echo "generated $count type(s) -> $OUT"
+exec nix run ../dev-lint#gen-types -- "$@" \
+  --out frontend/src/app/generated \
+  -- cargo test --features ts export_bindings

@@ -86,7 +86,7 @@ in  { name = "messages"
         -}
         G.Check::{
         , name = "generated types are current"
-        , argv = G.inDevShell [ "scripts/check-types.sh" ]
+        , argv = G.inDevShell [ "scripts/gen-types.sh", "--check" ]
         , timeout_s = 900
         }
       , {-  The whole Rust suite, the end-to-end tests in tests/archive.rs
