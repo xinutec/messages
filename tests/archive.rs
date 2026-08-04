@@ -6,8 +6,8 @@
 //! delete flags, the µs→ms conversion, and cross-origin search. They run when
 //! `MESSAGES_TEST_DATABASE_URL` points at a *throwaway* database (the test
 //! drops+recreates the archive tables), and are skipped otherwise. CI sets it
-//! from a MariaDB service; locally `scripts/with-test-db.sh` starts one and
-//! `scripts/verify.sh` runs the suite through it, so the pre-commit gate covers
+//! from a MariaDB service; locally the gate's `tests` row runs the suite through
+//! `dev-lint`'s `with-test-db`, which starts one, so the pre-commit gate covers
 //! them too. NEVER point it at the real signal DB.
 
 use messages::archive::{

@@ -1,0 +1,200 @@
+{
+  "checks": [
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--command",
+        "cargo",
+        "fmt",
+        "--all",
+        "--check"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "formatting",
+      "timeout_s": 180
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--command",
+        "cargo",
+        "clippy",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "cwd": ".",
+      "env": {
+        "CARGO_TARGET_DIR": "/Users/pippijn/.cache/cargo/clippy-target"
+      },
+      "name": "clippy",
+      "timeout_s": 1800
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--command",
+        "scripts/check-types.sh"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "generated types are current",
+      "timeout_s": 900
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--command",
+        "nix",
+        "run",
+        "../dev-lint#with-test-db",
+        "--",
+        "--database",
+        "messages_test",
+        "--user",
+        "messages",
+        "--password",
+        "messages",
+        "--port",
+        "3318",
+        "--url-env",
+        "MESSAGES_TEST_DATABASE_URL",
+        "--",
+        "cargo",
+        "test"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "tests (against a real MariaDB)",
+      "timeout_s": 1800
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--command",
+        "pnpm",
+        "install",
+        "--frozen-lockfile"
+      ],
+      "cwd": "frontend",
+      "env": {},
+      "name": "frontend deps match the lockfile",
+      "timeout_s": 900
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--command",
+        "pnpm",
+        "run",
+        "lint"
+      ],
+      "cwd": "frontend",
+      "env": {},
+      "name": "frontend lint",
+      "timeout_s": 900
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--command",
+        "pnpm",
+        "run",
+        "typecheck:e2e"
+      ],
+      "cwd": "frontend",
+      "env": {},
+      "name": "frontend typecheck (e2e)",
+      "timeout_s": 900
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--command",
+        "nix",
+        "run",
+        "../../dev-lint#ng-build",
+        "--",
+        "--expect",
+        "dist/messages-web/browser",
+        "--",
+        "pnpm",
+        "exec",
+        "ng",
+        "build"
+      ],
+      "cwd": "frontend",
+      "env": {},
+      "name": "frontend build",
+      "timeout_s": 1800
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--command",
+        "pnpm",
+        "test"
+      ],
+      "cwd": "frontend",
+      "env": {
+        "NG_BUILD_MAX_WORKERS": "1"
+      },
+      "name": "frontend unit tests",
+      "timeout_s": 1800
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--command",
+        "pnpm",
+        "run",
+        "ui-check"
+      ],
+      "cwd": "frontend",
+      "env": {},
+      "name": "frontend ui-check (phone-width layout harness)",
+      "timeout_s": 1800
+    },
+    {
+      "argv": [
+        "nix",
+        "run",
+        "../dev-lint#gate",
+        "--",
+        "--check-table",
+        "gate.dhall",
+        "gate.json"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "the table matches its Dhall",
+      "timeout_s": 120
+    },
+    {
+      "argv": [
+        "nix",
+        "run",
+        "../dev-lint",
+        "--",
+        "."
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "dev-lint",
+      "timeout_s": 900
+    }
+  ],
+  "name": "messages"
+}

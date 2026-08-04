@@ -92,17 +92,28 @@ run the manifest steps from that checkout.
    `kubectl -n signal get certificate messages-tls`.
 
 ## Tests
-`scripts/verify.sh` is the whole gate (and the pre-commit hook): fmt, clippy,
-generated-type drift, the Rust suite against a throwaway MariaDB, then the
-frontend's lint + build + unit tests + phone-layout harness.
+`gate.dhall` is the whole gate (and the pre-commit hook), twelve named checks:
+fmt, clippy, generated-type drift, the Rust suite against a throwaway MariaDB,
+then the frontend's deps + lint + e2e typecheck + build + unit tests +
+phone-layout harness, and the shared dev-lint rules. Run it with
+
+```sh
+nix run ../dev-lint#gate -- . gate.json
+```
+
+`gate.json` is rendered from the Dhall and committed, so running the gate needs
+no `dhall`; one of the checks re-renders and diffs the two.
 
 - **Backend** `tests/archive.rs` — pure units (timestamp/kind/LIKE-escape) always
   run; end-to-end DB tests seed a fixture into a throwaway MariaDB and assert the
   real queries (cross-origin sort, the `before` pagination cursor, Signal reaction
   aggregation, edit/delete flags, µs→ms, attachments available-flag + blob lookup,
   search). They run when `MESSAGES_TEST_DATABASE_URL` is set — CI provides a
-  MariaDB service, and locally `scripts/with-test-db.sh` starts an ephemeral one
-  (`scripts/with-test-db.sh cargo test` to run them by hand); skipped otherwise.
+  MariaDB service, and locally the gate's `tests` row starts an ephemeral one via
+  `dev-lint`'s `with-test-db` (`nix run ../dev-lint#with-test-db -- --database
+  messages_test --user messages --password messages --port 3318 --url-env
+  MESSAGES_TEST_DATABASE_URL -- cargo test` to run them by hand); skipped
+  otherwise.
 - **Frontend** `frontend/src/app/app.spec.ts` — vitest (Angular `unit-test`
   builder, same as health): conversation load, origin filter, pagination cursor +
   load-older prepend, search/clear, search-hit open, day grouping, title fallback.
