@@ -42,8 +42,8 @@ jobs:
       # need serialising, and both places now exercise the same thing.
       - run: cargo test
       # The frontend's types are generated from the Rust wire types; fail if the
-      # committed output drifted from them. Does in CI what scripts/check-types.sh
-      # does locally, without the nix dev shell. Deleting the directory first so a
+      # committed output drifted from them. Does in CI what `scripts/gen-types.sh
+      # --check` does locally, without the nix dev shell. Deleting the directory first so a
       # type REMOVED from Rust shows up as a leftover file, and asking git for
       # status rather than diff so an ADDED one (untracked) counts too — a plain
       # `git diff --exit-code` is blind to both.
