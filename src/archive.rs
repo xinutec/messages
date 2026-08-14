@@ -753,16 +753,42 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
     // the page use. Server notices would otherwise dominate every result: they
     // are 47% of the archive's lines and they are the ones full of words like
     // "connection" and "user" that somebody searching would actually type.
+    //
+    // ⚠ **THE SUBSTRING SCAN MUST NOT BE JOINED TO, and this is the same trap
+    // the conversation list fell into.** Written as one flat join, the optimizer
+    // drives from `irc_conversations` (315 rows) and reaches `irc_messages` by
+    // `ref` — 3.7M secondary-index entries, each followed by a primary-key
+    // lookup to read `text`, which is random I/O over a 502 MiB table behind a
+    // 128 MiB buffer pool. MEASURED 2026-08-14: **32.4s**. Scanning
+    // `irc_messages` alone and joining the surviving 50 rows afterwards is
+    // **10.0s** for a result set proved identical (same count, same id bounds).
+    //
+    // `is_status` therefore moves inside as a subquery against the small table,
+    // NOT to a filter after the join: applying it later would filter rows the
+    // `LIMIT` had already chosen, and a page would silently come back short.
+    //
+    // ⚠ 10s is still not fast, and no rewrite will fix that — `LIKE '%term%'`
+    // cannot use an index, so the floor is one pass over every row (a bare
+    // `SUM(LENGTH(text))` is already 7.5s). Going below it means a FULLTEXT
+    // index, which searches WORDS: `nix` would stop matching `nixos`. That is a
+    // decision about what search means rather than how it runs, so it is
+    // Pippijn's, and it is filed as **#882**.
     let irows = sqlx::query(
         r"SELECT m.conversation_id AS cid, c.target AS cname,
                  TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) AS ts_s,
                  m.nick AS sender, m.text AS body
-          FROM irc_messages m
+          FROM (
+              SELECT conversation_id, sent_at, id, nick, text
+                FROM irc_messages
+               WHERE kind IN ('message', 'action')
+                 AND text LIKE ?
+                 AND conversation_id NOT IN (
+                     SELECT id FROM irc_conversations WHERE is_status = 1
+                 )
+               ORDER BY sent_at DESC, id DESC LIMIT ?
+          ) m
           LEFT JOIN irc_conversations c ON c.id = m.conversation_id
-          WHERE m.kind IN ('message', 'action')
-            AND c.is_status = 0
-            AND m.text LIKE ?
-          ORDER BY m.sent_at DESC, m.id DESC LIMIT ?",
+          ORDER BY m.sent_at DESC, m.id DESC",
     )
     .bind(&like)
     .bind(limit)

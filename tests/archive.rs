@@ -555,6 +555,32 @@ async fn search_spans_origins_excludes_deleted_newest_first() {
     assert!(archive::search(&pool, "gone", 50).await.unwrap().is_empty());
 }
 
+/// A short page must not be filled by rows that were going to be thrown away.
+///
+/// ⚠ This is the hazard the fast IRC query shape introduces, and nothing else in
+/// the suite would catch it. The scan has to happen *before* the join to
+/// `irc_conversations` — joined the other way round the optimizer reads 3.7M
+/// rows by index lookup and search takes 32s — so `is_status` moves inside the
+/// derived table as a subquery. Leave it outside, as a condition on the join,
+/// and it filters rows the `LIMIT` has already spent: the newest `findme` in
+/// the whole fixture is the status log's, so a limit of one would return the
+/// status row from the scan, drop it in the join, and hand back a page missing
+/// the hit it should have contained.
+#[tokio::test]
+async fn search_applies_the_status_exclusion_before_the_limit() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+
+    let hits = archive::search(&pool, "findme", 1).await.unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(
+        (hits[0].origin, hits[0].snippet.as_str()),
+        (Origin::Irc, "first findme"),
+        "the status log's newer 'findme' must not consume the one slot"
+    );
+}
+
 /// The status log is left out and only speech is counted.
 ///
 /// Its notice is the newest IRC row in the fixture, so a query that dropped the
