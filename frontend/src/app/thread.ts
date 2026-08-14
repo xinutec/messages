@@ -1,4 +1,4 @@
-import { ApplicationRef, Component, ElementRef, computed, effect, inject, input, signal, viewChild } from '@angular/core';
+import { ApplicationRef, Component, DestroyRef, ElementRef, computed, effect, inject, input, signal, viewChild } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
@@ -29,6 +29,13 @@ const ROW_GUESS = 64;
  *  ?from so a refresh reopens pinned to the bottom. Small (unlike EDGE) so a
  *  short thread isn't treated as permanently at the bottom. */
 const BOTTOM_EPS = 64;
+/** How often an open, visible thread asks whether anything is newer.
+ *
+ *  Bounded below by how fast the ARCHIVE learns, not by what feels responsive:
+ *  polling faster than the importer runs only adds requests that answer "no".
+ *  Five seconds is under the cadence of everything upstream and cheap — the
+ *  query is indexed on `(conversation_id, sent_at)` and returns one page. */
+const POLL_MS = 5000;
 
 /** A run of messages collapsed out of the DOM: how many, and the pixel height
  *  they occupied (so the spacer standing in for them is ~the right size). */
@@ -170,6 +177,12 @@ export class Thread {
       if (o != null && i != null) void this.loadThread(o, i);
       else this.resetState();
     });
+
+    const poll = setInterval(() => void this.pollNewer(), POLL_MS);
+    // ⚠ Cleared with the component. An interval outlives its component
+    // otherwise, and every visit to a thread would leave another one running —
+    // the request rate climbing with no screen left to show the answers on.
+    inject(DestroyRef).onDestroy(() => clearInterval(poll));
   }
 
   private resetState(): void {
@@ -224,6 +237,90 @@ export class Thread {
     const o = this.origin();
     const i = this.id();
     if (o != null && i != null) void this.loadThread(o, i);
+  }
+
+  // ---- keeping up with what arrives ---------------------------------------
+
+  /** Guards against a second poll starting while one is still in flight — a
+   *  slow response must not be overtaken by the tick behind it. */
+  private polling = false;
+
+  /** Ask whether anything is newer, and merge it in.
+   *
+   *  ⚠ **Without this, an instant archive is invisible.** Measured before it
+   *  existed: the app showed a message count three behind the database for an
+   *  action the user had just taken himself. Everything upstream — the hourly
+   *  import, the send path's immediate echo — lands in a page that was fetched
+   *  once and never asked again.
+   *
+   *  Reuses the ordinary newest-page endpoint rather than adding a `?since`
+   *  one. The query is indexed on `(conversation_id, sent_at)` and returns one
+   *  page, so the saving would be bytes on a local network, against a second
+   *  code path that could disagree with the first about ordering or filtering.
+   *
+   *  Silent on failure by design: the thread on screen is still correct, the
+   *  next tick tries again, and an error banner for a background refetch would
+   *  be alarming out of proportion to a dropped packet. */
+  async pollNewer(): Promise<void> {
+    const o = this.origin();
+    const i = this.id();
+    if (o == null || i == null) return;
+    // Don't compete with a load that is already fetching this same page, and
+    // don't poll a screen nobody is looking at — a backgrounded phone app would
+    // otherwise keep asking forever.
+    if (this.polling || this.loadingThread() || this.loadingOlder() || this.sending()) return;
+    if (document.visibilityState !== 'visible') return;
+    if (this.messages().length === 0) return;
+
+    this.polling = true;
+    try {
+      const page = await firstValueFrom(this.api.messages(o, i, undefined, PAGE));
+      // The user may have moved to another conversation while this was in
+      // flight; merging then would put one thread's messages in another.
+      if (this.origin() !== o || this.id() !== i) return;
+
+      const held = this.messages();
+      const known = new Set(held.map((m) => m.id));
+      const fresh = page.messages.filter((m) => !known.has(m.id));
+      if (fresh.length === 0) return;
+
+      // ⚠ NOT ONE MESSAGE OF THE NEWEST PAGE IS KNOWN, so more than a page has
+      // arrived since the last poll and there is a gap between what is held and
+      // what came back. Merging would leave a hole in the middle of the thread
+      // that no amount of scrolling could fill, and nothing would report it.
+      if (fresh.length === page.messages.length) {
+        await this.loadThread(o, i);
+        return;
+      }
+
+      const wasAtBottom = this.atBottom();
+      // Sorted rather than appended: an import can write a line with an older
+      // timestamp (a backfilled day landing late), and appending it would put
+      // the thread out of order rather than leave it in the past where it
+      // belongs.
+      this.messages.set(
+        [...held, ...fresh].sort((a, b) => a.ts - b.ts || a.id.localeCompare(b.id)),
+      );
+      this.appRef.tick();
+      // Follow the conversation only if the user was already at the end of it.
+      // Yanking someone reading history down to the newest line is the single
+      // most annoying thing a chat app does.
+      if (wasAtBottom) this.withScrollLock(() => this.scrollToBottom());
+      this.trimToWindow();
+    } catch {
+      // See the doc comment: a failed poll is not an error state.
+    } finally {
+      this.polling = false;
+    }
+  }
+
+  /** At the end of the conversation: nothing collapsed below, and within a few
+   *  pixels of the bottom. */
+  private atBottom(): boolean {
+    return (
+      this.below().length === 0 &&
+      this.host.scrollHeight - this.host.scrollTop - this.host.clientHeight <= BOTTOM_EPS
+    );
   }
 
   // ---- sending (IRC only) -------------------------------------------------
@@ -529,10 +626,7 @@ export class Thread {
     const o = this.origin();
     const i = this.id();
     if (o == null || i == null) return;
-    const atBottom =
-      this.below().length === 0 &&
-      this.host.scrollHeight - this.host.scrollTop - this.host.clientHeight <= BOTTOM_EPS;
-    const from = atBottom ? null : this.topAnchor()?.id;
+    const from = this.atBottom() ? null : this.topAnchor()?.id;
     const ts = from ? this.messages().find((m) => m.id === from)?.ts : null;
     void this.router.navigate([], {
       relativeTo: this.route,

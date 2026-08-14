@@ -1,7 +1,7 @@
 import { ComponentRef, provideZonelessChangeDetection } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
-import { of } from 'rxjs';
+import { Observable, of } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 
 import { Thread } from './thread';
@@ -35,6 +35,28 @@ function setup(): { thread: Thread; ref: ComponentRef<Thread>; fixture: Componen
   // only exists for a real component instance.
   const fixture = TestBed.createComponent(Thread);
   return { thread: fixture.componentInstance, ref: fixture.componentRef, fixture, router: TestBed.inject(Router) };
+}
+
+function page(messages: Message[], has_more = false, next_cursor: string | null = null): Observable<MessagesPage> {
+  return of({ messages, has_more, next_cursor });
+}
+
+/** A thread routed to an IRC conversation and settled on `held`.
+ *
+ *  ⚠ The initial load has to be let finish. Routing the inputs starts it, and
+ *  `pollNewer` deliberately declines to run while a load is in flight — so a
+ *  test that set `messages` by hand and polled immediately measured the guard
+ *  rather than the merge, and passed for the wrong reason. */
+async function opened(held: Message[]): Promise<{ thread: Thread; api: { messages: ReturnType<typeof vi.fn> } }> {
+  const { thread, ref, fixture } = setup();
+  const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+  api.messages.mockReturnValue(page(held));
+  ref.setInput('origin', 'irc');
+  ref.setInput('id', '7');
+  fixture.detectChanges();
+  for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+  expect(thread.messages().map((m) => m.id)).toEqual(held.map((m) => m.id));
+  return { thread, api };
 }
 
 describe('Thread', () => {
@@ -117,6 +139,47 @@ describe('Thread', () => {
     await thread.send();
     expect(thread.draft()).toBe('');
     expect(thread.sendError()).toContain('after the next import');
+  });
+
+  it('merges messages that arrived since the page was loaded', async () => {
+    const { thread, api } = await opened([msg('1', 100), msg('2', 200)]);
+    // The newest page overlaps what is held and carries one more.
+    api.messages.mockReturnValueOnce(page([msg('1', 100), msg('2', 200), msg('3', 300)]));
+    await thread.pollNewer();
+    expect(thread.messages().map((m) => m.id)).toEqual(['1', '2', '3']);
+  });
+
+  it('puts a late-arriving older line in its place rather than at the end', async () => {
+    const { thread, api } = await opened([msg('1', 100), msg('3', 300)]);
+    // An import can write a line with an older timestamp — a backfilled day
+    // landing after a newer one. Appending it would show it as the latest thing
+    // said, which is worse than not showing it at all.
+    api.messages.mockReturnValueOnce(page([msg('1', 100), msg('2', 200), msg('3', 300)]));
+    await thread.pollNewer();
+    expect(thread.messages().map((m) => m.id)).toEqual(['1', '2', '3']);
+  });
+
+  it('reloads instead of merging when the newest page overlaps nothing held', async () => {
+    const { thread, api } = await opened([msg('1', 100)]);
+    // ⚠ Not one message of the page is known, so more arrived than a page holds
+    // and there is a gap between '1' and what came back. Merging would leave a
+    // hole in the middle of the thread that scrolling could never fill and
+    // nothing would report — so this must re-load the thread instead.
+    api.messages.mockReturnValue(page([msg('8', 800), msg('9', 900)], true, 'c'));
+    await thread.pollNewer();
+    expect(thread.messages().map((m) => m.id)).toEqual(['8', '9']);
+    expect(thread.hasMore()).toBe(true);
+  });
+
+  it('does not poll a screen nobody is looking at', async () => {
+    const { thread, api } = await opened([msg('1', 100)]);
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    api.messages.mockClear();
+    await thread.pollNewer();
+    // A backgrounded phone app that keeps asking is a battery cost with no
+    // screen left to show the answers on.
+    expect(api.messages).not.toHaveBeenCalled();
+    visibility.mockRestore();
   });
 
   it('does not send an empty or whitespace-only draft', async () => {

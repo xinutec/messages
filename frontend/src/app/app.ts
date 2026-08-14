@@ -99,6 +99,22 @@ export class App {
   constructor() {
     this.store.init();
     this.telemetry.init();
+
+    // Re-read the list on the way back to it. Closing a conversation is the
+    // moment its unread count and last-message time are about to be read, and it
+    // is a deliberate act rather than a tick — which is what makes a 1.5s query
+    // acceptable here and unacceptable on a timer.
+    let wasOpen = false;
+    this.router.events
+      .pipe(
+        filter((e) => e instanceof NavigationEnd),
+        takeUntilDestroyed(),
+      )
+      .subscribe(() => {
+        const open = this.active() != null;
+        if (wasOpen && !open) this.store.refresh();
+        wasOpen = open;
+      });
     this.search$
       .pipe(
         switchMap((q) => this.api.search(q).pipe(catchError(() => of<SearchHit[]>([])))),
