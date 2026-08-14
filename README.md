@@ -1,8 +1,9 @@
-# messages — Signal + Google Chat archive viewer
+# messages — Signal + Google Chat + IRC archive viewer
 
 A read-only web UI for the message archive stored in the **`signal` MariaDB** on
-the isis k3s cluster — both origins ([Signal](../signal) live + history, and the
-imported Google Chat tables). Same per-service pattern as `life`/`health`.
+the isis k3s cluster — three origins ([Signal](../signal) live + history, the
+imported Google Chat tables, and irssi's autologs). Same per-service pattern as
+`life`/`health`.
 
 ```
  Browser ──VPN/login──▶ messages.xinutec.org (isis, ns: signal)
@@ -10,8 +11,15 @@ imported Google Chat tables). Same per-service pattern as `life`/`health`.
                             │  + read-only API over the archive
                             ▼
                         signal MariaDB  ─ messages / conversations / reactions   (Signal)
-                                        └ gchat_messages / gchat_conversations…   (Google Chat)
+                                        ├ gchat_messages / gchat_conversations…   (Google Chat)
+                                        └ irc_messages / irc_conversations         (IRC)
 ```
+
+**IRC shows only what was said.** Its tables also hold joins, parts and server
+notices — the notices alone are 47% of the archive's lines — and every query
+here restricts to `kind IN ('message', 'action')`. The conversation irssi files
+server notices into is excluded outright (`is_status`): it is named after your
+own nick, so it would appear as a DM with yourself containing nothing you wrote.
 
 ## Security model
 Three layers, strongest first:
@@ -44,15 +52,16 @@ Three layers, strongest first:
 
 ## API (all require a valid session)
 - `GET /api/me` — current user.
-- `GET /api/conversations` — both origins, each tagged `origin`, newest first.
+- `GET /api/conversations` — all origins, each tagged `origin`, newest first.
 - `GET /api/conversations/{origin}/{id}/messages?cursor=<opaque>&limit=` — one
   page, oldest→newest, reactions attached; pass a previous page's `next_cursor`
   as `cursor` to page backwards (the cursor carries `(native_ts, id)`, so paging
   never skips messages that share a timestamp).
-- `GET /api/search?q=` — substring search across both origins.
+- `GET /api/search?q=` — substring search across all origins.
 
-`{origin}` is `signal` or `gchat`; `{id}` is the Signal `thread_id` or the gchat
-`group_id`. `origin` and a conversation's `kind` (`dm`/`group`) are Rust enums
+`{origin}` is `signal`, `gchat` or `irc`; `{id}` is the Signal `thread_id`, the
+gchat `group_id`, or the numeric `irc_conversations.id`. `origin` and a
+conversation's `kind` (`dm`/`group`) are Rust enums
 (`archive::Origin`, `archive::ConversationKind`), so they reach the frontend as
 string unions rather than `string`, and an unknown `{origin}` is a 404.
 
@@ -120,7 +129,7 @@ no `dhall`; one of the checks re-renders and diffs the two.
   `pnpm test`.
 
 ## Status
-Login (+ allow-list) → conversation list (both origins, filter) → thread view with
+Login (+ allow-list) → conversation list (all origins, filter) → thread view with
 **pagination** ("load older" via `before`), date separators, edit/deleted markers,
 reactions, and **attachments** (Signal: inline images / file links served from the
 attachments PVC mounted read-only; metadata-only history rows shown but marked not

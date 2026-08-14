@@ -9,4 +9,4 @@
  * exhaustive, so adding a third origin is a compile error at every site that
  * has to handle it rather than a silently empty page.
  */
-export type Origin = "signal" | "gchat";
+export type Origin = "signal" | "gchat" | "irc";

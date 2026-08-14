@@ -41,15 +41,16 @@
       } @else {
         <div class="filters">
           <button mat-button [class.active]="originFilter() === 'all'" (click)="setFilter('all')">All</button>
-          <button mat-button [class.active]="originFilter() === 'signal'" (click)="setFilter('signal')">Signal</button>
-          <button mat-button [class.active]="originFilter() === 'gchat'" (click)="setFilter('gchat')">Google Chat</button>
+          @for (o of origins; track o) {
+            <button mat-button [class.active]="originFilter() === o" (click)="setFilter(o)">{{ originLabels[o] }}</button>
+          }
         </div>
         <mat-action-list>
           @for (c of visibleConversations(); track c.origin + c.id) {
             <button mat-list-item [class.active]="isActive(c)" (click)="open(c)">
               <span matListItemTitle>{{ title(c) }}</span>
               <span matListItemLine>
-                {{ c.origin === 'signal' ? 'Signal' : 'Google Chat' }} · {{ c.message_count }} msgs
+                {{ originLabels[c.origin] }} · {{ c.message_count }} msgs
                 @if (c.last_ts) {
                   · {{ c.last_ts | date: 'mediumDate' }}
                 }

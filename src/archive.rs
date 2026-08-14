@@ -25,6 +25,7 @@ use sqlx::{AssertSqlSafe, MySqlPool, Row};
 pub enum Origin {
     Signal,
     Gchat,
+    Irc,
 }
 
 impl Origin {
@@ -34,6 +35,7 @@ impl Origin {
         match s {
             "signal" => Some(Origin::Signal),
             "gchat" => Some(Origin::Gchat),
+            "irc" => Some(Origin::Irc),
             _ => None,
         }
     }
@@ -253,6 +255,58 @@ pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
         });
     }
 
+    // IRC. Two things here are written out verbatim rather than shared through a
+    // `format!`, so the SQL stays a literal:
+    //
+    // - `TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at)` is epoch
+    //   seconds from a DATETIME held in UTC. ⚠ NOT `UNIX_TIMESTAMP`, which
+    //   reinterprets the value against whatever `time_zone` the connection
+    //   carries — the same row would come back an hour out depending on who
+    //   asked. This is arithmetic on the stored value; no zone is involved.
+    // - `m.kind IN ('message', 'action')` is what counts as *conversation*. The
+    //   archive also holds joins, parts and server notices — 385,012 notices
+    //   against 425,748 messages in the tree this was built from — and a channel
+    //   whose "last activity" was the server speaking would sort to the top of
+    //   this list having said nothing.
+    //
+    // `is_status = 0` drops the pseudo-conversation irssi files server notices
+    // into: it is named after your own nick, so it looks like a DM with yourself
+    // and contains nothing you said.
+    //
+    // ⚠ DL-SQLX-SCHEMA-TRUTH reads the `SECOND` in `TIMESTAMPDIFF(SECOND, …)`
+    // as a column name and reports it missing from both tables. It is the unit
+    // keyword; the rule's column resolver does not know that function's shape.
+    // Waived rather than written around, because both ways around it are worse:
+    // `UNIX_TIMESTAMP` reinterprets the value against the connection's time
+    // zone, and `TO_SECONDS` needs a magic 62167219200 to reach the epoch.
+    // Filed against dev-lint as #848.
+    // dev-lint: allow-sqlx
+    let irc = sqlx::query(
+        r"SELECT c.id AS id, c.target AS name, c.is_channel AS is_channel,
+                 COUNT(m.id) AS cnt,
+                 MAX(TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at)) AS last_s
+          FROM irc_conversations c
+          LEFT JOIN irc_messages m
+                 ON m.conversation_id = c.id AND m.kind IN ('message', 'action')
+          WHERE c.is_status = 0
+          GROUP BY c.id, c.target, c.is_channel",
+    )
+    .fetch_all(pool)
+    .await?;
+    for r in irc {
+        let id: i32 = r.try_get("id")?;
+        let is_channel: i8 = r.try_get("is_channel")?;
+        let last_s: Option<i64> = r.try_get("last_s")?;
+        out.push(Conversation {
+            origin: Origin::Irc,
+            id: id.to_string(),
+            name: r.try_get("name")?,
+            kind: kind_from_is_dm(is_channel == 0),
+            message_count: r.try_get("cnt")?,
+            last_ts: last_s.map(|s| s * 1000),
+        });
+    }
+
     out.sort_by_key(|c| std::cmp::Reverse(c.last_ts)); // newest activity first
     Ok(out)
 }
@@ -273,6 +327,7 @@ pub async fn messages_page(
     let (mut msgs, next_cursor) = match origin {
         Origin::Signal => signal_messages(pool, id, cursor, limit).await?,
         Origin::Gchat => gchat_messages(pool, id, cursor, limit).await?,
+        Origin::Irc => irc_messages(pool, id, cursor, limit).await?,
     };
     let has_more = msgs.len() as i64 == limit;
     msgs.reverse(); // present ascending
@@ -484,6 +539,87 @@ async fn gchat_messages(
     Ok((msgs, next_cursor))
 }
 
+/// One page of an IRC conversation, newest first.
+///
+/// ⚠ **The cursor's native unit is seconds, and it is the coarsest of the three
+/// origins by a wide margin.** irssi's default `timestamp_format` is `%H:%M`, so
+/// the source records no seconds at all and every line in a busy minute shares
+/// one timestamp — `id` is not a tie-break here so much as the actual ordering.
+/// It holds because the importer walks files in sorted path order and a log is
+/// append-only, so row id within a conversation is file order is time order.
+///
+/// Joins, parts and server notices are excluded: see the note in
+/// [`list_conversations`]. The consequence worth knowing is that
+/// `message_count` there and the rows here are the same population, so a
+/// conversation never claims more messages than it will show.
+async fn irc_messages(
+    pool: &MySqlPool,
+    conversation_id: &str,
+    cursor: Option<(i64, i64)>,
+    limit: i64,
+) -> Result<(Vec<Message>, Option<String>)> {
+    let (cur_ts, cur_id) = (cursor.map(|(ts, _)| ts), cursor.map(|(_, id)| id));
+    // `SECOND` is TIMESTAMPDIFF's unit keyword, not a column; see the note in
+    // list_conversations.
+    // dev-lint: allow-sqlx
+    let rows = sqlx::query(
+        r"SELECT m.id AS id,
+                 TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) AS ts_s,
+                 m.nick AS sender, m.is_self AS is_self, m.text AS body, m.kind AS kind
+          FROM irc_messages m
+          WHERE m.conversation_id = ?
+            AND m.kind IN ('message', 'action')
+            AND (? IS NULL
+                 OR TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) < ?
+                 OR (TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) = ?
+                     AND m.id < ?))
+          ORDER BY ts_s DESC, m.id DESC
+          LIMIT ?",
+    )
+    .bind(conversation_id)
+    .bind(cur_ts)
+    .bind(cur_ts)
+    .bind(cur_ts)
+    .bind(cur_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    let mut msgs = Vec::with_capacity(rows.len());
+    let mut oldest: Option<(i64, i64)> = None;
+    for r in rows {
+        let id: i64 = r.try_get("id")?;
+        let ts_s: i64 = r.try_get("ts_s")?;
+        let is_self: i8 = r.try_get("is_self")?;
+        let kind: String = r.try_get("kind")?;
+        let body: Option<String> = r.try_get("body")?;
+        oldest = Some((ts_s, id));
+        msgs.push(Message {
+            id: id.to_string(),
+            ts: ts_s * 1000,
+            sender: r
+                .try_get::<Option<String>, _>("sender")?
+                .unwrap_or_default(),
+            is_outgoing: is_self != 0,
+            // An action is written in the third person about its sender, which
+            // is why every IRC client renders it `* nick waves` rather than
+            // `nick: waves`. The sender travels in its own field here, so the
+            // star alone carries what is left of that.
+            body: match kind.as_str() {
+                "action" => body.map(|b| format!("* {b}")),
+                _ => body,
+            },
+            deleted: false,
+            edited: false,
+            reactions: Vec::new(),   // IRC has none
+            attachments: Vec::new(), // nor these
+        });
+    }
+
+    let next_cursor = oldest.map(|(ts_s, id)| encode_cursor(ts_s, id));
+    Ok((msgs, next_cursor))
+}
+
 #[derive(Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -545,6 +681,43 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
             conversation_id: r.try_get("cid")?,
             conversation_name: r.try_get("cname")?,
             ts: us_to_ms(ts_us),
+            sender: r
+                .try_get::<Option<String>, _>("sender")?
+                .unwrap_or_default(),
+            snippet: r.try_get::<Option<String>, _>("body")?.unwrap_or_default(),
+        });
+    }
+
+    // IRC. Searching only what was *said* — the same restriction the list and
+    // the page use. Server notices would otherwise dominate every result: they
+    // are 47% of the archive's lines and they are the ones full of words like
+    // "connection" and "user" that somebody searching would actually type.
+    // `SECOND` is TIMESTAMPDIFF's unit keyword, not a column; see the note in
+    // list_conversations.
+    // dev-lint: allow-sqlx
+    let irows = sqlx::query(
+        r"SELECT m.conversation_id AS cid, c.target AS cname,
+                 TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) AS ts_s,
+                 m.nick AS sender, m.text AS body
+          FROM irc_messages m
+          LEFT JOIN irc_conversations c ON c.id = m.conversation_id
+          WHERE m.kind IN ('message', 'action')
+            AND c.is_status = 0
+            AND m.text LIKE ?
+          ORDER BY m.sent_at DESC, m.id DESC LIMIT ?",
+    )
+    .bind(&like)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    for r in irows {
+        let cid: i32 = r.try_get("cid")?;
+        let ts_s: i64 = r.try_get("ts_s")?;
+        hits.push(SearchHit {
+            origin: Origin::Irc,
+            conversation_id: cid.to_string(),
+            conversation_name: r.try_get("cname")?,
+            ts: ts_s * 1000,
             sender: r
                 .try_get::<Option<String>, _>("sender")?
                 .unwrap_or_default(),

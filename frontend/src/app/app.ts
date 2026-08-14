@@ -48,11 +48,26 @@ export class App {
   readonly loading = this.store.loading;
   readonly conversations = this.store.conversations;
 
+  /** One label per origin, and the order the filter buttons appear in.
+   *
+   *  A `Record` rather than a chain of ternaries. The template read
+   *  `origin === 'signal' ? 'Signal' : 'Google Chat'`, which does not fail when
+   *  a third origin arrives — it labels it as the second one. This is a type
+   *  error the day a fourth does. */
+  readonly originLabels: Record<Origin, string> = {
+    signal: 'Signal',
+    gchat: 'Google Chat',
+    irc: 'IRC',
+  };
+  readonly origins: readonly Origin[] = ['signal', 'gchat', 'irc'];
+
   // ?origin filters the list — view-state on the route, like health's ?date.
   private params = toSignal(this.route.queryParamMap);
   readonly originFilter = computed<Origin | 'all'>(() => {
     const o = this.params()?.get('origin');
-    return o === 'signal' || o === 'gchat' ? o : 'all';
+    // Matched against the list rather than compared to literals, so an origin
+    // added above is filterable without touching this.
+    return this.origins.find((known) => known === o) ?? 'all';
   });
 
   // The open conversation is whatever the child route resolved to. Deriving it

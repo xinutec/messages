@@ -52,6 +52,7 @@ fn enums_serialise_to_the_spellings_the_frontend_expects() {
         r#""signal""#
     );
     assert_eq!(serde_json::to_string(&Origin::Gchat).unwrap(), r#""gchat""#);
+    assert_eq!(serde_json::to_string(&Origin::Irc).unwrap(), r#""irc""#);
     assert_eq!(
         serde_json::to_string(&ConversationKind::Dm).unwrap(),
         r#""dm""#
@@ -73,6 +74,7 @@ fn escape_like_neutralises_wildcards() {
 fn origin_only_parses_known_path_segments() {
     assert_eq!(Origin::parse("signal"), Some(Origin::Signal));
     assert_eq!(Origin::parse("gchat"), Some(Origin::Gchat));
+    assert_eq!(Origin::parse("irc"), Some(Origin::Irc));
     assert_eq!(Origin::parse("email"), None);
     assert_eq!(Origin::parse(""), None);
 }
@@ -140,6 +142,8 @@ async fn seed(pool: &MySqlPool) {
         "gchat_reactions",
         "gchat_messages",
         "gchat_conversations",
+        "irc_messages",
+        "irc_conversations",
         "sessions",
     ] {
         let _ = sqlx::query(AssertSqlSafe(format!("DROP TABLE IF EXISTS {t}")))
@@ -155,6 +159,8 @@ async fn seed(pool: &MySqlPool) {
         "CREATE TABLE gchat_conversations (group_id VARCHAR(64) PRIMARY KEY, name VARCHAR(255) NULL, is_dm TINYINT(1) NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE gchat_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, group_id VARCHAR(64) NOT NULL, msg_id VARCHAR(64) NOT NULL, thread_id VARCHAR(64) NULL, sender_id VARCHAR(32) NULL, sender_name VARCHAR(255) NULL, is_self TINYINT(1) NOT NULL DEFAULT 0, ts_us BIGINT NOT NULL, sent_at DATETIME(6) NULL, text TEXT NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE gchat_reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL, emoji VARCHAR(64) NULL, cnt INT NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE irc_conversations (id INT AUTO_INCREMENT PRIMARY KEY, network VARCHAR(64) NOT NULL, target VARCHAR(255) NOT NULL, is_channel TINYINT(1) NOT NULL DEFAULT 0, is_status TINYINT(1) NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE irc_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id INT NOT NULL, source_tag VARCHAR(64) NOT NULL, file_date DATE NOT NULL, line_no INT NOT NULL, sent_at DATETIME NOT NULL, nick VARCHAR(255) NULL, is_self TINYINT(1) NOT NULL DEFAULT 0, kind ENUM('message','action','event','notice') NOT NULL, text TEXT NULL) DEFAULT CHARSET=utf8mb4",
     ];
     for stmt in ddl {
         sqlx::query(stmt).execute(pool).await.expect("ddl");
@@ -231,6 +237,72 @@ async fn seed(pool: &MySqlPool) {
          (?, 'image/jpeg', 'pic.jpg', 1234, '/attachments/pic_jpg'),
          (?, 'application/pdf', 'doc.pdf', 5678, NULL)",
     ).bind(hi).bind(hi).execute(pool).await.unwrap();
+
+    // IRC. Three conversations covering what the origin has that the others do
+    // not: a channel, a query, and the status pseudo-conversation irssi files
+    // server notices into — named after your own nick, and not a conversation.
+    //
+    // Every one carries non-speech rows (a join, a notice) because those are the
+    // bulk of the real archive: 385,012 notices against 425,748 messages in the
+    // tree this was built from. A query that forgets to exclude them looks fine
+    // against a fixture that has none.
+    sqlx::query(
+        "INSERT INTO irc_conversations (network, target, is_channel, is_status) VALUES
+         ('net','#chan',1,0),('net','carol',0,0),('net','me',0,1)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    let chan: i32 = sqlx::query_scalar("SELECT id FROM irc_conversations WHERE target='#chan'")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let carol: i32 = sqlx::query_scalar("SELECT id FROM irc_conversations WHERE target='carol'")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let status: i32 = sqlx::query_scalar("SELECT id FROM irc_conversations WHERE target='me'")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    // 2020-01-01 00:00:00Z is 1577836800; each minute after it adds 60. Three of
+    // the channel's lines share 00:01 — irssi records `%H:%M` and no seconds, so
+    // a whole minute sharing one timestamp is the normal case here, not an edge
+    // one, and row id is what actually orders them.
+    sqlx::query(
+        "INSERT INTO irc_messages (conversation_id, source_tag, file_date, line_no, sent_at, nick, is_self, kind, text) VALUES
+         (?,'net','2020-01-01',1,'2020-01-01 00:00:00','alice',0,'event','alice has joined #chan'),
+         (?,'net','2020-01-01',2,'2020-01-01 00:01:00','alice',0,'message','first findme'),
+         (?,'net','2020-01-01',3,'2020-01-01 00:01:00','me',1,'message','second'),
+         (?,'net','2020-01-01',4,'2020-01-01 00:01:00','alice',0,'action','waves'),
+         (?,'net','2020-01-01',5,'2020-01-01 00:02:00','irc.example.invalid',0,'notice','findme in a notice')",
+    )
+    .bind(chan).bind(chan).bind(chan).bind(chan).bind(chan)
+    .execute(pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO irc_messages (conversation_id, source_tag, file_date, line_no, sent_at, nick, is_self, kind, text) VALUES
+         (?,'net','2020-01-01',1,'2020-01-01 00:03:00','carol',0,'message','hello there')",
+    )
+    .bind(carol)
+    .execute(pool).await.unwrap();
+    // The newest IRC rows of all, and neither may ever surface: the status log
+    // would otherwise sort to the top of the conversation list.
+    //
+    // ⚠ The second is a *message*, not a notice, and it is deliberate. In the
+    // real archive the status log holds nothing but notices, so excluding it by
+    // `is_status` and excluding notices by `kind` look like the same rule and
+    // one of them tests as redundant. They are not the same rule: `is_status`
+    // says this is not a conversation at all, whatever it contains. Without it,
+    // one message here — a nick you once held becoming a target, a note typed at
+    // yourself — becomes a search hit for a conversation the list refuses to
+    // show, which is a result you cannot open.
+    sqlx::query(
+        "INSERT INTO irc_messages (conversation_id, source_tag, file_date, line_no, sent_at, nick, is_self, kind, text) VALUES
+         (?,'net','2020-01-01',1,'2020-01-01 00:09:00','irc.example.invalid',0,'notice','findme motd'),
+         (?,'net','2020-01-01',2,'2020-01-01 00:10:00','me',1,'message','findme note to self')",
+    )
+    .bind(status).bind(status)
+    .execute(pool).await.unwrap();
 }
 
 #[tokio::test]
@@ -241,12 +313,31 @@ async fn conversations_normalise_and_sort_across_origins() {
     };
 
     let convs = archive::list_conversations(&pool).await.unwrap();
-    // Newest activity first: gc1(7000), group:g1(5000), dm:alice(4000),
-    // dm:tie(1500), gc2(None).
-    let ids: Vec<_> = convs.iter().map(|c| c.id.as_str()).collect();
+    // Newest activity first. The IRC pair leads because its fixture carries real
+    // datetimes (2020) while the Signal and Google Chat rows carry bare epoch
+    // milliseconds in 1970 — carol last spoke 00:03, #chan 00:01. Their ids are
+    // auto-increment, so they are looked up rather than written down here.
+    // Then: gc1(7000), group:g1(5000), dm:alice(4000), dm:tie(1500), gc2(None).
+    let irc_id = |name: &str| {
+        convs
+            .iter()
+            .find(|c| c.origin == Origin::Irc && c.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("no IRC conversation named {name}"))
+            .id
+            .clone()
+    };
+    let ids: Vec<_> = convs.iter().map(|c| c.id.clone()).collect();
     assert_eq!(
         ids,
-        ["gc1", "group:g1", "dm:alice", "dm:tie", "gc2"],
+        [
+            irc_id("carol"),
+            irc_id("#chan"),
+            "gc1".to_string(),
+            "group:g1".to_string(),
+            "dm:alice".to_string(),
+            "dm:tie".to_string(),
+            "gc2".to_string(),
+        ],
         "sort by last_ts desc"
     );
 
@@ -429,18 +520,155 @@ async fn search_spans_origins_excludes_deleted_newest_first() {
     };
 
     let hits = archive::search(&pool, "findme", 50).await.unwrap();
+    // Three of the fixture's six 'findme' rows. The other three are IRC and must
+    // not surface: a server notice in #chan, a notice in the status log, and a
+    // *message* in the status log — the newest row of all, and the one that
+    // separates the two exclusions. Drop `kind` and the notices appear; drop
+    // `is_status` and that message appears, first, in a conversation the list
+    // will not show.
     assert_eq!(
         hits.len(),
-        2,
-        "gchat 'hello findme' + signal 'grp findme msg'"
+        3,
+        "irc 'first findme' + gchat 'hello findme' + signal 'grp findme msg'"
     );
     assert_eq!(
         hits[0].origin,
-        Origin::Gchat,
-        "newest first (gc1 m1 @6000 > group @5000)"
+        Origin::Irc,
+        "newest first — the IRC fixture is 2020, the others are epoch-1970"
     );
-    assert_eq!(hits[1].conversation_id, "group:g1");
+    assert_eq!(hits[0].snippet, "first findme");
+    assert_eq!(hits[0].conversation_name.as_deref(), Some("#chan"));
+    assert_eq!(
+        hits[1].origin,
+        Origin::Gchat,
+        "then gc1 m1 @6000 > group @5000"
+    );
+    assert_eq!(hits[2].conversation_id, "group:g1");
 
     // The deleted Signal message 'gone' must never surface.
     assert!(archive::search(&pool, "gone", 50).await.unwrap().is_empty());
+}
+
+/// The status log is left out and only speech is counted.
+///
+/// Its notice is the newest IRC row in the fixture, so a query that dropped the
+/// `is_status` filter would not merely include it — it would put a conversation
+/// with yourself, containing nothing you wrote, at the top of the list.
+#[tokio::test]
+async fn irc_conversations_leave_out_the_status_log_and_count_only_speech() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+
+    let convs = archive::list_conversations(&pool).await.unwrap();
+    let irc: Vec<_> = convs.iter().filter(|c| c.origin == Origin::Irc).collect();
+    let names: Vec<_> = irc.iter().filter_map(|c| c.name.as_deref()).collect();
+    assert_eq!(
+        names,
+        ["carol", "#chan"],
+        "the status log is not a conversation"
+    );
+
+    let chan = irc
+        .iter()
+        .find(|c| c.name.as_deref() == Some("#chan"))
+        .unwrap();
+    assert_eq!(chan.kind, ConversationKind::Group, "a channel is a group");
+    assert_eq!(
+        chan.message_count, 3,
+        "2 messages + 1 action; the join and the notice are not conversation"
+    );
+    assert_eq!(
+        chan.last_ts,
+        Some(1_577_836_860_000),
+        "last activity is the action at 00:01, not the notice at 00:02"
+    );
+
+    let carol = irc
+        .iter()
+        .find(|c| c.name.as_deref() == Some("carol"))
+        .unwrap();
+    assert_eq!(carol.kind, ConversationKind::Dm, "a query is a DM");
+}
+
+/// A page carries what was said and nothing else, and an action is marked as
+/// one. The sender travels in its own field, so the leading star is all that is
+/// left to say this was `/me` rather than speech.
+#[tokio::test]
+async fn irc_page_shows_speech_only_and_marks_actions() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+
+    let convs = archive::list_conversations(&pool).await.unwrap();
+    let chan = convs
+        .iter()
+        .find(|c| c.origin == Origin::Irc && c.name.as_deref() == Some("#chan"))
+        .unwrap();
+    let page = archive::messages_page(&pool, Origin::Irc, &chan.id, None, 50)
+        .await
+        .unwrap();
+
+    let bodies: Vec<_> = page
+        .messages
+        .iter()
+        .map(|m| m.body.as_deref().unwrap_or(""))
+        .collect();
+    assert_eq!(
+        bodies,
+        ["first findme", "second", "* waves"],
+        "join and notice excluded; the action keeps its star"
+    );
+    assert_eq!(
+        page.messages
+            .iter()
+            .map(|m| m.is_outgoing)
+            .collect::<Vec<_>>(),
+        [false, true, false],
+        "is_self becomes is_outgoing"
+    );
+    assert_eq!(page.messages[0].sender, "alice");
+    assert_eq!(
+        page.messages.len() as i64,
+        chan.message_count,
+        "the list must not promise more messages than the page will show"
+    );
+}
+
+/// ⚠ Three of the channel's lines share one minute, which is the *normal* case
+/// for this origin rather than an edge one: irssi records `%H:%M` and no
+/// seconds. Ordering therefore rests entirely on row id, which the importer
+/// makes meaningful by walking files in sorted path order.
+#[tokio::test]
+async fn irc_page_orders_lines_that_share_a_minute() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+
+    let convs = archive::list_conversations(&pool).await.unwrap();
+    let chan = convs
+        .iter()
+        .find(|c| c.origin == Origin::Irc && c.name.as_deref() == Some("#chan"))
+        .unwrap();
+
+    // One at a time, paging back through a single shared timestamp: the case a
+    // ts-only cursor cannot express, because every row's ts is equal.
+    let mut seen = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = archive::messages_page(&pool, Origin::Irc, &chan.id, cursor, 1)
+            .await
+            .unwrap();
+        let Some(m) = page.messages.first() else {
+            break;
+        };
+        seen.push(m.body.clone().unwrap_or_default());
+        assert_eq!(m.ts, 1_577_836_860_000, "all three share 00:01");
+        match page.next_cursor.as_deref().and_then(parse_cursor) {
+            Some(c) if page.has_more => cursor = Some(c),
+            _ => break,
+        }
+    }
+    seen.reverse(); // paged newest→oldest
+    assert_eq!(seen, ["first findme", "second", "* waves"], "file order");
 }

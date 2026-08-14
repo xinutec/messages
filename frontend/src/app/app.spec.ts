@@ -118,4 +118,24 @@ describe('App', () => {
     expect(app.title({ ...CONVS[0], name: '', kind: 'group' })).toBe('Group');
     expect(app.title(CONVS[0])).toBe('Alice');
   });
+
+  /** Every origin names itself. The template used to read
+   *  `origin === 'signal' ? 'Signal' : 'Google Chat'`, which does not *fail* on a
+   *  third origin — it labels IRC as Google Chat, on the conversation list, for
+   *  every row. A missing label would be a blank; a wrong one is a lie. */
+  it('labels every origin as itself, with none borrowing another name', () => {
+    const { app } = setup(makeApi());
+    const labels = app.origins.map((o) => app.originLabels[o]);
+    expect(labels).toEqual(['Signal', 'Google Chat', 'IRC']);
+    expect(new Set(labels).size).toBe(app.origins.length);
+    for (const label of labels) expect(label).not.toBe('');
+  });
+
+  /** The filter list and the label table are two statements of one fact, so a
+   *  new origin added to only one of them is caught here rather than by a blank
+   *  button in the toolbar. */
+  it('has a label for each filter button and no orphans', () => {
+    const { app } = setup(makeApi());
+    expect([...app.origins].sort()).toEqual(Object.keys(app.originLabels).sort());
+  });
 });
