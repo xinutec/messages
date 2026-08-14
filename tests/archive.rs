@@ -119,9 +119,17 @@ async fn test_pool() -> Option<MySqlPool> {
 /// the suite the same way — a race is worth catching wherever it appears, not
 /// suppressing in the one environment that had learned to avoid it.
 ///
-/// One shared fixture is sound *because* every test here only reads — this app
-/// is a read-only viewer and none of the queries under test write. A test that
-/// ever mutates needs its own database, not a slot in this one.
+/// ⚠ THIS IS NO LONGER A READ-ONLY SUITE, and the rule that replaced "nothing
+/// writes" is narrower: a test that writes must confine itself to rows no other
+/// test asserts on. The send-path tests archive an echo into `irc_messages` and
+/// delete it again; they stay clear of the conversations the list and search
+/// tests read.
+///
+/// ⚠ `irc_conversation_stats` is seeded ONCE from the rows and is NOT maintained
+/// here — production keeps it current with triggers this suite has no copy of.
+/// So a test that inserts a line and then asserts on `list_conversations` would
+/// be reading a count that deliberately did not move. Assert on `irc_messages`
+/// directly, as the send-path tests do.
 static FIXTURE: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
 
 /// A pool onto the seeded fixture, or None when the DB tests are being skipped.
@@ -142,6 +150,7 @@ async fn seed(pool: &MySqlPool) {
         "gchat_reactions",
         "gchat_messages",
         "gchat_conversations",
+        "irc_conversation_stats",
         "irc_messages",
         "irc_conversations",
         "sessions",
@@ -167,6 +176,9 @@ async fn seed(pool: &MySqlPool) {
         // lets a dedupe test pass while proving nothing, which is what this
         // table did until the send path needed to rely on it.
         "CREATE TABLE irc_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id INT NOT NULL, source_tag VARCHAR(64) NOT NULL, file_date DATE NOT NULL, line_no INT NOT NULL, sent_at DATETIME NOT NULL, nick VARCHAR(255) NULL, is_self TINYINT(1) NOT NULL DEFAULT 0, kind ENUM('message','action','event','notice') NOT NULL, text TEXT NULL, UNIQUE KEY uniq_irc_line (conversation_id, source_tag, file_date, line_no)) DEFAULT CHARSET=utf8mb4",
+        // No trigger here: production maintains this from `signal`'s migrations
+        // v11-v14, and this suite seeds it from the rows instead (see `seed`).
+        "CREATE TABLE irc_conversation_stats (conversation_id INT NOT NULL PRIMARY KEY, cnt BIGINT NOT NULL DEFAULT 0, last_sent_at DATETIME NULL) DEFAULT CHARSET=utf8mb4",
     ];
     for stmt in ddl {
         sqlx::query(stmt).execute(pool).await.expect("ddl");
@@ -309,6 +321,24 @@ async fn seed(pool: &MySqlPool) {
     )
     .bind(status).bind(status)
     .execute(pool).await.unwrap();
+
+    // The conversation list reads `irc_conversation_stats` rather than
+    // aggregating, so the fixture has to hold it too.
+    //
+    // ⚠ DERIVED FROM THE ROWS, never hand-written. In production this table is
+    // maintained by triggers that live in the `signal` repo — this suite cannot
+    // test those, and duplicating their logic here would let the copy drift into
+    // agreeing with a query that is wrong. Computing it with the documented
+    // backfill statement instead means the fixture asserts the one property that
+    // actually matters to this repo: the list agrees with the aggregate.
+    sqlx::query(
+        "INSERT INTO irc_conversation_stats (conversation_id, cnt, last_sent_at)
+         SELECT conversation_id, COUNT(*), MAX(sent_at) FROM irc_messages
+          WHERE kind IN ('message', 'action') GROUP BY conversation_id",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]

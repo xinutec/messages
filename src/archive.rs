@@ -283,41 +283,39 @@ pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
     // `UNIX_TIMESTAMP` reinterprets a DATETIME against the connection's time
     // zone, which is the bug this avoids, and `TO_SECONDS` needs a magic
     // 62167219200 to reach the epoch.
-    // ⚠ THE DERIVED TABLE IS THE PERFORMANCE FIX, NOT A STYLE CHOICE. Aggregate
-    // `irc_messages` on its own and join the result to the conversations; do not
-    // group a join of the two, which is the obvious spelling and was the one
-    // here until the archive stopped being a single network.
+    // ⚠ THIS READS A MAINTAINED TABLE AND MUST NOT GO BACK TO AGGREGATING.
+    // `irc_conversation_stats` holds one row per conversation, kept current by
+    // triggers on `irc_messages` (signal's migrations v11-v14). Both sides of
+    // this join are a few hundred rows, so the landing screen no longer depends
+    // on the size of the archive at all.
     //
-    // Measured on 3,683,670 rows, which is what five networks' logs come to:
+    // The history, because the obvious "improvement" is to inline the aggregate
+    // again. Measured on 3,683,670 rows:
     //
     //     grouping the join                 27_000 ms
-    //     the same, FORCE INDEX             3_300 ms
-    //     aggregate first, then join        1_600 ms
+    //     the same, FORCE INDEX              3_300 ms
+    //     aggregate first, then join         1_600 ms
+    //     ...which settled at ~1_500 ms and tripped the 1s slow-statement alert
+    //     on EVERY landing.
     //
-    // The index that makes it possible is `idx_irc_conv_kind_ts (conversation_id,
-    // kind, sent_at)` in the signal repo's migration v9 — with `kind` in it the
-    // whole aggregate is answerable from the index and nothing is read from the
-    // table. ⚠ But adding the index changed NOTHING on its own: the optimizer
-    // kept choosing `uniq_irc_line`, whose leading column is also
-    // `conversation_id` and whose row estimate is 15x under the truth. This
-    // shape is what gets it chosen without a hint — `FORCE INDEX` works and is
-    // an instruction that has to stay correct, where a shape the optimizer can
-    // read is a property.
+    // That last 1.5s had no query fix left. The aggregate needs `kind IN
+    // ('message','action')`, and that filter sits on the middle column of
+    // `idx_irc_conv_kind_ts`, which defeats MariaDB's loose index scan: the same
+    // grouping without it examines 431 rows in 1.4ms, with it 3,614,079 rows in
+    // 1.29s. Rewriting the `IN` as a UNION of two `kind = …` groups is what the
+    // loose-index-scan documentation suggests and it measured WORSE — 2.15s,
+    // because it buys two scans instead of one. 0.75s is the floor for counting
+    // by scanning at all.
     //
-    // So: if this is ever rewritten back into a grouped join, the index stops
-    // being used and the landing screen takes half a minute again.
+    // ⚠ `COALESCE(s.cnt, 0)` and the NULL `last_s`: a conversation with no
+    // message/action lines has NO stats row, not a zero row. The trigger only
+    // creates one when a counted line arrives.
     let irc = sqlx::query(
         r"SELECT c.id AS id, c.target AS name, c.is_channel AS is_channel,
-                 COALESCE(a.cnt, 0) AS cnt, a.last_s AS last_s
+                 COALESCE(s.cnt, 0) AS cnt,
+                 TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', s.last_sent_at) AS last_s
           FROM irc_conversations c
-          LEFT JOIN (
-              SELECT conversation_id,
-                     COUNT(*) AS cnt,
-                     MAX(TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', sent_at)) AS last_s
-              FROM irc_messages
-              WHERE kind IN ('message', 'action')
-              GROUP BY conversation_id
-          ) a ON a.conversation_id = c.id
+          LEFT JOIN irc_conversation_stats s ON s.conversation_id = c.id
           WHERE c.is_status = 0",
     )
     .fetch_all(pool)
