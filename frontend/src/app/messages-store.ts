@@ -41,10 +41,12 @@ export class MessagesStore {
    *  14,438) for an action the user had just taken himself. `init` is guarded
    *  so the shell can call it freely; that guard used to cover the fetch too.
    *
-   *  Deliberately NOT on a timer. This query aggregates 3.7M rows and takes
-   *  ~1.5s — see `archive.rs` — so it runs when returning to the list, which is
-   *  the moment its answer is about to be looked at. The open thread polls for
-   *  new messages separately, and that query is indexed and cheap.
+   *  Deliberately NOT on a timer, and no longer for the reason it once was.
+   *  This query used to aggregate 3.7M rows for ~1.5s; it now joins two ~300-row
+   *  tables in under a millisecond (`archive.rs`, and signal's
+   *  `irc_conversation_stats`). What survives the speedup is the rule: it runs
+   *  when the user returns to the list, because that is when its answer is about
+   *  to be read. The open thread polls for new messages separately.
    *
    *  Errors leave the previous list in place: a stale list beats an empty one,
    *  and the failure is visible the moment anything is tapped. */

@@ -11,7 +11,7 @@ import { MatListModule } from '@angular/material/list';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatToolbarModule } from '@angular/material/toolbar';
 
-import { Subject, catchError, filter, of, switchMap } from 'rxjs';
+import { Subject, catchError, filter, fromEvent, of, switchMap } from 'rxjs';
 
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
@@ -102,8 +102,7 @@ export class App {
 
     // Re-read the list on the way back to it. Closing a conversation is the
     // moment its unread count and last-message time are about to be read, and it
-    // is a deliberate act rather than a tick — which is what makes a 1.5s query
-    // acceptable here and unacceptable on a timer.
+    // is a deliberate act rather than a tick.
     let wasOpen = false;
     this.router.events
       .pipe(
@@ -114,6 +113,30 @@ export class App {
         const open = this.active() != null;
         if (wasOpen && !open) this.store.refresh();
         wasOpen = open;
+      });
+
+    // ⚠ **The same moment, arriving by a route the router never sees.** Bringing
+    // the app back from the Android launcher is a return to the list every bit
+    // as much as closing a conversation is, but nothing navigates: the list is
+    // already mounted and simply keeps showing what it last rendered. Measured
+    // on the Pixel 9 — a two-hour-old view, ten messages behind on `#linux` and
+    // one conversation in the wrong position, with nothing about it looking old.
+    // That is what makes it worth a listener rather than a shrug: a count that
+    // is visibly absent gets re-read, a count that is quietly wrong does not.
+    //
+    // Not a timer, and not a staleness check — the trigger is the user deciding
+    // to look, which is the same rule the whole app refreshes by.
+    //
+    // Unconditional, with no "only when the list is the visible screen" test:
+    // on a wide screen the list and the open thread share the window, so that
+    // test would skip the one case where a stale list is on screen next to a
+    // thread that refreshed itself. It is affordable to be unconditional now —
+    // the query costs well under a millisecond — and the gate would be a guess
+    // about layout made in a place that cannot see the layout.
+    fromEvent(document, 'visibilitychange')
+      .pipe(takeUntilDestroyed())
+      .subscribe(() => {
+        if (document.visibilityState === 'visible') this.store.refresh();
       });
     this.search$
       .pipe(

@@ -30,10 +30,10 @@ const CONVS: Conversation[] = [
 
 const ME: Me = { user_id: 'u1', display_name: 'Test User' };
 
-function makeApi(over: { search?: ReturnType<typeof vi.fn> } = {}) {
+function makeApi(over: { search?: ReturnType<typeof vi.fn>; conversations?: ReturnType<typeof vi.fn> } = {}) {
   return {
     me: vi.fn(() => of(ME)),
-    conversations: vi.fn(() => of(CONVS)),
+    conversations: over.conversations ?? vi.fn(() => of(CONVS)),
     messages: vi.fn(() => of({ messages: [msg('1', 100)], has_more: false, next_cursor: null } as MessagesPage)),
     search: over.search ?? vi.fn(() => of([] as SearchHit[])),
     logout: vi.fn(() => of({})),
@@ -117,6 +117,44 @@ describe('App', () => {
     expect(app.title({ ...CONVS[0], name: null })).toBe('Direct message');
     expect(app.title({ ...CONVS[0], name: '', kind: 'group' })).toBe('Group');
     expect(app.title(CONVS[0])).toBe('Alice');
+  });
+
+  /** The bug this covers did not look like a bug: after two hours in the
+   *  background the list came back showing counts ten messages behind and one
+   *  conversation in the wrong position, with nothing on screen saying so. The
+   *  router never fires on a resume — the list is already mounted — so
+   *  `visibilitychange` is the only signal that the user has come back to look. */
+  it('re-reads the list when the app returns to the foreground', () => {
+    const conversations = vi.fn(() => of(CONVS));
+    setup(makeApi({ conversations }));
+    expect(conversations).toHaveBeenCalledTimes(1); // the initial load
+
+    document.dispatchEvent(new Event('visibilitychange')); // jsdom: 'visible'
+    expect(conversations).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not re-read when the app goes to the background', () => {
+    const conversations = vi.fn(() => of(CONVS));
+    setup(makeApi({ conversations }));
+    const hidden = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    try {
+      document.dispatchEvent(new Event('visibilitychange'));
+      expect(conversations).toHaveBeenCalledTimes(1);
+    } finally {
+      hidden.mockRestore();
+    }
+  });
+
+  /** A listener on `document` outlives the component unless something removes
+   *  it. Without `takeUntilDestroyed` each teardown would leave one behind,
+   *  firing a query for a screen that is gone — invisible in a browser, and a
+   *  test that only checked the refresh happens would still pass. */
+  it('stops listening once the component is destroyed', () => {
+    const conversations = vi.fn(() => of(CONVS));
+    setup(makeApi({ conversations }));
+    TestBed.resetTestingModule(); // destroys the injector the component was made in
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(conversations).toHaveBeenCalledTimes(1);
   });
 
   /** Every origin names itself. The template used to read
