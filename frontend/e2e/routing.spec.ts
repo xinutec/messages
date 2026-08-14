@@ -130,3 +130,31 @@ test("Back returns from a conversation to the list", async ({ page }) => {
   await expect(page).not.toHaveURL(/\/conversation\//);
   await page.getByPlaceholder("Search messages").waitFor();
 });
+
+/**
+ * Returning to the app is a return to the list, and the router never sees it.
+ *
+ * On Android the list stays mounted while the app is backgrounded, so nothing
+ * navigates when it comes back — measured on a Pixel 9, a two-hour-old list
+ * that looked current. This is the whole chain the unit test cannot reach:
+ * the visibility event, through the store's refetch, to a changed number on
+ * screen. The mock answers with a higher count the second time, which is what
+ * an idle two hours actually looks like.
+ */
+test("returning to the foreground re-reads the list", async ({ page }) => {
+  await page.route("**/api/**", (r) => r.fulfill({ status: 204, body: "" }));
+  await page.route("**/api/me", (r) => r.fulfill({ json: ME }));
+  let calls = 0;
+  await page.route("**/api/conversations", (r) =>
+    r.fulfill({ json: [{ ...CONVERSATIONS[0], message_count: ++calls === 1 ? 5 : 9 }] }),
+  );
+
+  await page.goto("/");
+  await expect(page.getByText(/5 msgs/)).toBeVisible();
+
+  // What Chrome does when the app is brought back: the document is already
+  // 'visible', and this event is the only announcement of it.
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+
+  await expect(page.getByText(/9 msgs/)).toBeVisible();
+});
