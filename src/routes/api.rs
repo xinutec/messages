@@ -172,8 +172,12 @@ pub async fn send(
         return Err(AppError::NotFound);
     }
 
+    // ⚠ PARSED HERE, NOT IN THE COMPOSER, so the API and the UI cannot come to
+    // disagree about what a leading slash means — every caller gets the same
+    // behaviour, which is what `feedback_cli_mirrors_ui` asks for.
+    let (text, is_action) = crate::irc_send::parse_slash(&req.text);
     match sender
-        .send(&target.network, &target.target, &req.text)
+        .send(&target.network, &target.target, text, is_action)
         .await?
     {
         // ⚠ BOTH ARMS LOG, because both are 200 and the request trace cannot

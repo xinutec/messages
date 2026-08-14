@@ -73,6 +73,39 @@ pub enum Outcome {
     Refused(String),
 }
 
+/// What a leading slash means: the action, the escape, and nothing else.
+///
+/// ⚠ **THIS EXISTS BECAUSE `/me` WENT OUT AS FOUR LITERAL CHARACTERS.** The send
+/// path hands the composer's text to irssi as DATA that never reaches a command
+/// parser — that is what makes `/exec` and an embedded newline harmless from a
+/// web request, and it is not up for negotiation. The cost was that `/me`, which
+/// is not really a command but content, was transmitted verbatim to a channel.
+///
+/// So exactly one command is understood, and it is turned into a FLAG rather
+/// than into anything a parser sees:
+///
+///   * `/me waves` → an action saying `waves`;
+///   * `//anything` → the literal text `/anything`, IRC's own escape;
+///   * anything else, including `/quit` and `/usr/bin/foo`, is unchanged and
+///     sent as text.
+///
+/// ⚠ Other slash words are deliberately NOT refused. They are harmless — they
+/// reach no parser — and refusing them would break the ordinary case of a
+/// message that starts with a path, which in `#linux` is not hypothetical.
+pub fn parse_slash(text: &str) -> (&str, bool) {
+    if let Some(rest) = text.strip_prefix("/me ")
+        && !rest.trim().is_empty()
+    {
+        return (rest, true);
+    }
+    if let Some(rest) = text.strip_prefix('/')
+        && rest.starts_with('/')
+    {
+        return (rest, false);
+    }
+    (text, false)
+}
+
 /// A message irssi has put on the wire, described by irssi.
 #[derive(Debug)]
 pub struct Sent {
@@ -83,6 +116,10 @@ pub struct Sent {
     /// always the configured one after a collision on connect.
     pub nick: String,
     pub text: String,
+    /// Whether this went out as an action (`/me`). Carried through because the
+    /// archive stores it as a different `kind`, and the row this app writes has
+    /// to be the row the importer would write.
+    pub is_action: bool,
     /// Absent when the send worked but the echo was not found in the log. That
     /// is not a failure: the message has gone, and the hourly import will still
     /// pick it up. It only means this app cannot show it immediately.
@@ -161,18 +198,31 @@ impl IrcSender {
         }))
     }
 
-    /// Ask irssi to say `text` to `target` on `network`.
+    /// Ask irssi to say `text` to `target` on `network`, as a message or as an
+    /// action (`/me`).
     ///
     /// ⚠ **No shell, and no command line either.** `ssh host cmd args` is not an
     /// exec: ssh joins its arguments with spaces and the far side's shell splits
     /// and expands them again. Here there is nothing to get wrong, because the
     /// request travels on **stdin** as one JSON line and no command is proposed
     /// at all — the far side runs its forced command regardless.
-    pub async fn send(&self, network: &str, target: &str, text: &str) -> Result<Outcome> {
+    pub async fn send(
+        &self,
+        network: &str,
+        target: &str,
+        text: &str,
+        is_action: bool,
+    ) -> Result<Outcome> {
+        // ⚠ A FLAG, and the CTCP framing an action needs is built by the PLUGIN
+        // rather than sent from here. `\x01ACTION …\x01` is control characters,
+        // which the plugin refuses on principle — CR and LF end a protocol line
+        // — and carving an exception for one of them would restore exactly the
+        // allow-list judgement the design removed.
         let request = serde_json::json!({
             "network": network,
             "target": target,
             "text": text,
+            "action": is_action,
         })
         .to_string();
 
@@ -255,6 +305,7 @@ impl IrcSender {
             tag: reply.tag.context("irssi did not report its server tag")?,
             nick: reply.nick.context("irssi did not report its nick")?,
             text: reply.text.unwrap_or_else(|| text.to_string()),
+            is_action,
             logged,
         }))
     }
@@ -313,7 +364,7 @@ pub async fn record_echo(pool: &MySqlPool, conversation_id: &str, sent: &Sent) -
     let res = sqlx::query(
         r"INSERT IGNORE INTO irc_messages
             (conversation_id, source_tag, file_date, line_no, sent_at, nick, is_self, kind, text)
-          VALUES (?, ?, ?, ?, ?, ?, 1, 'message', ?)",
+          VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
     )
     .bind(conversation_id)
     .bind(&sent.tag)
@@ -321,6 +372,11 @@ pub async fn record_echo(pool: &MySqlPool, conversation_id: &str, sent: &Sent) -
     .bind(logged.line_no)
     .bind(&sent_at)
     .bind(&sent.nick)
+    // ⚠ The KIND the importer would give this line, not 'message' always. An
+    // action logged as ` * nick waves` parses as `Kind::Action`; writing the
+    // echo as a message would put a row on the dedupe key that disagrees with
+    // the file, and `INSERT IGNORE` means the reconciler can never correct it.
+    .bind(if sent.is_action { "action" } else { "message" })
     .bind(&sent.text)
     .execute(pool)
     .await?;

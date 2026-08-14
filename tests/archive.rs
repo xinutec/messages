@@ -775,6 +775,7 @@ async fn a_sent_message_and_its_later_import_are_one_row() {
         tag: "net".to_string(),
         nick: "me".to_string(),
         text: "sent from the phone".to_string(),
+        is_action: false,
         logged: Some(messages::irc_send::Logged {
             file_date: "2020-01-02".to_string(),
             line_no: 7,
@@ -852,6 +853,7 @@ async fn an_unlogged_send_records_nothing_and_is_not_an_error() {
         tag: "net".to_string(),
         nick: "me".to_string(),
         text: "gone, but not seen".to_string(),
+        is_action: false,
         logged: None,
     };
     assert!(
@@ -885,6 +887,7 @@ async fn the_echo_takes_its_timestamp_from_the_log_line() {
         tag: "net".to_string(),
         nick: "me".to_string(),
         text: "from a channel".to_string(),
+        is_action: false,
         logged: Some(messages::irc_send::Logged {
             file_date: "2020-01-03".to_string(),
             line_no: 2,
@@ -915,6 +918,7 @@ async fn the_echo_takes_its_timestamp_from_the_log_line() {
             tag: "net".to_string(),
             nick: "me".to_string(),
             text: "unplaceable".to_string(),
+            is_action: false,
             logged: Some(messages::irc_send::Logged {
                 file_date: "2020-01-04".to_string(),
                 line_no: 1,
@@ -934,4 +938,42 @@ async fn the_echo_takes_its_timestamp_from_the_log_line() {
         .execute(&pool)
         .await
         .unwrap();
+}
+
+// ---- what a leading slash means (no DB) -------------------------------------
+
+/// ⚠ **`/me` WENT OUT AS FOUR LITERAL CHARACTERS**, measured 2026-08-14: typed
+/// into the composer it reached `#linux` as the text `/me …` rather than as an
+/// action. The send path hands the composer's words to irssi as DATA that never
+/// reaches a command parser — that is what makes `/exec` and an embedded newline
+/// harmless from a web request — and the price was that the one "command" which
+/// is really content went out verbatim.
+#[test]
+fn a_leading_slash_means_an_action_an_escape_or_nothing() {
+    use messages::irc_send::parse_slash;
+
+    assert_eq!(parse_slash("/me waves"), ("waves", true));
+    assert_eq!(parse_slash("/me  padded "), (" padded ", true));
+
+    // IRC's own escape, so a literal leading slash is still sayable.
+    assert_eq!(parse_slash("//me waves"), ("/me waves", false));
+    assert_eq!(parse_slash("//quit"), ("/quit", false));
+
+    // ⚠ NOT refused, and this is the case that matters in #linux: a message
+    // that happens to start with a path is ordinary text, and rejecting every
+    // unknown slash word would break it to catch a typo that is harmless
+    // anyway — none of these reach a parser.
+    assert_eq!(
+        parse_slash("/usr/bin/foo is broken"),
+        ("/usr/bin/foo is broken", false)
+    );
+    assert_eq!(parse_slash("/quit"), ("/quit", false));
+
+    // A bare `/me` with nothing after it is not an action with an empty body —
+    // the plugin would refuse empty text and the send would fail for a reason
+    // the person could not act on.
+    assert_eq!(parse_slash("/me"), ("/me", false));
+    assert_eq!(parse_slash("/me   "), ("/me   ", false));
+
+    assert_eq!(parse_slash("ordinary words"), ("ordinary words", false));
 }
