@@ -273,14 +273,10 @@ pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
     // into: it is named after your own nick, so it looks like a DM with yourself
     // and contains nothing you said.
     //
-    // ⚠ DL-SQLX-SCHEMA-TRUTH reads the `SECOND` in `TIMESTAMPDIFF(SECOND, …)`
-    // as a column name and reports it missing from both tables. It is the unit
-    // keyword; the rule's column resolver does not know that function's shape.
-    // Waived rather than written around, because both ways around it are worse:
-    // `UNIX_TIMESTAMP` reinterprets the value against the connection's time
-    // zone, and `TO_SECONDS` needs a magic 62167219200 to reach the epoch.
-    // Filed against dev-lint as #848.
-    // dev-lint: allow-sqlx
+    // `TIMESTAMPDIFF` against the epoch, rather than either shorter spelling:
+    // `UNIX_TIMESTAMP` reinterprets a DATETIME against the connection's time
+    // zone, which is the bug this avoids, and `TO_SECONDS` needs a magic
+    // 62167219200 to reach the epoch.
     let irc = sqlx::query(
         r"SELECT c.id AS id, c.target AS name, c.is_channel AS is_channel,
                  COUNT(m.id) AS cnt,
@@ -559,9 +555,6 @@ async fn irc_messages(
     limit: i64,
 ) -> Result<(Vec<Message>, Option<String>)> {
     let (cur_ts, cur_id) = (cursor.map(|(ts, _)| ts), cursor.map(|(_, id)| id));
-    // `SECOND` is TIMESTAMPDIFF's unit keyword, not a column; see the note in
-    // list_conversations.
-    // dev-lint: allow-sqlx
     let rows = sqlx::query(
         r"SELECT m.id AS id,
                  TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) AS ts_s,
@@ -692,9 +685,6 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
     // the page use. Server notices would otherwise dominate every result: they
     // are 47% of the archive's lines and they are the ones full of words like
     // "connection" and "user" that somebody searching would actually type.
-    // `SECOND` is TIMESTAMPDIFF's unit keyword, not a column; see the note in
-    // list_conversations.
-    // dev-lint: allow-sqlx
     let irows = sqlx::query(
         r"SELECT m.conversation_id AS cid, c.target AS cname,
                  TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) AS ts_s,
