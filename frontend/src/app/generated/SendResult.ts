@@ -10,7 +10,7 @@ export type SendResult = {
 sent: boolean, 
 /**
  * Why not, when it did not. This is the far side's refusal — most often
- * that the recipient is not on the allow-list held on the irssi host.
+ * that irssi has no tab open with that target, which is what decides.
  */
 error: string | null, 
 /**

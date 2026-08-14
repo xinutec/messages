@@ -87,13 +87,13 @@ describe('Thread', () => {
     ref.setInput('id', '7');
     fixture.detectChanges();
 
-    // The far side refuses — most often because the recipient is not on the
-    // allow-list held on the irssi host.
-    api.send.mockReturnValueOnce(of({ sent: false, error: 'refused: not on the allow-list', archived: false }));
+    // The far side refuses — most often because irssi has no tab open with
+    // that target, which is what decides.
+    api.send.mockReturnValueOnce(of({ sent: false, error: 'refused: no conversation open with that target', archived: false }));
     thread.draft.set('please keep me');
     await thread.send();
     expect(thread.draft()).toBe('please keep me');
-    expect(thread.sendError()).toContain('allow-list');
+    expect(thread.sendError()).toContain('no conversation open');
 
     // ⚠ The box is emptied only on a real send. Clearing on failure loses what
     // was typed at the exact moment the person has to type it again.

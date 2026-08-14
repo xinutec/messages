@@ -11,9 +11,13 @@
 //!   * the key this presents is pinned on the far side to
 //!     `command="/home/irssi/bin/irc-send",restrict`, so a stolen key can send
 //!     an IRC message and cannot get a shell, read the logs, or forward a port;
-//!   * **who may be messaged is decided on the irssi host**, by a file on its
-//!     volume that this app cannot see or change. A compromised app cannot
-//!     message a stranger, because it is not the thing that decides.
+//!   * **who may be messaged is decided on the irssi host**, and by the live
+//!     state rather than a list: the plugin asks irssi whether it has a window
+//!     item open for the target, so what this app can say something to is
+//!     exactly what Pippijn could have typed into. A compromised app cannot
+//!     message a stranger, because it is not the thing that decides — and the
+//!     thing that decides cannot go stale, because it is not a description of
+//!     the conversations he is in, it *is* them.
 //!
 //! So this module's job is narrow: hand a request over, and turn the answer into
 //! a row. It deliberately does not validate the message — the plugin does, and
@@ -61,7 +65,8 @@ pub struct IrcSender {
 }
 
 /// What irssi says happened. `Refused` is a normal outcome, not an error: the
-/// far side declining to message somebody is the allow-list working.
+/// far side declining to message somebody it has no tab open with is the rule
+/// working, not a fault to report as one.
 #[derive(Debug)]
 pub enum Outcome {
     Sent(Sent),

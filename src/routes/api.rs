@@ -124,7 +124,7 @@ pub struct SendResult {
     /// True only when irssi put the message on the wire.
     pub sent: bool,
     /// Why not, when it did not. This is the far side's refusal — most often
-    /// that the recipient is not on the allow-list held on the irssi host.
+    /// that irssi has no tab open with that target, which is what decides.
     pub error: Option<String>,
     /// Whether the message is already in the archive and so will appear without
     /// waiting for the hourly import. A send can succeed with this false.

@@ -235,7 +235,7 @@ export class Thread {
   readonly draft = signal('');
   readonly sending = signal(false);
   /** The far side's refusal, shown as-is: it is the only place that knows why,
-   *  and "could not send" would hide the usual reason (not on the allow-list). */
+   *  and "could not send" would hide the usual reason (no tab open there). */
   readonly sendError = signal<string | null>(null);
 
   async send(): Promise<void> {

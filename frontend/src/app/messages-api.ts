@@ -40,7 +40,8 @@ export class MessagesApi {
    *
    *  ⚠ Only the text is sent. Who receives it is decided by the conversation in
    *  the URL and looked up server-side, so this cannot address anyone the
-   *  archive has not already seen — and the irssi host has the final say.
+   *  archive has not already seen — and irssi has the final say, refusing any
+   *  target it has no tab open with.
    *
    *  A refused send resolves normally with `sent: false` and a reason; only a
    *  transport failure errors. */
