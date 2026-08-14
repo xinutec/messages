@@ -176,11 +176,27 @@ pub async fn send(
         .send(&target.network, &target.target, &req.text)
         .await?
     {
-        crate::irc_send::Outcome::Refused(why) => Ok(Json(SendResult {
-            sent: false,
-            error: Some(why),
-            archived: false,
-        })),
+        // ⚠ BOTH ARMS LOG, because both are 200 and the request trace cannot
+        // tell them apart. "The tap did nothing" is the failure this whole
+        // logging seam exists for (see routes::telemetry), and a send that was
+        // refused looks identical to one that went, from the outside.
+        //
+        // The network and target are logged; THE MESSAGE IS NOT. What was said
+        // is private conversation and belongs in the archive, which is what the
+        // archive is; a log line is the wrong place for it and outlives its
+        // usefulness by months.
+        crate::irc_send::Outcome::Refused(why) => {
+            tracing::info!(
+                "irc send REFUSED by irssi: {}/{} — {why}",
+                target.network,
+                target.target
+            );
+            Ok(Json(SendResult {
+                sent: false,
+                error: Some(why),
+                archived: false,
+            }))
+        }
         crate::irc_send::Outcome::Sent(sent) => {
             // ⚠ The message has gone by this point. A failure to record it is
             // therefore logged and not returned: telling the caller the send
@@ -192,6 +208,17 @@ pub async fn send(
                     false
                 }
             };
+            tracing::info!(
+                "irc send OK: {}/{} as {} — {}",
+                sent.tag,
+                target.target,
+                sent.nick,
+                if archived {
+                    "echo archived, visible now"
+                } else {
+                    "echo not archived, waits for the hourly import"
+                }
+            );
             Ok(Json(SendResult {
                 sent: true,
                 error: None,
