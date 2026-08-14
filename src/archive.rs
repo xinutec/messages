@@ -283,15 +283,42 @@ pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
     // `UNIX_TIMESTAMP` reinterprets a DATETIME against the connection's time
     // zone, which is the bug this avoids, and `TO_SECONDS` needs a magic
     // 62167219200 to reach the epoch.
+    // ⚠ THE DERIVED TABLE IS THE PERFORMANCE FIX, NOT A STYLE CHOICE. Aggregate
+    // `irc_messages` on its own and join the result to the conversations; do not
+    // group a join of the two, which is the obvious spelling and was the one
+    // here until the archive stopped being a single network.
+    //
+    // Measured on 3,683,670 rows, which is what five networks' logs come to:
+    //
+    //     grouping the join                 27_000 ms
+    //     the same, FORCE INDEX             3_300 ms
+    //     aggregate first, then join        1_600 ms
+    //
+    // The index that makes it possible is `idx_irc_conv_kind_ts (conversation_id,
+    // kind, sent_at)` in the signal repo's migration v9 — with `kind` in it the
+    // whole aggregate is answerable from the index and nothing is read from the
+    // table. ⚠ But adding the index changed NOTHING on its own: the optimizer
+    // kept choosing `uniq_irc_line`, whose leading column is also
+    // `conversation_id` and whose row estimate is 15x under the truth. This
+    // shape is what gets it chosen without a hint — `FORCE INDEX` works and is
+    // an instruction that has to stay correct, where a shape the optimizer can
+    // read is a property.
+    //
+    // So: if this is ever rewritten back into a grouped join, the index stops
+    // being used and the landing screen takes half a minute again.
     let irc = sqlx::query(
         r"SELECT c.id AS id, c.target AS name, c.is_channel AS is_channel,
-                 COUNT(m.id) AS cnt,
-                 MAX(TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at)) AS last_s
+                 COALESCE(a.cnt, 0) AS cnt, a.last_s AS last_s
           FROM irc_conversations c
-          LEFT JOIN irc_messages m
-                 ON m.conversation_id = c.id AND m.kind IN ('message', 'action')
-          WHERE c.is_status = 0
-          GROUP BY c.id, c.target, c.is_channel",
+          LEFT JOIN (
+              SELECT conversation_id,
+                     COUNT(*) AS cnt,
+                     MAX(TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', sent_at)) AS last_s
+              FROM irc_messages
+              WHERE kind IN ('message', 'action')
+              GROUP BY conversation_id
+          ) a ON a.conversation_id = c.id
+          WHERE c.is_status = 0",
     )
     .fetch_all(pool)
     .await?;
