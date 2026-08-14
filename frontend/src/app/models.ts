@@ -16,4 +16,6 @@ export * from "./generated/MessagesPage";
 export * from "./generated/Origin";
 export * from "./generated/Reaction";
 export * from "./generated/SearchHit";
+export * from "./generated/SendRequest";
+export * from "./generated/SendResult";
 export * from "./generated/TelemetryEvent";

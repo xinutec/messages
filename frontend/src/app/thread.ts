@@ -226,6 +226,62 @@ export class Thread {
     if (o != null && i != null) void this.loadThread(o, i);
   }
 
+  // ---- sending (IRC only) -------------------------------------------------
+
+  /** Only IRC has a live client behind it. Signal and Google Chat are archives
+   *  of conversations held elsewhere, so there is nothing here to send with —
+   *  showing a box that always failed would be worse than showing none. */
+  readonly canSend = computed(() => this.origin() === 'irc' && this.routed());
+  readonly draft = signal('');
+  readonly sending = signal(false);
+  /** The far side's refusal, shown as-is: it is the only place that knows why,
+   *  and "could not send" would hide the usual reason (not on the allow-list). */
+  readonly sendError = signal<string | null>(null);
+
+  async send(): Promise<void> {
+    const o = this.origin();
+    const i = this.id();
+    const text = this.draft().trim();
+    if (o == null || i == null || !text || this.sending()) return;
+
+    this.sending.set(true);
+    this.sendError.set(null);
+    try {
+      const res = await firstValueFrom(this.api.send(o, i, text));
+      if (!res.sent) {
+        this.sendError.set(res.error ?? 'Not sent.');
+        return;
+      }
+      // Cleared only once irssi says it went: a failed send that empties the box
+      // loses what was typed, and retyping it is the worst moment to do so.
+      this.draft.set('');
+      if (res.archived) {
+        // The backend wrote what irssi logged, so a reload shows the real line
+        // rather than an optimistic copy of what we asked for.
+        await this.loadThread(o, i);
+      } else {
+        // Sent, but not yet in the archive — the hourly import will bring it.
+        // Saying so is better than silently showing a conversation that appears
+        // not to contain the message just sent.
+        this.sendError.set('Sent. It will appear here after the next import.');
+      }
+    } catch {
+      this.sendError.set('Could not reach the server.');
+    } finally {
+      this.sending.set(false);
+    }
+  }
+
+  /** Enter sends; Shift+Enter is a newline — except that a newline cannot be
+   *  sent at all (IRC lines are newline-delimited and the far side refuses one),
+   *  so the box is single-line and this only stops the form feeling odd. */
+  onComposerKey(e: KeyboardEvent): void {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      void this.send();
+    }
+  }
+
   /** In-app back (the mobile single-pane control) = return to the list route,
    *  keeping the origin filter and dropping the paged depth. */
   back(): void {

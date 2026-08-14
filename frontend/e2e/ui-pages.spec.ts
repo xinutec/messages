@@ -33,6 +33,10 @@ const CONVERSATIONS = [
   { origin: "signal", id: "grp:x", name: "Saturday climbing & bouldering logistics crew", kind: "group", message_count: 4210, last_ts: Date.UTC(2026, 0, 1, 20, 2) },
   { origin: "gchat", id: "gc1", name: "Bob Bytecode", kind: "dm", message_count: 37, last_ts: Date.UTC(2025, 11, 30, 16, 40) },
   { origin: "gchat", id: "gc2", name: "Platform on-call", kind: "group", message_count: 902, last_ts: Date.UTC(2025, 11, 29, 8, 5) },
+  // IRC is the only origin with a composer, so it has to be here or the send
+  // box is never laid out by this suite — and the composer is the one control
+  // that competes for width with anything at phone size.
+  { origin: "irc", id: "7", name: "#a-channel-with-a-long-name", kind: "group", message_count: 5104, last_ts: Date.UTC(2026, 0, 2, 11, 30) },
 ];
 
 /** A busy thread: long sender, a long unbroken-ish body, an "edited" tag, an
@@ -94,6 +98,25 @@ test("open thread — meta + reactions + attachment: lays out cleanly @ phone wi
   await page.locator(".msg .body").first().waitFor();
   await page.getByText("👍 3").waitFor();
   await page.getByText("referral-scan-2026-final-v2.pdf", { exact: false }).waitFor();
+  await expectNoTextOverlaps(page, testInfo);
+  await expectNoHorizontalOverflow(page, testInfo);
+});
+
+test("open an IRC thread — the composer: lays out cleanly @ phone width", async ({ page }, testInfo) => {
+  await mockApi(page);
+  await page.goto("/conversation/irc/7");
+  await page.locator(".msg .body").first().waitFor();
+  // The send button is a mat-icon: an icon-font fallback renders the ligature
+  // word "send" instead of the glyph, which is exactly the failure that reads
+  // green in vitest because jsdom has no fonts.
+  await page.getByRole("button", { name: "Send" }).waitFor();
+  await expectIconFontLoaded(page);
+  // A long draft is what actually crowds this row — the input, the button, and
+  // the phone's width all compete, and a flex item's default min-width is its
+  // content, so an unconstrained field pushes the button off the edge.
+  await page.getByLabel("Message").fill(
+    "a fairly long line of the sort somebody actually types on a phone, to see whether the send button survives it",
+  );
   await expectNoTextOverlaps(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
 });

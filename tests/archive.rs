@@ -160,7 +160,13 @@ async fn seed(pool: &MySqlPool) {
         "CREATE TABLE gchat_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, group_id VARCHAR(64) NOT NULL, msg_id VARCHAR(64) NOT NULL, thread_id VARCHAR(64) NULL, sender_id VARCHAR(32) NULL, sender_name VARCHAR(255) NULL, is_self TINYINT(1) NOT NULL DEFAULT 0, ts_us BIGINT NOT NULL, sent_at DATETIME(6) NULL, text TEXT NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE gchat_reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL, emoji VARCHAR(64) NULL, cnt INT NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE irc_conversations (id INT AUTO_INCREMENT PRIMARY KEY, network VARCHAR(64) NOT NULL, target VARCHAR(255) NOT NULL, is_channel TINYINT(1) NOT NULL DEFAULT 0, is_status TINYINT(1) NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE irc_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id INT NOT NULL, source_tag VARCHAR(64) NOT NULL, file_date DATE NOT NULL, line_no INT NOT NULL, sent_at DATETIME NOT NULL, nick VARCHAR(255) NULL, is_self TINYINT(1) NOT NULL DEFAULT 0, kind ENUM('message','action','event','notice') NOT NULL, text TEXT NULL) DEFAULT CHARSET=utf8mb4",
+        // ⚠ `uniq_irc_line` IS NOT DECORATION HERE. It is the archive's dedupe
+        // key, and the send path writes a row that the hourly importer will
+        // later write again from the same log line — the constraint is the only
+        // thing that makes those one row instead of two. A fixture without it
+        // lets a dedupe test pass while proving nothing, which is what this
+        // table did until the send path needed to rely on it.
+        "CREATE TABLE irc_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id INT NOT NULL, source_tag VARCHAR(64) NOT NULL, file_date DATE NOT NULL, line_no INT NOT NULL, sent_at DATETIME NOT NULL, nick VARCHAR(255) NULL, is_self TINYINT(1) NOT NULL DEFAULT 0, kind ENUM('message','action','event','notice') NOT NULL, text TEXT NULL, UNIQUE KEY uniq_irc_line (conversation_id, source_tag, file_date, line_no)) DEFAULT CHARSET=utf8mb4",
     ];
     for stmt in ddl {
         sqlx::query(stmt).execute(pool).await.expect("ddl");
@@ -671,4 +677,235 @@ async fn irc_page_orders_lines_that_share_a_minute() {
     }
     seen.reverse(); // paged newest→oldest
     assert_eq!(seen, ["first findme", "second", "* waves"], "file order");
+}
+
+#[tokio::test]
+async fn irc_target_names_the_network_and_flags_the_status_log() {
+    let Some(pool) = seeded_pool().await else {
+        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
+        return;
+    };
+
+    let convs = archive::list_conversations(&pool).await.unwrap();
+    let carol = convs
+        .iter()
+        .find(|c| c.origin == Origin::Irc && c.name.as_deref() == Some("carol"))
+        .unwrap();
+
+    let t = archive::irc_target(&pool, &carol.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(t.network, "net");
+    assert_eq!(t.target, "carol");
+    assert!(!t.is_status);
+
+    // The status pseudo-conversation is not in list_conversations at all — the
+    // reader hides it — so it is looked up by the id the fixture gave it. The
+    // sender has to refuse it, and can only do that if this says so.
+    let status: i32 = sqlx::query_scalar("SELECT id FROM irc_conversations WHERE target='me'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let t = archive::irc_target(&pool, &status.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        t.is_status,
+        "irssi files server notices under your own nick"
+    );
+
+    assert!(
+        archive::irc_target(&pool, "99999").await.unwrap().is_none(),
+        "a conversation that does not exist is None, not an error"
+    );
+}
+
+/// ⚠ The one that matters: the row the send path writes and the row the hourly
+/// importer writes for the same log line must be THE SAME ROW.
+///
+/// They are written by different programs in different repositories, minutes to
+/// an hour apart, and nothing but the unique key makes them one message. Get the
+/// key wrong and nothing fails — the conversation just shows what Pippijn said
+/// twice.
+#[tokio::test]
+async fn a_sent_message_and_its_later_import_are_one_row() {
+    let Some(pool) = seeded_pool().await else {
+        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
+        return;
+    };
+
+    let carol: i32 = sqlx::query_scalar("SELECT id FROM irc_conversations WHERE target='carol'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let id = carol.to_string();
+
+    let sent = messages::irc_send::Sent {
+        // The tag irssi reported, which is what the importer takes from the log
+        // file's path — not the conversation's network, which `--map` may have
+        // rewritten.
+        tag: "net".to_string(),
+        nick: "me".to_string(),
+        text: "sent from the phone".to_string(),
+        logged: Some(messages::irc_send::Logged {
+            file_date: "2020-01-02".to_string(),
+            line_no: 7,
+            line: "00:04 <me> sent from the phone".to_string(),
+        }),
+    };
+
+    let wrote = messages::irc_send::record_echo(&pool, &id, &sent)
+        .await
+        .unwrap();
+    assert!(wrote, "the echo is written so it can be shown at once");
+
+    // Now the importer, reading the same line out of irssi's log an hour later.
+    // This is exactly `insert_irc_line` in the signal repo: INSERT IGNORE on
+    // (conversation, source_tag, file_date, line_no).
+    let importer = sqlx::query(
+        "INSERT IGNORE INTO irc_messages
+           (conversation_id, source_tag, file_date, line_no, sent_at, nick, is_self, kind, text)
+         VALUES (?, 'net', '2020-01-02', 7, '2020-01-02 00:04:00', 'me', 1, 'message', 'sent from the phone')",
+    )
+    .bind(&id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        importer.rows_affected(),
+        0,
+        "the import must find it already present, not add a second copy"
+    );
+
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM irc_messages WHERE conversation_id = ? AND file_date = '2020-01-02'",
+    )
+    .bind(&id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(n, 1, "one message, however many times it is written");
+
+    // And the timestamp came from the log line, not from the clock — otherwise
+    // the message sorts by when the request happened to be served.
+    let at: String = sqlx::query_scalar(
+        "SELECT DATE_FORMAT(sent_at, '%Y-%m-%d %H:%i:%s') FROM irc_messages
+         WHERE conversation_id = ? AND file_date = '2020-01-02'",
+    )
+    .bind(&id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(at, "2020-01-02 00:04:00");
+
+    sqlx::query("DELETE FROM irc_messages WHERE conversation_id = ? AND file_date = '2020-01-02'")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// A send that irssi could not find in the log is still a send. Recording
+/// nothing is right — the importer will pick the line up — and claiming failure
+/// would invite sending it twice.
+#[tokio::test]
+async fn an_unlogged_send_records_nothing_and_is_not_an_error() {
+    let Some(pool) = seeded_pool().await else {
+        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
+        return;
+    };
+
+    let carol: i32 = sqlx::query_scalar("SELECT id FROM irc_conversations WHERE target='carol'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let sent = messages::irc_send::Sent {
+        tag: "net".to_string(),
+        nick: "me".to_string(),
+        text: "gone, but not seen".to_string(),
+        logged: None,
+    };
+    assert!(
+        !messages::irc_send::record_echo(&pool, &carol.to_string(), &sent)
+            .await
+            .unwrap()
+    );
+}
+
+/// irssi records `%H:%M` and nothing finer, and the date comes from the log
+/// file's path — so `sent_at` has to be read off the line, not off the clock.
+/// Reading the clock would disagree with the importer for the same line whenever
+/// a send straddled a minute, and `sent_at` is what the reader orders by.
+#[tokio::test]
+async fn the_echo_takes_its_timestamp_from_the_log_line() {
+    let Some(pool) = seeded_pool().await else {
+        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
+        return;
+    };
+
+    let carol: i32 = sqlx::query_scalar("SELECT id FROM irc_conversations WHERE target='carol'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let id = carol.to_string();
+
+    // ⚠ `< nick>` — the space is the CHANNEL MODE, not part of the name. It is
+    // how an unopped speaker appears in a channel, and it must not throw the
+    // timestamp off.
+    let sent = messages::irc_send::Sent {
+        tag: "net".to_string(),
+        nick: "me".to_string(),
+        text: "from a channel".to_string(),
+        logged: Some(messages::irc_send::Logged {
+            file_date: "2020-01-03".to_string(),
+            line_no: 2,
+            line: "09:05 < me> from a channel".to_string(),
+        }),
+    };
+    assert!(
+        messages::irc_send::record_echo(&pool, &id, &sent)
+            .await
+            .unwrap()
+    );
+    let at: String = sqlx::query_scalar(
+        "SELECT DATE_FORMAT(sent_at, '%Y-%m-%d %H:%i:%s') FROM irc_messages
+         WHERE conversation_id = ? AND file_date = '2020-01-03'",
+    )
+    .bind(&id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(at, "2020-01-03 09:05:00");
+
+    // A line that is not shaped like a log line records nothing rather than
+    // guessing a time: a guessed one puts the message in the wrong place in the
+    // conversation, where leaving it to the import puts it in the right place,
+    // late.
+    for line in ["--- Log opened", "", "1:01 x", "aa:bb x"] {
+        let odd = messages::irc_send::Sent {
+            tag: "net".to_string(),
+            nick: "me".to_string(),
+            text: "unplaceable".to_string(),
+            logged: Some(messages::irc_send::Logged {
+                file_date: "2020-01-04".to_string(),
+                line_no: 1,
+                line: line.to_string(),
+            }),
+        };
+        assert!(
+            !messages::irc_send::record_echo(&pool, &id, &odd)
+                .await
+                .unwrap(),
+            "no row for a line with no timestamp: {line:?}"
+        );
+    }
+
+    sqlx::query("DELETE FROM irc_messages WHERE conversation_id = ? AND file_date = '2020-01-03'")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
 }

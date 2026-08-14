@@ -19,6 +19,7 @@ function makeApi() {
     messages: vi.fn(() => of({ messages: [msg('1', 100)], has_more: false, next_cursor: null } as MessagesPage)),
     search: vi.fn(() => of([])),
     logout: vi.fn(() => of({})),
+    send: vi.fn(() => of({ sent: true, error: null, archived: true })),
   } as unknown as MessagesApi;
 }
 
@@ -65,5 +66,68 @@ describe('Thread', () => {
     thread.back();
     // origin filter preserved (merge); from cleared.
     expect(nav).toHaveBeenCalledWith(['/'], expect.objectContaining({ queryParams: { from: null }, queryParamsHandling: 'merge' }));
+  });
+  it('offers a composer for IRC only — the other origins have no live client', () => {
+    const { thread, ref, fixture } = setup();
+    ref.setInput('origin', 'signal');
+    ref.setInput('id', 'dm:a');
+    fixture.detectChanges();
+    expect(thread.canSend()).toBe(false);
+
+    ref.setInput('origin', 'irc');
+    ref.setInput('id', '7');
+    fixture.detectChanges();
+    expect(thread.canSend()).toBe(true);
+  });
+
+  it('keeps the draft when the send is refused, and clears it only once it went', async () => {
+    const { thread, ref, fixture } = setup();
+    const api = TestBed.inject(MessagesApi) as unknown as { send: ReturnType<typeof vi.fn> };
+    ref.setInput('origin', 'irc');
+    ref.setInput('id', '7');
+    fixture.detectChanges();
+
+    // The far side refuses — most often because the recipient is not on the
+    // allow-list held on the irssi host.
+    api.send.mockReturnValueOnce(of({ sent: false, error: 'refused: not on the allow-list', archived: false }));
+    thread.draft.set('please keep me');
+    await thread.send();
+    expect(thread.draft()).toBe('please keep me');
+    expect(thread.sendError()).toContain('allow-list');
+
+    // ⚠ The box is emptied only on a real send. Clearing on failure loses what
+    // was typed at the exact moment the person has to type it again.
+    api.send.mockReturnValueOnce(of({ sent: true, error: null, archived: true }));
+    await thread.send();
+    expect(thread.draft()).toBe('');
+  });
+
+  it('says so when a message went but is not in the archive yet', async () => {
+    const { thread, ref, fixture } = setup();
+    const api = TestBed.inject(MessagesApi) as unknown as { send: ReturnType<typeof vi.fn> };
+    ref.setInput('origin', 'irc');
+    ref.setInput('id', '7');
+    fixture.detectChanges();
+
+    // Sent, but irssi could not find the echo in its log — the hourly import
+    // will bring it. Silence would show a conversation that appears not to
+    // contain the message just sent.
+    api.send.mockReturnValueOnce(of({ sent: true, error: null, archived: false }));
+    thread.draft.set('gone, but not seen');
+    await thread.send();
+    expect(thread.draft()).toBe('');
+    expect(thread.sendError()).toContain('after the next import');
+  });
+
+  it('does not send an empty or whitespace-only draft', async () => {
+    const { thread, ref, fixture } = setup();
+    const api = TestBed.inject(MessagesApi) as unknown as { send: ReturnType<typeof vi.fn> };
+    ref.setInput('origin', 'irc');
+    ref.setInput('id', '7');
+    fixture.detectChanges();
+
+    thread.draft.set('   ');
+    await thread.send();
+    expect(api.send).not.toHaveBeenCalled();
   });
 });

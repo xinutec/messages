@@ -2,7 +2,22 @@
 // grid places it; App owns the grid + mobile show/hide). Vertical padding lives
 // on the head/messages, not the host, so the sticky head pins flush to the top.
 :host {
-  display: block;
+  // ⚠ A COLUMN, SO THE COMPOSER CAN SIT AT THE FOOT OF A SHORT CONVERSATION.
+  // `position: sticky; bottom: 0` alone does not do it: sticky only holds an
+  // element against an edge it would otherwise scroll past, so with less content
+  // than viewport the send box followed the last message and floated mid-screen.
+  // `margin-top: auto` on the composer claims the slack when there is any, and
+  // does nothing when there is not.
+  //
+  // ⚠ AND NOTHING MAY SHRINK — see `> *` below. A flex item's default is
+  // `flex-shrink: 1`, so when the thread overflows, every child gets compressed
+  // to fit: the two spacer divs standing in for collapsed messages lose the
+  // exact pixel heights the scroll windowing computed, and the day separators
+  // land over message text. That is what the multi-day scroll spec caught the
+  // first time this was written, as a 2px overlap — not a rounding artefact,
+  // a squashed layout.
+  display: flex;
+  flex-direction: column;
   height: 100%;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
@@ -10,6 +25,13 @@
   // We anchor the viewport ourselves when prepending/collapsing (thread.ts);
   // the browser's native scroll-anchoring would compound with that.
   overflow-anchor: none;
+
+  // Every child keeps the height it asked for. This is what makes the column
+  // above behave like the block layout it replaced, for everything except the
+  // composer's `margin-top: auto`.
+  > * {
+    flex: none;
+  }
 }
 
 // Pinned so the conversation title stays visible even though we open scrolled to
@@ -154,4 +176,50 @@
   .msg {
     max-width: 85%;
   }
+}
+
+// The composer sits at the foot of the scroll container and stays there while
+// the thread scrolls under it, mirroring `.thread-head` at the top. Sticky
+// rather than fixed: the host is the scroll container, so fixed would pin it to
+// the viewport and float it over the conversation list on desktop.
+.composer {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  // Claims the slack in the host's column when the conversation is shorter than
+  // the pane, which is what puts the box at the bottom of the screen rather than
+  // directly under the last message. Does nothing once the thread overflows,
+  // where sticky takes over.
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.4rem 0;
+  background: var(--mat-sys-surface);
+  input {
+    flex: 1;
+    // min-width: 0 so a long draft shrinks the field instead of pushing the
+    // send button off the edge — a flex item's default min-width is its content.
+    min-width: 0;
+    font: var(--mat-sys-body-medium);
+    color: var(--mat-sys-on-surface);
+    background: color-mix(in srgb, var(--mat-sys-on-surface) 6%, transparent);
+    border: none;
+    border-radius: 1.25rem;
+    padding: 0.6rem 0.9rem;
+    &:focus {
+      outline: 2px solid var(--mat-sys-primary);
+      outline-offset: -2px;
+    }
+  }
+}
+
+// Carries both the far side's refusal and the "sent, not yet archived" note, so
+// it must not be styled as an error — one of the two messages is good news.
+.send-error {
+  position: sticky;
+  bottom: 0;
+  margin: 0 0 0.4rem;
+  font: var(--mat-sys-label-medium);
+  color: var(--mat-sys-on-surface-variant);
 }

@@ -5,7 +5,13 @@
 //! and message edit/delete flags; Google Chat keeps *aggregated* emoji counts,
 //! Google threading and a numeric sender id. This module hides those behind a
 //! common `Conversation` / `Message` so the frontend has one model. All access
-//! is SELECT-only; nothing here writes to the archive tables.
+//! here is SELECT-only; nothing in this module writes to the archive tables.
+//!
+//! ⚠ The app as a whole is no longer read-only, and this is the honest place to
+//! say so: [`crate::irc_send`] writes one row, for a message it has just sent
+//! through irssi. It lives there rather than here because it is part of sending
+//! rather than part of reading — but "messages never writes" stopped being true
+//! the day IRC gained a send path.
 
 use anyhow::{Result, bail};
 use serde::Serialize;
@@ -305,6 +311,41 @@ pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
 
     out.sort_by_key(|c| std::cmp::Reverse(c.last_ts)); // newest activity first
     Ok(out)
+}
+
+/// Where an IRC conversation actually is, for the send path.
+///
+/// The URL carries a conversation id, and irssi needs a network and a target —
+/// so this is the one place that translates between them. Doing it from the
+/// database rather than from anything the client sent is the point: a request
+/// cannot name a network and a nick, only a conversation that already exists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IrcTarget {
+    /// The conversation's network, after any `--map` the importer applied.
+    pub network: String,
+    /// A nick, or a channel including its leading `#`.
+    pub target: String,
+    /// ⚠ irssi files server notices under your OWN nick, so that log looks
+    /// exactly like a conversation with yourself and is nothing of the kind.
+    /// The reader already hides it; the sender must refuse it, or "reply" to a
+    /// server notice would message you as though you were somebody else.
+    pub is_status: bool,
+}
+
+/// Look up an IRC conversation's network and target. `None` if there is no such
+/// conversation.
+pub async fn irc_target(pool: &MySqlPool, conversation_id: &str) -> Result<Option<IrcTarget>> {
+    let row = sqlx::query("SELECT network, target, is_status FROM irc_conversations WHERE id = ?")
+        .bind(conversation_id)
+        .fetch_optional(pool)
+        .await?;
+    let Some(r) = row else { return Ok(None) };
+    let is_status: i8 = r.try_get("is_status")?;
+    Ok(Some(IrcTarget {
+        network: r.try_get("network")?,
+        target: r.try_get("target")?,
+        is_status: is_status != 0,
+    }))
 }
 
 /// One page of a conversation, oldest→newest, with reactions attached. `cursor`

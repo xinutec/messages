@@ -73,6 +73,31 @@
     <!-- Stands in for newer messages collapsed out of the DOM. -->
     <div [style.height.px]="bottomSpacer()"></div>
   }
+
+  <!-- IRC only: the other two origins are archives with no live client behind
+       them. Outside the loading/error branch so it stays put while a send
+       reloads the thread. -->
+  @if (canSend() && !threadError()) {
+    <form class="composer" (submit)="$event.preventDefault(); send()">
+      <input
+        type="text"
+        name="draft"
+        [value]="draft()"
+        (input)="draft.set($any($event.target).value)"
+        (keydown)="onComposerKey($event)"
+        [disabled]="sending()"
+        placeholder="Message"
+        aria-label="Message"
+        autocomplete="off"
+      />
+      <button mat-icon-button type="submit" [disabled]="sending() || !draft().trim()" aria-label="Send">
+        <mat-icon>send</mat-icon>
+      </button>
+    </form>
+    @if (sendError()) {
+      <p class="send-error">{{ sendError() }}</p>
+    }
+  }
 } @else {
   <div class="placeholder">Pick a conversation.</div>
 }

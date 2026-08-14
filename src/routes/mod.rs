@@ -15,6 +15,9 @@ pub fn router(state: AppState) -> Router {
         .route("/me", get(api::me))
         .route("/conversations", get(api::conversations))
         .route("/conversations/{origin}/{id}/messages", get(api::messages))
+        // The app's only write, and the only route another person can observe
+        // the effect of. IRC only; see `api::send`.
+        .route("/conversations/{origin}/{id}/send", post(api::send))
         .route("/attachments/{id}", get(api::attachment))
         .route("/search", get(api::search))
         // What the person did, folded into the same log as what the API saw.

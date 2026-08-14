@@ -40,6 +40,32 @@ pub struct Config {
     /// Mount of the signal-attachments PVC (read-only); files referenced by
     /// `attachments.stored_path` are served from here by basename.
     pub attachments_dir: String,
+
+    /// Where irssi is, for the one thing this app does that is not a read.
+    /// `None` disables sending entirely — see [`IrcSend`].
+    pub irc_send: Option<IrcSend>,
+}
+
+/// How to reach the irssi that holds Pippijn's IRC connections.
+///
+/// ⚠ **Optional on purpose, and that is a safety property rather than a
+/// convenience.** This app is a reader everywhere else; sending is the one
+/// capability that acts as a person on networks other people are on. If the key
+/// is not mounted the app still boots and still serves the archive — it just
+/// refuses to send. The alternative, failing to start, would take a working
+/// viewer down over a capability it does not need in order to read.
+#[derive(Clone, Debug)]
+pub struct IrcSend {
+    /// amun over WireGuard. An address rather than a name: this is a different
+    /// cluster and nothing here resolves its names.
+    pub host: String,
+    pub port: u16,
+    /// The mounted secret: `id_ed25519` and `known_hosts`.
+    pub key_dir: String,
+    /// Writable scratch. ssh refuses a private key carrying any group or other
+    /// bit, and a secret volume cannot present one that this pod can read and
+    /// ssh will accept — so the key is copied here at 0400 before use.
+    pub work_dir: String,
 }
 
 fn env(key: &str) -> Result<String> {
@@ -83,7 +109,24 @@ impl Config {
             allowed_users,
             static_dir: std::env::var("STATIC_DIR").ok(),
             attachments_dir: env_or("ATTACHMENTS_DIR", "/attachments"),
+            irc_send: Self::irc_send_from_env()?,
         })
+    }
+
+    /// All four settings or none. A partially configured send path would fail at
+    /// the first send rather than at boot, which is the wrong end to find out.
+    fn irc_send_from_env() -> Result<Option<IrcSend>> {
+        let Ok(host) = std::env::var("IRC_SEND_HOST") else {
+            return Ok(None);
+        };
+        Ok(Some(IrcSend {
+            host,
+            port: env("IRC_SEND_PORT")?
+                .parse()
+                .context("IRC_SEND_PORT must be a port number")?,
+            key_dir: env("IRC_SEND_KEY_DIR")?,
+            work_dir: env("IRC_SEND_WORK_DIR")?,
+        }))
     }
 
     /// Whether a Nextcloud user id is permitted to use the app.

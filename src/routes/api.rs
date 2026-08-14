@@ -103,3 +103,100 @@ pub async fn search(
     }
     Ok(Json(archive::search(&app.pool, q, limit).await?))
 }
+
+/// A message to put on IRC, as Pippijn.
+#[derive(Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct SendRequest {
+    /// ⚠ The body and nothing else. Who it goes to is decided by the
+    /// conversation in the URL, looked up in the archive — a request cannot
+    /// name a network or a nick, so it cannot address somebody the archive has
+    /// never seen.
+    pub text: String,
+}
+
+/// What happened, in the words of the irssi that did it.
+#[derive(Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct SendResult {
+    /// True only when irssi put the message on the wire.
+    pub sent: bool,
+    /// Why not, when it did not. This is the far side's refusal — most often
+    /// that the recipient is not on the allow-list held on the irssi host.
+    pub error: Option<String>,
+    /// Whether the message is already in the archive and so will appear without
+    /// waiting for the hourly import. A send can succeed with this false.
+    pub archived: bool,
+}
+
+/// POST /api/conversations/irc/{id}/send → say something, through irssi.
+///
+/// ⚠ **The only write in the app, and the only thing another person sees.** Two
+/// things bound it and neither is in this function: the session must belong to
+/// an allow-listed user (the `AuthUser` extractor, as for every route here), and
+/// the irssi host decides for itself whether this recipient may be messaged.
+/// This handler's own contribution is narrower — it refuses to send anywhere the
+/// archive does not already hold a conversation.
+pub async fn send(
+    State(app): State<AppState>,
+    AuthUser(_user): AuthUser,
+    Path((origin, id)): Path<(String, String)>,
+    Json(req): Json<SendRequest>,
+) -> Result<Json<SendResult>, AppError> {
+    // Only IRC can be sent to. Signal and Google Chat are archives of
+    // conversations held elsewhere; there is no live client here to send with,
+    // and a 404 says so more honestly than a 400 about an unsupported origin.
+    if archive::Origin::parse(&origin) != Some(archive::Origin::Irc) {
+        return Err(AppError::NotFound);
+    }
+    let Some(sender) = app.irc.clone() else {
+        // No key mounted. The archive still reads; this capability is simply
+        // not configured, which is a server-side fact rather than a bad request.
+        return Ok(Json(SendResult {
+            sent: false,
+            error: Some("sending is not configured".to_string()),
+            archived: false,
+        }));
+    };
+
+    let Some(target) = archive::irc_target(&app.pool, &id).await? else {
+        return Err(AppError::NotFound);
+    };
+    // The pseudo-conversation irssi files server notices into is named after
+    // Pippijn's own nick, so it looks exactly like a conversation and is not
+    // one. The reader hides it; sending to it would message himself in reply to
+    // a server.
+    if target.is_status {
+        return Err(AppError::NotFound);
+    }
+
+    match sender
+        .send(&target.network, &target.target, &req.text)
+        .await?
+    {
+        crate::irc_send::Outcome::Refused(why) => Ok(Json(SendResult {
+            sent: false,
+            error: Some(why),
+            archived: false,
+        })),
+        crate::irc_send::Outcome::Sent(sent) => {
+            // ⚠ The message has gone by this point. A failure to record it is
+            // therefore logged and not returned: telling the caller the send
+            // failed would be false, and would invite them to send it again.
+            let archived = match crate::irc_send::record_echo(&app.pool, &id, &sent).await {
+                Ok(written) => written,
+                Err(e) => {
+                    tracing::error!("sent, but could not record the echo: {e:#}");
+                    false
+                }
+            };
+            Ok(Json(SendResult {
+                sent: true,
+                error: None,
+                archived,
+            }))
+        }
+    }
+}

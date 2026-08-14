@@ -31,8 +31,13 @@ RUN touch src/main.rs src/lib.rs && cargo build --release
 
 # --- runtime ---
 FROM debian:bookworm-slim
+# openssh-client is the send path: irssi runs on another cluster, so saying
+# something as Pippijn means an ssh to amun with a key pinned there to one
+# command. Nothing else in the image needs it, and without it the app boots
+# fine and refuses every send — which is a much quieter failure than it sounds,
+# so it is worth knowing this line is what that would mean.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates openssh-client \
     && rm -rf /var/lib/apt/lists/*
 # 65532 is the conventional "nonroot" id, matched by k8s/01-app.yaml.
 RUN groupadd --gid 65532 messages \

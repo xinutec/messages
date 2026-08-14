@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { Conversation, Me, MessagesPage, Origin, SearchHit, TelemetryEvent } from './models';
+import { Conversation, Me, MessagesPage, Origin, SearchHit, SendResult, TelemetryEvent } from './models';
 
 /** Thin client over the messages backend. Same-origin in prod; via the dev
  *  proxy (proxy.conf.json) in `ng serve`. Session cookie rides along. */
@@ -33,6 +33,21 @@ export class MessagesApi {
     return this.http.get<MessagesPage>(
       `/api/conversations/${origin}/${encodeURIComponent(id)}/messages`,
       { params },
+    );
+  }
+
+  /** Say something in an IRC conversation, as Pippijn, through irssi.
+   *
+   *  ⚠ Only the text is sent. Who receives it is decided by the conversation in
+   *  the URL and looked up server-side, so this cannot address anyone the
+   *  archive has not already seen — and the irssi host has the final say.
+   *
+   *  A refused send resolves normally with `sent: false` and a reason; only a
+   *  transport failure errors. */
+  send(origin: Origin, id: string, text: string): Observable<SendResult> {
+    return this.http.post<SendResult>(
+      `/api/conversations/${origin}/${encodeURIComponent(id)}/send`,
+      { text },
     );
   }
 
