@@ -29,14 +29,18 @@ const ME = { user_id: "test", display_name: "Test User" };
 /** A busy conversation list: all three origins, a group, a deliberately long
  *  name to stress the row title's ellipsis, and a long tail of counts/dates. */
 const CONVERSATIONS = [
-  { origin: "signal", id: "dm:a", name: "Alice Andersson", kind: "dm", message_count: 128, last_ts: Date.UTC(2026, 0, 2, 9, 14) },
-  { origin: "signal", id: "grp:x", name: "Saturday climbing & bouldering logistics crew", kind: "group", message_count: 4210, last_ts: Date.UTC(2026, 0, 1, 20, 2) },
-  { origin: "gchat", id: "gc1", name: "Bob Bytecode", kind: "dm", message_count: 37, last_ts: Date.UTC(2025, 11, 30, 16, 40) },
-  { origin: "gchat", id: "gc2", name: "Platform on-call", kind: "group", message_count: 902, last_ts: Date.UTC(2025, 11, 29, 8, 5) },
+  { origin: "signal", id: "dm:a", name: "Alice Andersson", kind: "dm", network: null, message_count: 128, last_ts: Date.UTC(2026, 0, 2, 9, 14) },
+  { origin: "signal", id: "grp:x", name: "Saturday climbing & bouldering logistics crew", kind: "group", network: null, message_count: 4210, last_ts: Date.UTC(2026, 0, 1, 20, 2) },
+  { origin: "gchat", id: "gc1", name: "Bob Bytecode", kind: "dm", network: null, message_count: 37, last_ts: Date.UTC(2025, 11, 30, 16, 40) },
+  { origin: "gchat", id: "gc2", name: "Platform on-call", kind: "group", network: null, message_count: 902, last_ts: Date.UTC(2025, 11, 29, 8, 5) },
   // IRC is the only origin with a composer, so it has to be here or the send
   // box is never laid out by this suite — and the composer is the one control
   // that competes for width with anything at phone size.
-  { origin: "irc", id: "7", name: "#a-channel-with-a-long-name", kind: "group", message_count: 5104, last_ts: Date.UTC(2026, 0, 2, 11, 30) },
+  { origin: "irc", id: "7", name: "#a-channel-with-a-long-name", kind: "group", network: "xinutec", message_count: 5104, last_ts: Date.UTC(2026, 0, 2, 11, 30) },
+  // The same target on two networks — the case the network label exists for, and
+  // the widest that subtitle line ever gets at phone width.
+  { origin: "irc", id: "8", name: "s_20", kind: "dm", network: "xinutec", message_count: 14446, last_ts: Date.UTC(2026, 0, 2, 10, 15) },
+  { origin: "irc", id: "9", name: "s_20", kind: "dm", network: "euirc", message_count: 8071, last_ts: Date.UTC(2026, 0, 1, 22, 40) },
 ];
 
 /** A busy thread: long sender, a long unbroken-ish body, an "edited" tag, an
@@ -83,6 +87,11 @@ test("conversation list — filter row + rows: lays out cleanly @ phone width", 
   await page.getByPlaceholder("Search messages").waitFor();
   await page.getByRole("button", { name: "Google Chat", exact: true }).waitFor(); // widest filter button
   await page.getByText("Alice Andersson").waitFor();
+  // Two rows share the title `s_20`; only the network separates them. A template
+  // that stopped binding it would still pass every layout assertion below, and
+  // the list would go back to showing two rows nobody can tell apart.
+  await page.getByText(/IRC xinutec · 14446 msgs/).waitFor();
+  await page.getByText(/IRC euirc · 8071 msgs/).waitFor();
   // The search field's prefix icon is where an icon-font fallback shows up as
   // the literal word "search" overlapping the placeholder (guarded here since
   // the shell is the screen with mat-icons).

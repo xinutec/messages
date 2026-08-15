@@ -50,7 +50,8 @@
             <button mat-list-item [class.active]="isActive(c)" (click)="open(c)">
               <span matListItemTitle>{{ title(c) }}</span>
               <span matListItemLine>
-                {{ originLabels[c.origin] }} · {{ c.message_count }} msgs
+                {{ originLabels[c.origin] }}@if (c.network) { {{ c.network }}}
+                · {{ c.message_count }} msgs
                 @if (c.last_ts) {
                   · {{ c.last_ts | date: 'mediumDate' }}
                 }

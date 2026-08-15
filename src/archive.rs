@@ -124,6 +124,11 @@ pub struct Conversation {
     pub id: String,
     pub name: Option<String>,
     pub kind: ConversationKind,
+    /// The IRC network, and None for the other two origins, which have no such
+    /// thing. Sent because `name` is only the target: two networks each with an
+    /// `s_20` produce two rows a reader cannot tell apart, which is what this is
+    /// here to fix. Uniqueness is the schema's — `UNIQUE (network, target)`.
+    pub network: Option<String>,
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub message_count: i64,
     /// Epoch milliseconds; None for a conversation with no messages.
@@ -231,6 +236,7 @@ pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
             id: r.try_get("id")?,
             name: r.try_get("name")?,
             kind,
+            network: None,
             message_count: r.try_get("cnt")?,
             last_ts: r.try_get("last_ts")?,
         });
@@ -253,6 +259,7 @@ pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
             id: r.try_get("id")?,
             name: r.try_get("name")?,
             kind: kind_from_is_dm(is_dm != 0),
+            network: None,
             message_count: r.try_get("cnt")?,
             last_ts: last_us.map(us_to_ms),
         });
@@ -285,7 +292,7 @@ pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
     // line has NO stats row, not a zero row.
     let irc = sqlx::query(
         r"SELECT c.id AS id, c.target AS name, c.is_channel AS is_channel,
-                 COALESCE(s.cnt, 0) AS cnt,
+                 c.network AS network, COALESCE(s.cnt, 0) AS cnt,
                  TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', s.last_sent_at) AS last_s
           FROM irc_conversations c
           LEFT JOIN irc_conversation_stats s ON s.conversation_id = c.id
@@ -302,6 +309,7 @@ pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
             id: id.to_string(),
             name: r.try_get("name")?,
             kind: kind_from_is_dm(is_channel == 0),
+            network: r.try_get("network")?,
             message_count: r.try_get("cnt")?,
             last_ts: last_s.map(|s| s * 1000),
         });

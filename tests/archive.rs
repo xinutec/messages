@@ -265,8 +265,13 @@ async fn seed(pool: &MySqlPool) {
     // tree this was built from. A query that forgets to exclude them looks fine
     // against a fixture that has none.
     sqlx::query(
+        // ⚠ The last two are the SAME TARGET ON TWO NETWORKS, which is real: an
+        // `s_20` on each of xinutec and euirc rendered as two identical rows
+        // until `network` was sent to the UI. Anything that drops the network
+        // from a conversation's identity fails here.
         "INSERT INTO irc_conversations (network, target, is_channel, is_status) VALUES
-         ('net','#chan',1,0),('net','carol',0,0),('net','me',0,1)",
+         ('net','#chan',1,0),('net','carol',0,0),('net','me',0,1),
+         ('xinutec','s_20',0,0),('euirc','s_20',0,0)",
     )
     .execute(pool)
     .await
@@ -303,6 +308,24 @@ async fn seed(pool: &MySqlPool) {
     )
     .bind(carol)
     .execute(pool).await.unwrap();
+    // The `s_20` pair, one line each, in 2019 so they sort below the 2020 rows
+    // and above everything carrying a bare 1970 epoch. Distinct timestamps
+    // because ties here would order by whatever the SELECT happened to return.
+    for (net, day) in [("xinutec", "2019-01-02"), ("euirc", "2019-01-01")] {
+        let id: i32 = sqlx::query_scalar(
+            "SELECT id FROM irc_conversations WHERE network=? AND target='s_20'",
+        )
+        .bind(net)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO irc_messages (conversation_id, source_tag, file_date, line_no, sent_at, nick, is_self, kind, text)
+             VALUES (?,?,?,1,?,'s_20',0,'message','same target, other network')",
+        )
+        .bind(id).bind(net).bind(day).bind(format!("{day} 12:00:00"))
+        .execute(pool).await.unwrap();
+    }
     // The newest IRC rows of all, and neither may ever surface: the status log
     // would otherwise sort to the top of the conversation list.
     //
@@ -354,11 +377,17 @@ async fn conversations_normalise_and_sort_across_origins() {
     // milliseconds in 1970 — carol last spoke 00:03, #chan 00:01. Their ids are
     // auto-increment, so they are looked up rather than written down here.
     // Then: gc1(7000), group:g1(5000), dm:alice(4000), dm:tie(1500), gc2(None).
-    let irc_id = |name: &str| {
+    // Keyed on (network, target), not target — `s_20` alone matches two rows,
+    // which is the whole point of the pair.
+    let irc_id = |network: &str, name: &str| {
         convs
             .iter()
-            .find(|c| c.origin == Origin::Irc && c.name.as_deref() == Some(name))
-            .unwrap_or_else(|| panic!("no IRC conversation named {name}"))
+            .find(|c| {
+                c.origin == Origin::Irc
+                    && c.name.as_deref() == Some(name)
+                    && c.network.as_deref() == Some(network)
+            })
+            .unwrap_or_else(|| panic!("no IRC conversation {network}/{name}"))
             .id
             .clone()
     };
@@ -366,8 +395,10 @@ async fn conversations_normalise_and_sort_across_origins() {
     assert_eq!(
         ids,
         [
-            irc_id("carol"),
-            irc_id("#chan"),
+            irc_id("net", "carol"),
+            irc_id("net", "#chan"),
+            irc_id("xinutec", "s_20"),
+            irc_id("euirc", "s_20"),
             "gc1".to_string(),
             "group:g1".to_string(),
             "dm:alice".to_string(),
@@ -376,6 +407,22 @@ async fn conversations_normalise_and_sort_across_origins() {
         ],
         "sort by last_ts desc"
     );
+
+    // ⚠ The regression: two rows that agree on everything the UI shows except
+    // the network. Without it they are indistinguishable on screen.
+    let s20: Vec<_> = convs
+        .iter()
+        .filter(|c| c.name.as_deref() == Some("s_20"))
+        .collect();
+    assert_eq!(s20.len(), 2, "the fixture holds one s_20 per network");
+    let mut nets: Vec<_> = s20.iter().filter_map(|c| c.network.as_deref()).collect();
+    nets.sort_unstable();
+    assert_eq!(nets, ["euirc", "xinutec"], "each carries its own network");
+
+    // And the other two origins have none to carry.
+    for c in convs.iter().filter(|c| c.origin != Origin::Irc) {
+        assert_eq!(c.network, None, "{} has no network", c.id);
+    }
 
     let by = |id: &str| convs.iter().find(|c| c.id == id).unwrap();
     assert_eq!(
@@ -624,10 +671,19 @@ async fn irc_conversations_leave_out_the_status_log_and_count_only_speech() {
 
     let convs = archive::list_conversations(&pool).await.unwrap();
     let irc: Vec<_> = convs.iter().filter(|c| c.origin == Origin::Irc).collect();
-    let names: Vec<_> = irc.iter().filter_map(|c| c.name.as_deref()).collect();
+    // (network, target), because target alone does not identify one.
+    let named: Vec<_> = irc
+        .iter()
+        .map(|c| (c.network.as_deref(), c.name.as_deref()))
+        .collect();
     assert_eq!(
-        names,
-        ["carol", "#chan"],
+        named,
+        [
+            (Some("net"), Some("carol")),
+            (Some("net"), Some("#chan")),
+            (Some("xinutec"), Some("s_20")),
+            (Some("euirc"), Some("s_20")),
+        ],
         "the status log is not a conversation"
     );
 

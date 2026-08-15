@@ -24,8 +24,8 @@ function msg(id: string, ts: number, extra: Partial<Message> = {}): Message {
 }
 
 const CONVS: Conversation[] = [
-  { origin: 'signal', id: 'dm:a', name: 'Alice', kind: 'dm', message_count: 5, last_ts: 200 },
-  { origin: 'gchat', id: 'gc1', name: 'Bob', kind: 'dm', message_count: 3, last_ts: 300 },
+  { origin: 'signal', id: 'dm:a', name: 'Alice', kind: 'dm', network: null, message_count: 5, last_ts: 200 },
+  { origin: 'gchat', id: 'gc1', name: 'Bob', kind: 'dm', network: null, message_count: 3, last_ts: 300 },
 ];
 
 const ME: Me = { user_id: 'u1', display_name: 'Test User' };

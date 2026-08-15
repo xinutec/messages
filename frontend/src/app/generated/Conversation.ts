@@ -2,7 +2,14 @@
 import type { ConversationKind } from "./ConversationKind";
 import type { Origin } from "./Origin";
 
-export type Conversation = { origin: Origin, id: string, name: string | null, kind: ConversationKind, message_count: number, 
+export type Conversation = { origin: Origin, id: string, name: string | null, kind: ConversationKind, 
+/**
+ * The IRC network, and None for the other two origins, which have no such
+ * thing. Sent because `name` is only the target: two networks each with an
+ * `s_20` produce two rows a reader cannot tell apart, which is what this is
+ * here to fix. Uniqueness is the schema's — `UNIQUE (network, target)`.
+ */
+network: string | null, message_count: number, 
 /**
  * Epoch milliseconds; None for a conversation with no messages.
  */
