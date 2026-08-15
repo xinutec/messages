@@ -132,14 +132,9 @@ test("Back returns from a conversation to the list", async ({ page }) => {
 });
 
 /**
- * Returning to the app is a return to the list, and the router never sees it.
- *
- * On Android the list stays mounted while the app is backgrounded, so nothing
- * navigates when it comes back — measured on a Pixel 9, a two-hour-old list
- * that looked current. This is the whole chain the unit test cannot reach:
- * the visibility event, through the store's refetch, to a changed number on
- * screen. The mock answers with a higher count the second time, which is what
- * an idle two hours actually looks like.
+ * The whole chain the unit test cannot reach: the visibility event, through the
+ * store's refetch, to a changed number on screen. The mock answers with a higher
+ * count the second time, which is what an idle two hours looks like.
  */
 test("returning to the foreground re-reads the list", async ({ page }) => {
   await page.route("**/api/**", (r) => r.fulfill({ status: 204, body: "" }));

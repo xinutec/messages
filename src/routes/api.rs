@@ -13,7 +13,12 @@ use crate::error::AppError;
 use crate::session::AuthUser;
 use crate::state::AppState;
 
-/// Identity echo for /api/me — drives the UI login gate.
+// ⚠ Doc comments on a `ts(export)` type REACH TYPESCRIPT — `ts_rs` copies them
+// into `generated/`. So a `///` here is the frontend's description of the type,
+// not a duplicate of the handler's, and deleting one as redundant strips the
+// only documentation the TS side has. Notes meant for Rust readers go in `//`
+// like this one, which is not exported.
+/// The signed-in user, as the UI's login gate reads it.
 #[derive(Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -22,7 +27,7 @@ pub struct Me {
     display_name: String,
 }
 
-/// GET /api/me → the current session's user (drives the UI login gate).
+/// GET /api/me → the current session's user. Drives the UI login gate.
 pub async fn me(AuthUser(user): AuthUser) -> Json<Me> {
     Json(Me {
         user_id: user.user_id,
@@ -30,7 +35,7 @@ pub async fn me(AuthUser(user): AuthUser) -> Json<Me> {
     })
 }
 
-/// GET /api/conversations → all conversations across both origins.
+/// GET /api/conversations → all conversations across all three origins.
 pub async fn conversations(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
@@ -90,7 +95,7 @@ pub async fn attachment(
     Ok(([(header::CONTENT_TYPE, ct)], Body::from(bytes)).into_response())
 }
 
-/// GET /api/search?q= → substring search across both origins.
+/// GET /api/search?q= → substring search across all three origins.
 pub async fn search(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
@@ -148,24 +153,11 @@ pub async fn send(
     // Only IRC can be sent to, and a 404 says so more honestly than a 400 about
     // an unsupported origin.
     //
-    // ⚠ **FOR SIGNAL THIS IS A DECISION, NOT A MISSING PIECE — Pippijn, 2026-08-15,
-    // "we'll keep sending from the Signal app instead".** This comment used to say
-    // there was no live client here to send with. That is no longer true:
-    // `signal-cli-rest-api` runs in this namespace as a linked secondary device and
-    // can send, and the schema's `UNIQUE KEY uniq_sender_ts` would even dedupe the
-    // echo correctly. The scoping is in task #900.
-    //
-    // What it costs is the archive's ability to confirm itself. An IRC echo is safe
-    // because irssi logs what it sends, so `record_echo` writes on the IMPORTER's key
-    // and the hourly import either agrees or exposes it. Signal has no second writer:
-    // an echo row would be the only evidence a message existed, written by the same
-    // process that claims to have sent it. A send accepted by signal-cli but never
-    // delivered would leave a row saying Pippijn said something he did not, with
-    // nothing anywhere to contradict it. Today that cannot happen — every Signal row
-    // arrived over the network, synced from his phone.
-    //
-    // Weighed against a workaround that is "open the Signal app". If this is revisited,
-    // the echo should record DELIVERY (signal-cli's receipt), not acceptance.
+    // ⚠ **FOR SIGNAL THAT IS A DECISION, NOT A MISSING PIECE** (Pippijn,
+    // 2026-08-15). `signal-cli-rest-api` is a linked device in this namespace and
+    // could send — which is the temptation. What stops it: an IRC echo is
+    // confirmable against irssi's log, where a Signal echo would be the only
+    // evidence the message existed. Reasoning and scoping in task #900.
     if archive::Origin::parse(&origin) != Some(archive::Origin::Irc) {
         return Err(AppError::NotFound);
     }
@@ -191,8 +183,8 @@ pub async fn send(
     }
 
     // ⚠ PARSED HERE, NOT IN THE COMPOSER, so the API and the UI cannot come to
-    // disagree about what a leading slash means — every caller gets the same
-    // behaviour, which is what `feedback_cli_mirrors_ui` asks for.
+    // disagree about what a leading slash means. Every caller gets the same
+    // behaviour, including one that never went through the composer.
     let (text, is_action) = crate::irc_send::parse_slash(&req.text);
     match sender
         .send(&target.network, &target.target, text, is_action)

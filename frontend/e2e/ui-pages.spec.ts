@@ -26,8 +26,8 @@ test.use({ serviceWorkers: "block" });
 
 const ME = { user_id: "test", display_name: "Test User" };
 
-/** A busy conversation list: both origins, a group, a deliberately long name to
- *  stress the row title's ellipsis, and a long-tail of counts/dates. */
+/** A busy conversation list: all three origins, a group, a deliberately long
+ *  name to stress the row title's ellipsis, and a long tail of counts/dates. */
 const CONVERSATIONS = [
   { origin: "signal", id: "dm:a", name: "Alice Andersson", kind: "dm", message_count: 128, last_ts: Date.UTC(2026, 0, 2, 9, 14) },
   { origin: "signal", id: "grp:x", name: "Saturday climbing & bouldering logistics crew", kind: "group", message_count: 4210, last_ts: Date.UTC(2026, 0, 1, 20, 2) },

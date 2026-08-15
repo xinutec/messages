@@ -1,6 +1,7 @@
-//! messages — read-only viewer for the Signal + Google Chat archive. Loads
-//! config, connects the shared `signal` DB, ensures its own sessions table,
-//! serves. All logic lives in the `messages` library crate.
+//! messages — viewer for the Signal, Google Chat and IRC archive, and the one
+//! place that sends: IRC only, through irssi. Loads config, connects the shared
+//! `signal` DB, ensures its own sessions table, serves. All logic lives in the
+//! `messages` library crate.
 
 use anyhow::Result;
 use messages::{config::Config, db, irc_send::IrcSender, routes, state::AppState};

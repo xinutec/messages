@@ -3,10 +3,10 @@ import { Injectable, inject, signal } from '@angular/core';
 import { MessagesApi } from './messages-api';
 import { Conversation, Me } from './models';
 
-// Shared shell state: the signed-in user and the conversation list, loaded once
-// and read by both the App shell (toolbar + list) and the routed Thread (title
-// lookup). Keeping it here lets the Thread render from a deep link without the
-// shell having to hand it data through the router.
+// Shared shell state: the signed-in user and the conversation list, read by both
+// the App shell (toolbar + list) and the routed Thread (title lookup). Keeping it
+// here lets the Thread render from a deep link without the shell having to hand
+// it data through the router.
 @Injectable({ providedIn: 'root' })
 export class MessagesStore {
   private api = inject(MessagesApi);
@@ -41,12 +41,9 @@ export class MessagesStore {
    *  14,438) for an action the user had just taken himself. `init` is guarded
    *  so the shell can call it freely; that guard used to cover the fetch too.
    *
-   *  Deliberately NOT on a timer, and no longer for the reason it once was.
-   *  This query used to aggregate 3.7M rows for ~1.5s; it now joins two ~300-row
-   *  tables in under a millisecond (`archive.rs`, and signal's
-   *  `irc_conversation_stats`). What survives the speedup is the rule: it runs
-   *  when the user returns to the list, because that is when its answer is about
-   *  to be read. The open thread polls for new messages separately.
+   *  Deliberately NOT on a timer: it runs when the user returns to the list,
+   *  which is when its answer is about to be read. The open thread polls for new
+   *  messages separately.
    *
    *  Errors leave the previous list in place: a stale list beats an empty one,
    *  and the failure is visible the moment anything is tapped. */

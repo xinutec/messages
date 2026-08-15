@@ -119,11 +119,8 @@ describe('App', () => {
     expect(app.title(CONVS[0])).toBe('Alice');
   });
 
-  /** The bug this covers did not look like a bug: after two hours in the
-   *  background the list came back showing counts ten messages behind and one
-   *  conversation in the wrong position, with nothing on screen saying so. The
-   *  router never fires on a resume — the list is already mounted — so
-   *  `visibilitychange` is the only signal that the user has come back to look. */
+  /** The router never fires on an Android resume — the list is already mounted —
+   *  so `visibilitychange` is the only signal that the user came back to look. */
   it('re-reads the list when the app returns to the foreground', () => {
     const conversations = vi.fn(() => of(CONVS));
     setup(makeApi({ conversations }));

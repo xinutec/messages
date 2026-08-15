@@ -1,17 +1,14 @@
-//! Read-only queries over the message archive, normalising the two origins
-//! (Signal + Google Chat) into one shape for the UI.
+//! Read-only queries over the message archive, normalising three origins —
+//! Signal, Google Chat and IRC — into one shape for the UI.
 //!
-//! The origins differ: Signal keeps per-author reaction *events* (add/remove)
-//! and message edit/delete flags; Google Chat keeps *aggregated* emoji counts,
-//! Google threading and a numeric sender id. This module hides those behind a
-//! common `Conversation` / `Message` so the frontend has one model. All access
-//! here is SELECT-only; nothing in this module writes to the archive tables.
+//! They differ underneath: Signal keeps per-author reaction *events* (add/remove)
+//! and edit/delete flags, Google Chat keeps *aggregated* emoji counts, its own
+//! threading and a numeric sender id, IRC is flat lines carrying a `kind`. A
+//! common `Conversation` / `Message` hides that from the frontend.
 //!
-//! ⚠ The app as a whole is no longer read-only, and this is the honest place to
-//! say so: [`crate::irc_send`] writes one row, for a message it has just sent
-//! through irssi. It lives there rather than here because it is part of sending
-//! rather than part of reading — but "messages never writes" stopped being true
-//! the day IRC gained a send path.
+//! ⚠ Everything here is SELECT-only, but the app is not: [`crate::irc_send`]
+//! writes one row, for a message it has just sent through irssi. It lives there
+//! because it is part of sending rather than reading.
 
 use anyhow::{Result, bail};
 use serde::Serialize;
@@ -211,7 +208,7 @@ pub struct MessagesPage {
     pub next_cursor: Option<String>,
 }
 
-/// All conversations across both origins, newest activity first.
+/// All conversations across all three origins, newest activity first.
 pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
     let mut out = Vec::new();
 
@@ -261,55 +258,31 @@ pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
         });
     }
 
-    // IRC. Two things here are written out verbatim rather than shared through a
-    // `format!`, so the SQL stays a literal:
-    //
-    // - `TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at)` is epoch
-    //   seconds from a DATETIME held in UTC. ⚠ NOT `UNIX_TIMESTAMP`, which
-    //   reinterprets the value against whatever `time_zone` the connection
-    //   carries — the same row would come back an hour out depending on who
-    //   asked. This is arithmetic on the stored value; no zone is involved.
-    // - `m.kind IN ('message', 'action')` is what counts as *conversation*. The
-    //   archive also holds joins, parts and server notices — 385,012 notices
-    //   against 425,748 messages in the tree this was built from — and a channel
-    //   whose "last activity" was the server speaking would sort to the top of
-    //   this list having said nothing.
-    //
-    // `is_status = 0` drops the pseudo-conversation irssi files server notices
-    // into: it is named after your own nick, so it looks like a DM with yourself
-    // and contains nothing you said.
-    //
-    // `TIMESTAMPDIFF` against the epoch, rather than either shorter spelling:
-    // `UNIX_TIMESTAMP` reinterprets a DATETIME against the connection's time
-    // zone, which is the bug this avoids, and `TO_SECONDS` needs a magic
-    // 62167219200 to reach the epoch.
-    // ⚠ THIS READS A MAINTAINED TABLE AND MUST NOT GO BACK TO AGGREGATING.
+    // IRC. ⚠ THIS READS A MAINTAINED TABLE AND MUST NOT GO BACK TO AGGREGATING.
     // `irc_conversation_stats` holds one row per conversation, kept current by
-    // triggers on `irc_messages` (signal's migrations v11-v14). Both sides of
-    // this join are a few hundred rows, so the landing screen no longer depends
-    // on the size of the archive at all.
+    // triggers on `irc_messages` (signal's migrations v11-v14) — which is also
+    // where `kind IN ('message','action')` now lives, so joins, parts and server
+    // notices never reach the count. Both sides of this join are a few hundred
+    // rows, so the landing no longer depends on the size of the archive.
     //
     // The history, because the obvious "improvement" is to inline the aggregate
-    // again. Measured on 3,683,670 rows:
+    // again. On 3,683,670 rows: grouping the join 27s, with FORCE INDEX 3.3s,
+    // aggregate-then-join 1.5s — which tripped the 1s slow-statement alert on
+    // every landing, and had no query fix left. The `kind` filter sits on the
+    // middle column of `idx_irc_conv_kind_ts` and defeats MariaDB's loose index
+    // scan (431 rows in 1.4ms without it, 3,614,079 in 1.29s with), and the
+    // UNION-of-equalities rewrite its documentation suggests measured WORSE at
+    // 2.15s — two scans instead of one. 0.75s is the floor for counting by scan.
     //
-    //     grouping the join                 27_000 ms
-    //     the same, FORCE INDEX              3_300 ms
-    //     aggregate first, then join         1_600 ms
-    //     ...which settled at ~1_500 ms and tripped the 1s slow-statement alert
-    //     on EVERY landing.
+    // ⚠ `TIMESTAMPDIFF` from the epoch, NOT `UNIX_TIMESTAMP`, which reinterprets
+    // a DATETIME against the connection's `time_zone` — the same row would come
+    // back an hour out depending on who asked.
     //
-    // That last 1.5s had no query fix left. The aggregate needs `kind IN
-    // ('message','action')`, and that filter sits on the middle column of
-    // `idx_irc_conv_kind_ts`, which defeats MariaDB's loose index scan: the same
-    // grouping without it examines 431 rows in 1.4ms, with it 3,614,079 rows in
-    // 1.29s. Rewriting the `IN` as a UNION of two `kind = …` groups is what the
-    // loose-index-scan documentation suggests and it measured WORSE — 2.15s,
-    // because it buys two scans instead of one. 0.75s is the floor for counting
-    // by scanning at all.
+    // `is_status = 0` drops the pseudo-conversation irssi files server notices
+    // into: named after your own nick, so it looks like a DM with yourself.
     //
-    // ⚠ `COALESCE(s.cnt, 0)` and the NULL `last_s`: a conversation with no
-    // message/action lines has NO stats row, not a zero row. The trigger only
-    // creates one when a counted line arrives.
+    // ⚠ `COALESCE(s.cnt, 0)` and a NULL `last_s`: a conversation with no counted
+    // line has NO stats row, not a zero row.
     let irc = sqlx::query(
         r"SELECT c.id AS id, c.target AS name, c.is_channel AS is_channel,
                  COALESCE(s.cnt, 0) AS cnt,
@@ -692,7 +665,7 @@ pub struct SearchHit {
     pub snippet: String,
 }
 
-/// Simple substring search across both origins' message text. Newest first.
+/// Simple substring search across all three origins' message text. Newest first.
 pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchHit>> {
     let like = escape_like(q);
     let mut hits = Vec::new();
