@@ -1,14 +1,15 @@
 # messages — Signal + Google Chat + IRC archive viewer
 
-A read-only web UI for the message archive stored in the **`signal` MariaDB** on
-the isis k3s cluster — three origins ([Signal](../signal) live + history, the
-imported Google Chat tables, and irssi's autologs). Same per-service pattern as
-`life`/`health`.
+A web UI for the message archive stored in the **`signal` MariaDB** on the isis
+k3s cluster — three origins ([Signal](../signal) live + history, the imported
+Google Chat tables, and irssi's autologs). Reading is all of it bar one thing:
+IRC conversations can be replied to, through the irssi that already holds the
+connections. Same per-service pattern as `life`/`health`.
 
 ```
  Browser ──VPN/login──▶ messages.xinutec.org (isis, ns: signal)
                             │  Rust/axum: Nextcloud OAuth2 (identity) + sessions
-                            │  + read-only API over the archive
+                            │  + API over the archive, + IRC send via ssh
                             ▼
                         signal MariaDB  ─ messages / conversations / reactions   (Signal)
                                         ├ gchat_messages / gchat_conversations…   (Google Chat)
@@ -16,13 +17,14 @@ imported Google Chat tables, and irssi's autologs). Same per-service pattern as
 ```
 
 **IRC shows only what was said.** Its tables also hold joins, parts and server
-notices — the notices alone are 47% of the archive's lines — and every query
-here restricts to `kind IN ('message', 'action')`. The conversation irssi files
-server notices into is excluded outright (`is_status`): it is named after your
-own nick, so it would appear as a DM with yourself containing nothing you wrote.
+notices — the notices alone are 47% of the archive's lines — so every read
+restricts to `kind IN ('message', 'action')`; the conversation list gets that from
+`irc_conversation_stats`, which signal's triggers only count those kinds into.
+Excluded outright (`is_status`) is the conversation irssi files notices into: it
+is named after your own nick, so it would show as a DM with yourself.
 
 ## Security model
-Three layers, strongest first:
+Two layers, strongest first:
 1. **Nextcloud login + allow-list (the real gate).** OAuth2 identity-only against
    `dash.xinutec.org` (copied from `life`). A successfully-authenticated user is
    still rejected (403) unless their NC id is in `ALLOWED_USERS` (currently
@@ -31,24 +33,25 @@ Three layers, strongest first:
    IP), so it isn't listed on the public internet. NB this is *obscurity*: the
    isis ingress also answers on the public IP, so DNS alone doesn't firewall it
    — hence the login carries the security.
-3. *(optional, not enabled)* L7 source-range allow-list. Add
-   `nginx.ingress.kubernetes.io/whitelist-source-range: "10.100.0.0/24"` to the
-   ingress for true VPN-only — but first confirm client source IPs survive k3s
-   servicelb (klipper may SNAT them).
+A third layer was considered and not built: an ingress
+`whitelist-source-range: "10.100.0.0/24"` would make VPN-only real rather than
+by-DNS, but only if client source IPs survive k3s servicelb — klipper may SNAT
+them, so check before trusting it.
 
 ## Components
 - `src/` — Rust/axum backend. `nextcloud/identity.rs` + `session.rs` are the
   `life` auth pattern verbatim; `routes/auth.rs` adds the allow-list check;
-  `archive.rs` is the read-only, origin-normalising query layer; `config.rs`
-  builds the DB DSN from `DB_*` so it reuses `signal-secret` in-namespace. The
-  only table this app owns is `sessions` (created on boot, `src/db.rs`).
+  `archive.rs` is the read-only, origin-normalising query layer; `irc_send.rs` is
+  the one path that writes; `config.rs` builds the DB DSN from `DB_*` so it reuses
+  `signal-secret` in-namespace. The only table this app owns is `sessions`
+  (created on boot, `src/db.rs`).
 - `frontend/` — Angular (login gate → conversation list with origin filter →
-  thread view with reactions / edited / deleted markers). `src/app/generated/` is
-  written by ts-rs from the Rust wire types (`scripts/gen-types.sh`) and imported
-  through `src/app/models.ts`; don't hand-edit either.
-- `k8s/` — `00-letsencrypt-dns-issuer.yaml` (one-time isis setup), `01-app.yaml`
-  (Deployment+Service in the `signal` namespace), `02-ingress.yaml`, `secret.sh`.
+  thread view with reactions / edited / deleted markers, and a composer on IRC).
+  `src/app/generated/` is written by ts-rs from the Rust wire types
+  (`scripts/gen-types.sh`) and imported through `src/app/models.ts`; don't
+  hand-edit either.
 - `Dockerfile` — multi-stage (Angular + Rust → one image), `xinutec/messages:latest`.
+- The k8s manifests are **not here** — they live in the home monorepo, see Deploy.
 
 ## API (all require a valid session)
 - `GET /api/me` — current user.
@@ -58,12 +61,16 @@ Three layers, strongest first:
   as `cursor` to page backwards (the cursor carries `(native_ts, id)`, so paging
   never skips messages that share a timestamp).
 - `GET /api/search?q=` — substring search across all origins.
+- `POST /api/conversations/irc/{id}/send` — say something, through irssi. Other
+  origins 404: a decision, not a gap (`routes/api.rs`). The body is the text and
+  nothing else — the recipient comes from `{id}`, so a request cannot address
+  anyone the archive has not seen.
+- `POST /api/telemetry` — fold client events into the server log. Always 204.
 
 `{origin}` is `signal`, `gchat` or `irc`; `{id}` is the Signal `thread_id`, the
-gchat `group_id`, or the numeric `irc_conversations.id`. `origin` and a
-conversation's `kind` (`dm`/`group`) are Rust enums
-(`archive::Origin`, `archive::ConversationKind`), so they reach the frontend as
-string unions rather than `string`, and an unknown `{origin}` is a 404.
+gchat `group_id`, or the numeric `irc_conversations.id`. Both it and a
+conversation's `kind` are Rust enums, so they reach the frontend as string unions
+rather than `string`, and an unknown `{origin}` is a 404.
 
 ## Local dev
 ```
@@ -78,27 +85,20 @@ cd frontend && pnpm install && pnpm start  # http://localhost:4200
 ```
 
 ## Deploy (isis, namespace `signal`)
-Most steps are one-time. Steps 1–3 need actions only you can do. The `k8s/…`
-manifests live in the home monorepo (`xinutec/pippijn` `code/kubes/messages/k8s/`);
-run the manifest steps from that checkout.
+The manifests are in the home monorepo (`xinutec/pippijn`
+`code/kubes/messages/k8s/`); run these from that checkout.
 
-1. **Register the OAuth2 client** in Nextcloud admin (dash.xinutec.org → Settings
-   → Security → OAuth 2.0), redirect URI `https://messages.xinutec.org/auth/callback`.
-   Note the client id + secret.
-2. **DNS-01 issuer on isis** (once per cluster — isis only has HTTP-01 today):
-   ```
-   kubectl -n cert-manager create secret generic cloudflare-api-token \
-     --from-literal=api-token=<Cloudflare Zone:DNS:Edit token>   # if absent
-   kubectl apply -f k8s/00-letsencrypt-dns-issuer.yaml
-   ```
-3. **DNS record:** `code/dns` already defines `messages → 10.100.0.2`; apply it:
-   `cd code/dns && terraform apply`.
-4. **App secret** (session key + OAuth client; DB creds come from `signal-secret`):
-   `NC_CLIENT_ID=… NC_CLIENT_SECRET=… ./k8s/secret.sh`.
-5. **Push to main** → CI builds `xinutec/messages:latest` (gated on clippy + tests).
-6. **Deploy:** `kubectl apply -f k8s/01-app.yaml -f k8s/02-ingress.yaml`, then
-   `kubectl -n signal rollout status deploy/messages` and check the cert:
-   `kubectl -n signal get certificate messages-tls`.
+**Every time:** push to main, CI builds `xinutec/messages:latest`, then
+`kubectl apply -f k8s/03-app.yaml -f k8s/04-ingress.yaml` and
+`kubectl -n signal rollout status deploy/messages`.
+
+**Done once, written down in case it must be redone:** register the OAuth2 client
+in Nextcloud admin (redirect URI `https://messages.xinutec.org/auth/callback`);
+put a Cloudflare `Zone:DNS:Edit` token in `cert-manager` as
+`cloudflare-api-token` and apply `00-letsencrypt-dns-issuer.yaml`, because isis
+has HTTP-01 only and this cert needs DNS-01; `messages → 10.100.0.2` is already
+in `code/dns`; `NC_CLIENT_ID=… NC_CLIENT_SECRET=… ./k8s/secret.sh` writes the
+session key and OAuth client (DB creds come from `signal-secret`).
 
 ## Tests
 `gate.dhall` is the whole gate (and the pre-commit hook), twelve named checks:
@@ -113,30 +113,20 @@ nix run ../dev-lint#gate -- . gate.json
 `gate.json` is rendered from the Dhall and committed, so running the gate needs
 no `dhall`; one of the checks re-renders and diffs the two.
 
-- **Backend** `tests/archive.rs` — pure units (timestamp/kind/LIKE-escape) always
-  run; end-to-end DB tests seed a fixture into a throwaway MariaDB and assert the
-  real queries (cross-origin sort, the `before` pagination cursor, Signal reaction
-  aggregation, edit/delete flags, µs→ms, attachments available-flag + blob lookup,
-  search). They run when `MESSAGES_TEST_DATABASE_URL` is set — CI provides a
-  MariaDB service, and locally the gate's `tests` row starts an ephemeral one via
-  `dev-lint`'s `with-test-db` (`nix run ../dev-lint#with-test-db -- --database
-  messages_test --user messages --password messages --port 3318 --url-env
-  MESSAGES_TEST_DATABASE_URL -- cargo test` to run them by hand); skipped
-  otherwise.
-- **Frontend** `frontend/src/app/app.spec.ts` — vitest (Angular `unit-test`
-  builder, same as health): conversation load, origin filter, pagination cursor +
-  load-older prepend, search/clear, search-hit open, day grouping, title fallback.
-  `pnpm test`.
+- **Backend** `tests/archive.rs` — pure units always run; the end-to-end ones seed
+  a fixture into a throwaway MariaDB and assert the real queries. They need
+  `MESSAGES_TEST_DATABASE_URL` and skip without it, so **running `cargo test` bare
+  proves less than it looks like it does** — the gate's `tests` row starts an
+  ephemeral MariaDB via `dev-lint`'s `with-test-db`.
+- **Frontend** vitest (`pnpm test`): `app.spec.ts` shell, `thread.spec.ts` paging
+  and composer, `messages-store.spec.ts` shared state. Playwright for the rest —
+  `pnpm run ui-check` (phone-width layout, in the gate) and `pnpm run
+  e2e:behaviour` (routing/scroll, on demand).
 
-## Status
-Login (+ allow-list) → conversation list (all origins, filter) → thread view with
-**pagination** ("load older" via `before`), date separators, edit/deleted markers,
-reactions, and **attachments** (Signal: inline images / file links served from the
-attachments PVC mounted read-only; metadata-only history rows shown but marked not
-stored) → cross-origin **search**. CI gates clippy + seeded DB tests + generated-type
-drift + angular-eslint + vitest + a prod build; the pod has readiness/liveness
-probes on `/healthz`.
-Remaining: richer Signal edit-history threading; the Signal reaction count
-approximates live state as distinct non-removed authors per emoji (ignores a
-same-author add-then-remove within a page). Google Chat has no attachments (the
-export carries none).
+## Known limits
+- The Signal reaction count approximates live state as distinct non-removed
+  authors per emoji, so a same-author add-then-remove inside one page is missed.
+- Signal edit history is flat: an edit shows as edited, not as a chain.
+- Google Chat has no attachments — the export carries none.
+- Attachments are Signal-only and served from the PVC, mounted read-only.
+  Metadata-only history rows are shown but marked not stored.

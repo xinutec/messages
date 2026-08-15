@@ -2,7 +2,7 @@
 //!
 //! Pure unit tests (timestamp/kind/LIKE-escape) always run. The end-to-end DB
 //! tests seed a known fixture into a MariaDB and assert the real queries —
-//! ordering, the `before` pagination cursor, Signal reaction aggregation, edit/
+//! ordering, the pagination cursor, Signal reaction aggregation, edit/
 //! delete flags, the µs→ms conversion, and cross-origin search. They run when
 //! `MESSAGES_TEST_DATABASE_URL` points at a *throwaway* database (the test
 //! drops+recreates the archive tables), and are skipped otherwise. CI sets it

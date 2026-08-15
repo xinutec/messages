@@ -21,16 +21,13 @@
 
     <div class="messages" #messagesEl>
       @for (g of dayGroups(); track g.key) {
-        <!-- dev-lint: allow-unstyled-class temporary adoption waiver -- decide: style, rename, or delete -->
-        <section class="day-group">
+        <section>
           <div class="day"><span>{{ g.ts | date: 'fullDate' }}</span></div>
           @for (m of g.items; track m.id) {
             <div class="msg" [class.out]="m.is_outgoing" [attr.data-id]="m.id" [attr.data-ts]="m.ts">
               <div class="meta">
-                <!-- dev-lint: allow-unstyled-class temporary adoption waiver -- decide: style, rename, or delete -->
-                <span class="sender">{{ m.sender }}</span>
-                <!-- dev-lint: allow-unstyled-class temporary adoption waiver -- decide: style, rename, or delete -->
-                <span class="time">{{ m.ts | date: 'shortTime' }}</span>
+                <span>{{ m.sender }}</span>
+                <span>{{ m.ts | date: 'shortTime' }}</span>
                 @if (m.edited) {
                   <span class="tag">edited</span>
                 }

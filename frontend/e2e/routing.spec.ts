@@ -68,7 +68,7 @@ const scrollThreadTop = (page: Page) =>
   });
 
 // Paged mock: a tall recent page (enough rows to scroll) that has an older page
-// below it. `before` present → the older page; absent → the fresh page.
+// below it. `cursor` present → the older page; absent → the fresh page.
 async function mockApiPaged(page: Page): Promise<void> {
   await page.route("**/api/**", (r) => r.fulfill({ status: 204, body: "" }));
   await page.route("**/api/me", (r) => r.fulfill({ json: ME }));
