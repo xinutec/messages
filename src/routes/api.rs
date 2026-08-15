@@ -145,9 +145,27 @@ pub async fn send(
     Path((origin, id)): Path<(String, String)>,
     Json(req): Json<SendRequest>,
 ) -> Result<Json<SendResult>, AppError> {
-    // Only IRC can be sent to. Signal and Google Chat are archives of
-    // conversations held elsewhere; there is no live client here to send with,
-    // and a 404 says so more honestly than a 400 about an unsupported origin.
+    // Only IRC can be sent to, and a 404 says so more honestly than a 400 about
+    // an unsupported origin.
+    //
+    // ⚠ **FOR SIGNAL THIS IS A DECISION, NOT A MISSING PIECE — Pippijn, 2026-08-15,
+    // "we'll keep sending from the Signal app instead".** This comment used to say
+    // there was no live client here to send with. That is no longer true:
+    // `signal-cli-rest-api` runs in this namespace as a linked secondary device and
+    // can send, and the schema's `UNIQUE KEY uniq_sender_ts` would even dedupe the
+    // echo correctly. The scoping is in task #900.
+    //
+    // What it costs is the archive's ability to confirm itself. An IRC echo is safe
+    // because irssi logs what it sends, so `record_echo` writes on the IMPORTER's key
+    // and the hourly import either agrees or exposes it. Signal has no second writer:
+    // an echo row would be the only evidence a message existed, written by the same
+    // process that claims to have sent it. A send accepted by signal-cli but never
+    // delivered would leave a row saying Pippijn said something he did not, with
+    // nothing anywhere to contradict it. Today that cannot happen — every Signal row
+    // arrived over the network, synced from his phone.
+    //
+    // Weighed against a workaround that is "open the Signal app". If this is revisited,
+    // the echo should record DELIVERY (signal-cli's receipt), not acceptance.
     if archive::Origin::parse(&origin) != Some(archive::Origin::Irc) {
         return Err(AppError::NotFound);
     }
