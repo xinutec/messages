@@ -88,6 +88,13 @@ export class App {
   readonly query = signal('');
   readonly results = signal<SearchHit[] | null>(null);
   readonly searching = signal(false);
+  /**
+   * The search did not run. ⚠ **A distinct state from "no hits", because the
+   * empty list is a CLAIM** — the template answers it with "No matches.", which
+   * says the messages are not there. A 500 or a dropped connection swallowed
+   * into that claim tells a reader their conversation does not exist.
+   */
+  readonly searchFailed = signal(false);
   private search$ = new Subject<string>();
 
   readonly visibleConversations = computed(() => {
@@ -133,7 +140,14 @@ export class App {
 
     this.search$
       .pipe(
-        switchMap((q) => this.api.search(q).pipe(catchError(() => of<SearchHit[]>([])))),
+        switchMap((q) =>
+          this.api.search(q).pipe(
+            catchError(() => {
+              this.searchFailed.set(true);
+              return of<SearchHit[]>([]);
+            }),
+          ),
+        ),
         takeUntilDestroyed(),
       )
       .subscribe((hits) => {
@@ -178,13 +192,16 @@ export class App {
       return;
     }
     this.searching.set(true);
+    this.searchFailed.set(false);
     this.search$.next(q);
   }
 
   clearSearch(): void {
     this.query.set('');
     this.results.set(null);
+    this.searchFailed.set(false);
   }
+
 
   /** Open the conversation a search hit belongs to (looked up from the list). */
   openHit(h: SearchHit): void {

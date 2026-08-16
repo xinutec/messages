@@ -60,6 +60,21 @@
     padding: 1rem;
     opacity: 0.6;
   }
+  // The search did not run. Full strength and in the error colour, where
+  // `.empty` is dimmed: this one withholds an answer rather than being one.
+  .search-failed {
+    padding: 1rem;
+    margin: 0;
+    color: var(--mat-sys-error);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+
+    button {
+      margin-left: -8px;
+    }
+  }
 }
 
 // Grid cell for the routed Thread component (which is itself the scroll container).

@@ -35,7 +35,18 @@
               <span matListItemMeta>{{ h.ts | date: 'shortDate' }}</span>
             </button>
           } @empty {
-            <p class="empty">No matches.</p>
+            <!-- Only when the search actually ran. "No matches." is a claim
+                 about the archive, and a reader who believes it for a failed
+                 request concludes a conversation is not there. -->
+            @if (searchFailed()) {
+              <p class="search-failed">
+                The search didn't run — the server didn't answer. This says nothing about whether
+                such messages exist.
+                <button mat-button type="button" (click)="runSearch()">Try again</button>
+              </p>
+            } @else if (!searching()) {
+              <p class="empty">No matches.</p>
+            }
           }
         </mat-action-list>
       } @else {

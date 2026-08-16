@@ -1,4 +1,4 @@
-import { test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 // The fleet-shared harness, published as @xinutec/ui-harness (source repo
 // ~/Code/ui-harness). Ships compiled JS, so it loads straight from node_modules.
 import {
@@ -126,6 +126,24 @@ test("open an IRC thread — the composer: lays out cleanly @ phone width", asyn
   await page.getByLabel("Message").fill(
     "a fairly long line of the sort somebody actually types on a phone, to see whether the send button survives it",
   );
+  await expectNoTextOverlaps(page, testInfo);
+  await expectNoHorizontalOverflow(page, testInfo);
+});
+
+// ⚠ The failure state, which no other case reaches: every test above mocks a
+// backend that answers. It is the one most likely to be wrong at phone width,
+// because it is the one nobody looks at — a sentence plus a button, in the
+// column the conversation list usually fills.
+test("search — a failed search says so rather than \"No matches.\" @ phone width", async ({ page }, testInfo) => {
+  await mockApi(page);
+  await page.route("**/api/search**", (r) => r.fulfill({ status: 500, body: "boom" }));
+  await page.goto("/");
+  await page.getByPlaceholder("Search messages").fill("anything");
+  await page.getByPlaceholder("Search messages").press("Enter");
+  await page.getByText("The search didn't run", { exact: false }).waitFor();
+  // The claim it replaces must be absent: rendering both would be worse than
+  // rendering only the wrong one.
+  await expect(page.locator(".empty")).toHaveCount(0);
   await expectNoTextOverlaps(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
 });
