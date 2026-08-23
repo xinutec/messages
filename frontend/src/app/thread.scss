@@ -83,6 +83,8 @@
   text-align: center;
   margin: 0.5rem 0;
   pointer-events: none; // a floating label; let clicks reach messages beneath
+  // Furniture, not content — see `.meta` below.
+  user-select: none;
 
   span {
     display: inline-block;
@@ -110,12 +112,19 @@
     margin-left: auto;
     background: color-mix(in srgb, var(--mat-sys-primary) 15%, transparent);
   }
+  // ⚠ The nick and clock are FURNITURE here, and the copy path is why.
+  // Selecting inside one message hands the browser's own copy through
+  // untouched (thread.ts), so anything selectable is what a one-message copy
+  // yields — and "pippijn 14:32" pasted above the sentence is not what anyone
+  // asked for. Across two or more messages we rebuild the line from the model,
+  // where the same fields come back in irssi's order.
   .meta {
     font: var(--mat-sys-label-small);
     opacity: 0.7;
     display: flex;
     gap: 0.5rem;
     flex-wrap: wrap;
+    user-select: none;
   }
   .body {
     white-space: pre-wrap;
@@ -155,6 +164,8 @@
   }
   .reactions {
     margin-top: 0.25rem;
+    // Nobody said "👍 2". Furniture — see `.meta`.
+    user-select: none;
     .chip {
       font: var(--mat-sys-label-medium);
       background: color-mix(in srgb, var(--mat-sys-on-surface) 8%, transparent);

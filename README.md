@@ -47,6 +47,8 @@ them, so check before trusting it.
   (created on boot, `src/db.rs`).
 - `frontend/` — Angular (login gate → conversation list with origin filter →
   thread view with reactions / edited / deleted markers, and a composer on IRC).
+  Selecting across two or more messages and copying gives an irssi-style log —
+  `src/app/copy-log.ts`, the inverse of `signal/src/irclog.rs`.
   `src/app/generated/` is written by ts-rs from the Rust wire types
   (`scripts/gen-types.sh`) and imported through `src/app/models.ts`; don't
   hand-edit either.
@@ -119,9 +121,13 @@ no `dhall`; one of the checks re-renders and diffs the two.
   proves less than it looks like it does** — the gate's `tests` row starts an
   ephemeral MariaDB via `dev-lint`'s `with-test-db`.
 - **Frontend** vitest (`pnpm test`): `app.spec.ts` shell, `thread.spec.ts` paging
-  and composer, `messages-store.spec.ts` shared state. Playwright for the rest —
+  and composer, `copy-log.spec.ts` the clipboard format, `messages-store.spec.ts`
+  shared state. Playwright for the rest —
   `pnpm run ui-check` (phone-width layout, in the gate) and `pnpm run
-  e2e:behaviour` (routing/scroll, on demand).
+  e2e:behaviour` (routing/scroll/copy, on demand). ⚠ The copy specs live there
+  because jsdom gets the Selection API wrong — measured 2026-08-16: its
+  `containsNode` called a bubble past the range selected, and the bubble a small
+  selection sat inside unselected.
 
 ## Known limits
 - The Signal reaction count approximates live state as distinct non-removed

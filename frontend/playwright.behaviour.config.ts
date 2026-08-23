@@ -18,7 +18,7 @@ import { defineConfig, devices } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: /(smoke|routing|thread-scroll)\.spec\.ts/,
+  testMatch: /(smoke|routing|thread-scroll|copy)\.spec\.ts/,
   fullyParallel: true,
   reporter: [["list"]],
   use: {

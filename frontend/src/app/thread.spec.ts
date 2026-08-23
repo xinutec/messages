@@ -194,3 +194,105 @@ describe('Thread', () => {
     expect(api.send).not.toHaveBeenCalled();
   });
 });
+
+// ---- copying a selection as a chat log --------------------------------------
+//
+// The formatting itself is covered by copy-log.spec.ts, which needs no DOM.
+// What these check is the half that only a document can answer: that a real
+// Range across real bubbles picks the right messages, and that the two-message
+// threshold holds.
+
+/** Three rendered messages over two days, attached to the document so a real
+ *  Range can be laid across them. */
+async function threeRendered(): Promise<ComponentFixture<Thread>> {
+  const { thread, ref, fixture } = setup();
+  const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+  api.messages.mockReturnValue(
+    page([
+      { ...msg('a', new Date(2026, 7, 13, 14, 32).getTime()), sender: 'pippijn', body: 'hello there' },
+      { ...msg('b', new Date(2026, 7, 13, 14, 33).getTime()), sender: 'simon', body: 'hi' },
+      { ...msg('c', new Date(2026, 7, 14, 9, 5).getTime()), sender: 'simon', body: 'morning' },
+    ]),
+  );
+  ref.setInput('origin', 'irc');
+  ref.setInput('id', '7');
+  fixture.detectChanges();
+  for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+  fixture.detectChanges();
+  return fixture;
+}
+
+/** Lay a selection from one offset in one message's body to another, as a drag
+ *  would. Same-id, same-offsets is a selection inside a single message. */
+function select(fixture: ComponentFixture<Thread>, from: [string, number], to: [string, number]): void {
+  const root = fixture.nativeElement as HTMLElement;
+  const text = (id: string): ChildNode =>
+    root.querySelector(`.msg[data-id="${id}"] .body`)!.firstChild!;
+  const range = document.createRange();
+  range.setStart(text(from[0]), from[1]);
+  range.setEnd(text(to[0]), to[1]);
+  const sel = document.getSelection()!;
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+/** Fire the copy the platform fires, and report what reached the clipboard. */
+function fireCopy(fixture: ComponentFixture<Thread>): { written: Map<string, string>; prevented: boolean } {
+  const written = new Map<string, string>();
+  const ev = new Event('copy', { bubbles: true, cancelable: true });
+  (ev as unknown as { clipboardData: unknown }).clipboardData = {
+    setData: (type: string, value: string) => written.set(type, value),
+  };
+  (fixture.nativeElement as HTMLElement).querySelector('.messages')!.dispatchEvent(ev);
+  return { written, prevented: ev.defaultPrevented };
+}
+
+describe('Thread copy', () => {
+  it('copies a multi-message selection as an irssi log', async () => {
+    const fixture = await threeRendered();
+    select(fixture, ['a', 0], ['c', 7]);
+    const { written, prevented } = fireCopy(fixture);
+    expect(prevented).toBe(true);
+    expect(written.get('text/plain')).toBe(
+      '--- Day changed Thu Aug 13 2026\n' +
+        '14:32 <pippijn> hello there\n' +
+        '14:33 <simon> hi\n' +
+        '--- Day changed Fri Aug 14 2026\n' +
+        '09:05 <simon> morning',
+    );
+  });
+
+  it('offers the same log as rich text, so the paste target can choose', async () => {
+    const fixture = await threeRendered();
+    select(fixture, ['a', 0], ['b', 2]);
+    const html = fireCopy(fixture).written.get('text/html')!;
+    expect(html.startsWith('<pre>')).toBe(true);
+    expect(html).toContain('&lt;pippijn&gt;');
+  });
+
+  it('takes a message the selection only clips, whole', async () => {
+    // Half a bubble selected is that message selected: a log line is whole or
+    // it is a misquote.
+    const fixture = await threeRendered();
+    select(fixture, ['a', 6], ['b', 1]);
+    expect(fireCopy(fixture).written.get('text/plain')).toBe(
+      '--- Day changed Thu Aug 13 2026\n14:32 <pippijn> hello there\n14:33 <simon> hi',
+    );
+  });
+
+  it('leaves a selection inside one message to the browser', async () => {
+    // Picking a phrase out of a sentence and being handed a timestamped log
+    // line is a surprise; attribution starts mattering at two.
+    const fixture = await threeRendered();
+    select(fixture, ['a', 0], ['a', 5]);
+    const { written, prevented } = fireCopy(fixture);
+    expect(prevented).toBe(false);
+    expect(written.size).toBe(0);
+  });
+
+  it('leaves a copy with no selection alone', async () => {
+    const fixture = await threeRendered();
+    document.getSelection()!.removeAllRanges();
+    expect(fireCopy(fixture).prevented).toBe(false);
+  });
+});

@@ -7,6 +7,7 @@ import { MatProgressBarModule } from '@angular/material/progress-bar';
 
 import { firstValueFrom } from 'rxjs';
 
+import { chatLogHtml, formatChatLog } from './copy-log';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
 import { Conversation, Message, Origin } from './models';
@@ -64,7 +65,9 @@ function readDebugFlag(): boolean {
   styleUrl: './thread.scss',
   // The host IS the scroll container (class `thread`): the sticky head + day
   // headers pin against it, and it's where we read/adjust scrollTop.
-  host: { class: 'thread', '(scroll)': 'onScroll()' },
+  // `copy` is on the host because it BUBBLES from wherever the selection is —
+  // the browser does the selecting, we only rewrite what leaves.
+  host: { class: 'thread', '(scroll)': 'onScroll()', '(copy)': 'onCopy($event)' },
   imports: [DatePipe, MatButtonModule, MatIconModule, MatProgressBarModule],
 })
 export class Thread {
@@ -237,6 +240,72 @@ export class Thread {
     const o = this.origin();
     const i = this.id();
     if (o != null && i != null) void this.loadThread(o, i);
+  }
+
+  // ---- copying a selection as a chat log -----------------------------------
+
+  /**
+   * Replace the clipboard's text with an irssi-style log when the selection
+   * covers more than one message.
+   *
+   * Everything hard here is the browser's: it owns the selection, the touch
+   * handles, and both the ⌘C and right-click paths, which end in this one
+   * event (measured in Chromium, e2e/copy.spec.ts). We supply the format, and
+   * both flavours at once — `text/plain` for a terminal or editor, `text/html`
+   * for Slack or mail — so each target picks rather than us guessing.
+   *
+   * ⚠ **Android's selection action-bar Copy is NOT yet measured.** It is the
+   * way this app is actually used, and the expectation is that WebView routes
+   * it through the same command; nothing here has confirmed that.
+   *
+   * ⚠ **Below two messages we do nothing.** Selecting a phrase inside one
+   * message and being handed a timestamped log line is a surprise; attribution
+   * is what the user wants at two, and only then. Returning without
+   * `preventDefault` leaves the browser's own copy intact.
+   */
+  onCopy(e: ClipboardEvent): void {
+    const data = e.clipboardData;
+    if (data == null) return;
+    const picked = this.selectedMessages();
+    if (picked.length < 2) return;
+    const text = formatChatLog(picked);
+    data.setData('text/plain', text);
+    data.setData('text/html', chatLogHtml(text));
+    e.preventDefault();
+  }
+
+  /** Which rendered messages the selection touches, in thread order.
+   *
+   *  The DOM answers only WHICH — `data-id` on each bubble — and the model
+   *  answers what they say, so the copied log cannot drift with the template.
+   *
+   *  ⚠ Only what is RENDERED can be selected: the window collapses the rest out
+   *  of the DOM behind spacers, so a select-all copies the window, not the
+   *  conversation. That matches what the user could see and scroll through. */
+  private selectedMessages(): Message[] {
+    const el = this.messagesEl()?.nativeElement;
+    const sel = document.getSelection();
+    if (el == null || sel == null || sel.isCollapsed) return [];
+    // Firefox allows several ranges in one selection; everything else gives
+    // exactly one. Taking them all costs a loop.
+    const ranges = Array.from({ length: sel.rangeCount }, (_, i) => sel.getRangeAt(i));
+    const ids = new Set<string>();
+    for (const node of el.querySelectorAll<HTMLElement>('.msg[data-id]')) {
+      // ⚠ `Range.intersectsNode`, NOT `Selection.containsNode(node, true)`.
+      // "Contains" asks whether the bubble sits inside the selection, so a
+      // selection sitting inside ONE bubble reports that bubble as unselected —
+      // the exact case the two-message threshold turns on. Intersects asks
+      // whether they overlap at all, which is the question: half a bubble
+      // selected is that message selected, because a log line is whole or it is
+      // a misquote. (jsdom's `containsNode` is separately wrong — it answered
+      // true for a bubble entirely past the range — so a test cannot be trusted
+      // to catch a switch back.)
+      if (ranges.some((r) => r.intersectsNode(node))) {
+        const id = node.dataset['id'];
+        if (id != null) ids.add(id);
+      }
+    }
+    return this.rendered().filter((m) => ids.has(m.id));
   }
 
   // ---- keeping up with what arrives ---------------------------------------
