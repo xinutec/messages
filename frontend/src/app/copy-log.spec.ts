@@ -109,6 +109,10 @@ describe('formatChatLog', () => {
           file({ file_name: 'old.jpg', is_image: true, available: false }),
           file({ content_type: 'audio/ogg' }),
           file({ file_name: '', content_type: 'text/plain' }),
+          // Real paste, 2026-08-16: a Signal photo carries no filename, and
+          // `[image: image/jpeg]` said image twice.
+          file({ content_type: 'image/jpeg', is_image: true }),
+          file({ content_type: 'image/png', is_image: true, available: false }),
           file({}),
         ],
       }),
@@ -119,7 +123,11 @@ describe('formatChatLog', () => {
       '01:00 <a> [image: old.jpg (not stored)]',
       '01:00 <a> [attachment: audio/ogg]',
       '01:00 <a> [attachment: text/plain]',
-      '01:00 <a> [attachment: attachment]',
+      '01:00 <a> [image]',
+      '01:00 <a> [image (not stored)]',
+      // Nothing known about it at all — the old chain printed the fallback as
+      // if it were a name: `[attachment: attachment]`.
+      '01:00 <a> [attachment]',
     ]);
   });
 

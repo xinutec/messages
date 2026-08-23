@@ -249,14 +249,12 @@ export class Thread {
    * covers more than one message.
    *
    * Everything hard here is the browser's: it owns the selection, the touch
-   * handles, and both the ⌘C and right-click paths, which end in this one
-   * event (measured in Chromium, e2e/copy.spec.ts). We supply the format, and
-   * both flavours at once — `text/plain` for a terminal or editor, `text/html`
-   * for Slack or mail — so each target picks rather than us guessing.
-   *
-   * ⚠ **Android's selection action-bar Copy is NOT yet measured.** It is the
-   * way this app is actually used, and the expectation is that WebView routes
-   * it through the same command; nothing here has confirmed that.
+   * handles, and every route to a copy — ⌘C and right-click in Chromium
+   * (e2e/copy.spec.ts), and on Android both the key command and the selection
+   * action bar, both confirmed on the Pixel 9 against the live app,
+   * 2026-08-16. We supply the format, and both flavours at once —
+   * `text/plain` for a terminal or editor, `text/html` for Slack or mail — so
+   * each target picks rather than us guessing.
    *
    * ⚠ **Below two messages we do nothing.** Selecting a phrase inside one
    * message and being handed a timestamped log line is a surprise; attribution

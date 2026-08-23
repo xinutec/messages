@@ -38,13 +38,19 @@ const dayMarker = (d: Date): string => `--- Day changed ${d.toDateString()}`;
  *  the empty string and the difference is invisible until it happens. */
 const named = (s: string | null): string | null => (s != null && s !== '' ? s : null);
 
-/** What the thread shows for an attachment, in one word plus a name. Mirrors
- *  `thread.html`'s three branches and its name fallback, so the log calls a
- *  file what the screen called it. */
+/** What an attachment is, and what it is called when that adds anything.
+ *
+ *  ⚠ The content type stands in for a MISSING FILENAME, and only when it says
+ *  more than the first word already did. A nameless jpeg printed
+ *  `[image: image/jpeg]` — the word twice — and it reached a real paste before
+ *  anyone noticed, because on screen that branch does not exist: `thread.html`
+ *  renders the picture, and falls back to the type only for the file it cannot
+ *  show. */
 function attachmentLine(a: Attachment): string {
   const what = a.is_image ? 'image' : 'attachment';
-  const name = named(a.file_name) ?? named(a.content_type) ?? 'attachment';
-  return a.available ? `[${what}: ${name}]` : `[${what}: ${name} (not stored)]`;
+  const name = named(a.file_name) ?? (a.is_image ? null : named(a.content_type));
+  const label = name != null ? `${what}: ${name}` : what;
+  return a.available ? `[${label}]` : `[${label} (not stored)]`;
 }
 
 /** One message's text, as the lines it occupies. Empty when the thread would
