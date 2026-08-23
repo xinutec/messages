@@ -175,7 +175,7 @@
       ],
       "cwd": "frontend",
       "env": {},
-      "name": "frontend ui-check (phone-width layout harness)",
+      "name": "frontend browser suite (layout + copy, phone width)",
       "timeout_s": 1800
     },
     {

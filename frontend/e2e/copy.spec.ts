@@ -17,10 +17,15 @@ const ME = { user_id: "u1", display_name: "Test User" };
 const CONVERSATIONS = [
   { origin: "irc", id: "7", name: "#chan", kind: "group", network: "xinutec", message_count: 3, last_ts: Date.UTC(2026, 7, 14, 9, 5) },
 ];
+const line = (id: string, ts: number, sender: string, body: string, kind = "message") => ({
+  id, ts, sender, body, kind, is_outgoing: false, deleted: false, edited: false, reactions: [], attachments: [],
+});
+
 const MESSAGES = [
-  { id: "a", ts: Date.UTC(2026, 7, 13, 14, 32), sender: "pippijn", body: "hello there", is_outgoing: false, deleted: false, edited: false, reactions: [], attachments: [] },
-  { id: "b", ts: Date.UTC(2026, 7, 13, 14, 33), sender: "simon", body: "hi", is_outgoing: false, deleted: false, edited: false, reactions: [], attachments: [] },
-  { id: "c", ts: Date.UTC(2026, 7, 14, 9, 5), sender: "simon", body: "morning", is_outgoing: false, deleted: false, edited: false, reactions: [], attachments: [] },
+  line("a", Date.UTC(2026, 7, 13, 14, 32), "pippijn", "hello there"),
+  line("b", Date.UTC(2026, 7, 13, 14, 33), "simon", "hi"),
+  line("d", Date.UTC(2026, 7, 13, 14, 34), "pippijn", "waves", "action"),
+  line("c", Date.UTC(2026, 7, 14, 9, 5), "simon", "morning"),
 ];
 
 /** Catch-all first: Playwright runs handlers last-registered-first. */
@@ -56,6 +61,10 @@ test("a selection spanning messages copies as an irssi log", async ({ page }) =>
     "--- Day changed Thu Aug 13 2026\n" +
       "14:32 <pippijn> hello there\n" +
       "14:33 <simon> hi\n" +
+      // ⚠ Two spaces before the star, and the sender inside the text. That is
+      // irssi's action line and what its parser matches on; the whole point of
+      // this format is that a log copied out reads like one that went in.
+      "14:34  * pippijn waves\n" +
       "--- Day changed Fri Aug 14 2026\n" +
       "09:05 <simon> morning",
   );

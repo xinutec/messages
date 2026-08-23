@@ -2,9 +2,14 @@ import { defineConfig, devices } from "@playwright/test";
 
 /**
  * Behavioural e2e — the app's scroll/routing/render-soundness specs
- * (smoke, routing, thread-scroll). These are NOT the phone-width layout harness
- * (that's playwright.config.ts + e2e/ui-pages.spec.ts); they assert behaviour —
+ * (smoke, routing, thread-scroll). These are NOT the gate's browser suite
+ * (that's playwright.config.ts: ui-pages + copy); they assert behaviour —
  * sticky headers, URL contracts, landing at the newest message.
+ *
+ * ⚠ **Being here means running only when someone remembers.** That is the cost
+ * of the dev-serve dependency below, not a judgement that these matter less. A
+ * spec that does NOT need `ng serve` belongs in playwright.config.ts, where the
+ * gate runs it — `copy` moved there for exactly that reason.
  *
  * Same Pixel 7 phone geometry as the layout harness (a real device preset, not
  * the old 390px "Desktop Chrome" spread — that antipattern rendered tighter
@@ -18,7 +23,7 @@ import { defineConfig, devices } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: /(smoke|routing|thread-scroll|copy)\.spec\.ts/,
+  testMatch: /(smoke|routing|thread-scroll)\.spec\.ts/,
   fullyParallel: true,
   reporter: [["list"]],
   use: {

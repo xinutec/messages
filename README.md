@@ -122,12 +122,15 @@ no `dhall`; one of the checks re-renders and diffs the two.
   ephemeral MariaDB via `dev-lint`'s `with-test-db`.
 - **Frontend** vitest (`pnpm test`): `app.spec.ts` shell, `thread.spec.ts` paging
   and composer, `copy-log.spec.ts` the clipboard format, `messages-store.spec.ts`
-  shared state. Playwright for the rest —
-  `pnpm run ui-check` (phone-width layout, in the gate) and `pnpm run
-  e2e:behaviour` (routing/scroll/copy, on demand). ⚠ The copy specs live there
-  because jsdom gets the Selection API wrong — measured 2026-08-16: its
-  `containsNode` called a bubble past the range selected, and the bubble a small
-  selection sat inside unselected.
+  shared state. Then Playwright, split by whether jsdom could have answered:
+  - `pnpm run ui-check` — **in the gate**. Phone-width layout *and* the copy
+    specs, both against the production build in a real browser. ⚠ Copy is here
+    rather than on-demand because jsdom gets the Selection API wrong — measured
+    2026-08-16: its `containsNode` called a bubble past the range selected, and
+    the bubble a small selection sat inside unselected. Those specs are the
+    evidence, so they must not be the ones nobody runs.
+  - `pnpm run e2e:behaviour` — **on demand**. routing/scroll/smoke, which were
+    tuned against `ng serve` and land differently on a production build.
 
 ## Known limits
 - The Signal reaction count approximates live state as distinct non-removed

@@ -160,12 +160,24 @@ in  { name = "messages"
         , env = G.oneAngularWorker
         , timeout_s = 1800
         }
-      , {-  The L2 phone-width layout harness: `e2e/serve.mjs` serves the dist the
-            build row wrote and the specs assert no overlap or overflow at Pixel
-            width.
+      , {-  Everything that needs a REAL BROWSER against the production build:
+            the harness's static server serves the dist the build row wrote, and
+            the specs assert what jsdom cannot answer. Two kinds, one row —
+
+              * L2 phone-width layout: no overlap, no overflow at Pixel width.
+              * copy-as-chat-log: the Selection and Clipboard APIs, which jsdom
+                gets WRONG rather than merely missing (its `containsNode`
+                answered true for a node past the range and false for the node
+                the selection sat inside). The vitest specs for copy are the
+                convenience; these are the evidence, so they cannot be the ones
+                nobody runs.
+
+            The name says "browser" and not "layout" because it stopped being
+            only layout — a row whose name is narrower than what it runs is how
+            a check quietly loses scope.
         -}
         G.Check::{
-        , name = "frontend ui-check (phone-width layout harness)"
+        , name = "frontend browser suite (layout + copy, phone width)"
         , cwd = "frontend"
         , argv = G.inDevShell [ "pnpm", "run", "ui-check" ]
         , timeout_s = 1800
