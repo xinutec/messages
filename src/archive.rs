@@ -770,9 +770,10 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
     }
 
     // IRC. Searching only what was *said* — the same restriction the list and
-    // the page use. Server notices would otherwise dominate every result: they
-    // are 47% of the archive's lines and they are the ones full of words like
-    // "connection" and "user" that somebody searching would actually type.
+    // the page use. Joins, parts and server notices would otherwise dominate
+    // every result: 45% of the 3.69M lines (counted 2026-08-16), and they are
+    // the ones full of words like "connection" and "user" that somebody
+    // searching would actually type.
     //
     // ⚠ **THE SUBSTRING SCAN MUST NOT BE JOINED TO, and this is the same trap
     // the conversation list fell into.** Written as one flat join, the optimizer

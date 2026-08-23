@@ -17,7 +17,8 @@ connections. Same per-service pattern as `life`/`health`.
 ```
 
 **IRC shows only what was said.** Its tables also hold joins, parts and server
-notices — the notices alone are 47% of the archive's lines — so every read
+notices, and those are **45% of the 3.69M lines** (counted 2026-08-16: 33.5%
+`event`, 11.8% `notice`) — so every read
 restricts to `kind IN ('message', 'action')`; the conversation list gets that from
 `irc_conversation_stats`, which signal's triggers only count those kinds into.
 Excluded outright (`is_status`) is the conversation irssi files notices into: it
