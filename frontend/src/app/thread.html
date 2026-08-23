@@ -33,9 +33,14 @@
                 }
               </div>
               @if (m.body) {
-                <!-- interpolation flush with the tags: white-space:pre-wrap
+                <!-- An action is written in the third person about its sender,
+                     so every IRC client draws it `* nick waves`. The star is
+                     the client's, not the text's — the backend sends the words
+                     alone and `kind` says which they are.
+
+                     interpolation flush with the tags: white-space:pre-wrap
                      would otherwise render the template indent as a leading space -->
-                <div class="body" [class.deleted]="m.deleted">{{ m.deleted ? '(deleted)' : m.body }}</div>
+                <div class="body" [class.deleted]="m.deleted">{{ m.deleted ? '(deleted)' : (m.kind === 'action' ? '* ' + m.body : m.body) }}</div>
               }
               @for (a of m.attachments; track a.id) {
                 <div class="attach">

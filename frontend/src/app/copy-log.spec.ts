@@ -12,6 +12,7 @@ function msg(over: Partial<Message> & Pick<Message, 'ts' | 'sender'>): Message {
   return {
     id: String(over.ts),
     is_outgoing: false,
+    kind: 'message',
     body: null,
     deleted: false,
     edited: false,
@@ -63,6 +64,27 @@ describe('formatChatLog', () => {
       '--- Day changed Thu Aug 13 2026',
       '--- Day changed Fri Aug 14 2026',
     ]);
+  });
+
+  it('writes an action irssi\'s way, with the sender inside the text', () => {
+    const out = formatChatLog([
+      msg({ ts: at(2026, 8, 13, 14, 32), sender: 'pippijn', body: 'hello' }),
+      msg({ ts: at(2026, 8, 13, 14, 35), sender: 'pippijn', kind: 'action', body: 'waves' }),
+    ]);
+    expect(out.split('\n').slice(1)).toEqual([
+      '14:32 <pippijn> hello', //
+      '14:35  * pippijn waves',
+    ]);
+  });
+
+  it('keeps both of an action line\'s spaces', () => {
+    // The parser this mirrors matches on the double space; one space makes the
+    // line unrecognisable, and no other assertion here would notice.
+    const out = formatChatLog([
+      msg({ ts: at(2026, 8, 13, 14, 35), sender: 'p', kind: 'action', body: 'waves' }),
+    ]);
+    expect(out).toContain('14:35  * p waves');
+    expect(out).not.toContain('14:35 * p waves');
   });
 
   it('zero-pads the clock', () => {

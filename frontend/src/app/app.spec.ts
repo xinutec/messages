@@ -14,6 +14,7 @@ function msg(id: string, ts: number, extra: Partial<Message> = {}): Message {
     ts,
     sender: 's',
     is_outgoing: false,
+    kind: 'message',
     body: 'b',
     deleted: false,
     edited: false,

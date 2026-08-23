@@ -48,7 +48,7 @@ them, so check before trusting it.
 - `frontend/` — Angular (login gate → conversation list with origin filter →
   thread view with reactions / edited / deleted markers, and a composer on IRC).
   Selecting across two or more messages and copying gives an irssi-style log —
-  `src/app/copy-log.ts`, the inverse of `signal/src/irclog.rs`.
+  `src/app/copy-log.ts`, the inverse of `signal/src/irclog.rs`, actions included.
   `src/app/generated/` is written by ts-rs from the Rust wire types
   (`scripts/gen-types.sh`) and imported through `src/app/models.ts`; don't
   hand-edit either.

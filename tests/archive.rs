@@ -11,8 +11,8 @@
 //! them too. NEVER point it at the real signal DB.
 
 use messages::archive::{
-    self, ConversationKind, Origin, encode_cursor, escape_like, kind_from_is_dm, parse_cursor,
-    us_to_ms,
+    self, ConversationKind, MessageKind, Origin, encode_cursor, escape_like, kind_from_is_dm,
+    parse_cursor, us_to_ms,
 };
 
 // ---- pure units (no DB) -----------------------------------------------------
@@ -61,6 +61,24 @@ fn enums_serialise_to_the_spellings_the_frontend_expects() {
         serde_json::to_string(&ConversationKind::Group).unwrap(),
         r#""group""#
     );
+    assert_eq!(
+        serde_json::to_string(&MessageKind::Message).unwrap(),
+        r#""message""#
+    );
+    assert_eq!(
+        serde_json::to_string(&MessageKind::Action).unwrap(),
+        r#""action""#
+    );
+}
+
+#[test]
+fn message_kind_parses_only_the_two_the_queries_admit() {
+    assert_eq!(MessageKind::parse("message"), Some(MessageKind::Message));
+    assert_eq!(MessageKind::parse("action"), Some(MessageKind::Action));
+    // The column also holds these two, and the queries filter them out. Parsing
+    // them would mean a join or a server notice could be drawn as speech.
+    assert_eq!(MessageKind::parse("event"), None);
+    assert_eq!(MessageKind::parse("notice"), None);
 }
 
 #[test]
@@ -710,8 +728,13 @@ async fn irc_conversations_leave_out_the_status_log_and_count_only_speech() {
 }
 
 /// A page carries what was said and nothing else, and an action is marked as
-/// one. The sender travels in its own field, so the leading star is all that is
-/// left to say this was `/me` rather than speech.
+/// one — in `kind`, with the body left as the words alone.
+///
+/// ⚠ It used to arrive as `* waves`, the star folded into the text by the query.
+/// That made the two indistinguishable to any second reader: the copy formatter
+/// could not tell an action from a message beginning with a star, and neither
+/// could a test. Drawing the star is now the client's job, which is what every
+/// IRC client does with the same two fields.
 #[tokio::test]
 async fn irc_page_shows_speech_only_and_marks_actions() {
     let Some(pool) = seeded_pool().await else {
@@ -734,8 +757,17 @@ async fn irc_page_shows_speech_only_and_marks_actions() {
         .collect();
     assert_eq!(
         bodies,
-        ["first findme", "second", "* waves"],
-        "join and notice excluded; the action keeps its star"
+        ["first findme", "second", "waves"],
+        "join and notice excluded; the action's body is the words, no star"
+    );
+    assert_eq!(
+        page.messages.iter().map(|m| m.kind).collect::<Vec<_>>(),
+        [
+            MessageKind::Message,
+            MessageKind::Message,
+            MessageKind::Action
+        ],
+        "the kind column reaches the API instead of being folded into the text"
     );
     assert_eq!(
         page.messages
@@ -788,7 +820,7 @@ async fn irc_page_orders_lines_that_share_a_minute() {
         }
     }
     seen.reverse(); // paged newest→oldest
-    assert_eq!(seen, ["first findme", "second", "* waves"], "file order");
+    assert_eq!(seen, ["first findme", "second", "waves"], "file order");
 }
 
 #[tokio::test]

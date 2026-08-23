@@ -9,7 +9,7 @@ import { MessagesApi } from './messages-api';
 import { Message, MessagesPage } from './models';
 
 function msg(id: string, ts: number): Message {
-  return { id, ts, sender: 's', is_outgoing: false, body: 'b', deleted: false, edited: false, reactions: [], attachments: [] };
+  return { id, ts, sender: 's', is_outgoing: false, kind: 'message', body: 'b', deleted: false, edited: false, reactions: [], attachments: [] };
 }
 
 function makeApi() {
@@ -246,6 +246,32 @@ function fireCopy(fixture: ComponentFixture<Thread>): { written: Map<string, str
   (fixture.nativeElement as HTMLElement).querySelector('.messages')!.dispatchEvent(ev);
   return { written, prevented: ev.defaultPrevented };
 }
+
+describe('Thread rendering', () => {
+  it('draws an action with its star, which the backend no longer sends', async () => {
+    // ⚠ The star moved from `archive.rs` to here when `kind` reached the API.
+    // On screen nothing was supposed to change, and nothing else would say so:
+    // the body now arrives as the words alone, so a template that forgot the
+    // star would render `waves` and look like ordinary speech.
+    const { thread, ref, fixture } = setup();
+    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    api.messages.mockReturnValue(
+      page([
+        { ...msg('m', 100), sender: 'alice', body: 'hello' },
+        { ...msg('a', 200), sender: 'alice', kind: 'action', body: 'waves' },
+      ]),
+    );
+    ref.setInput('origin', 'irc');
+    ref.setInput('id', '7');
+    fixture.detectChanges();
+    for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    fixture.detectChanges();
+    const bodies = [...(fixture.nativeElement as HTMLElement).querySelectorAll('.msg .body')].map(
+      (e) => e.textContent,
+    );
+    expect(bodies).toEqual(['hello', '* waves']);
+  });
+});
 
 describe('Thread copy', () => {
   it('copies a multi-message selection as an irssi log', async () => {

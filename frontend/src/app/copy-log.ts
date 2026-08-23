@@ -13,12 +13,11 @@
 //
 //     --- Day changed Thu Aug 13 2026
 //     14:32 <pippijn> hello there
+//     14:35  * pippijn waves
 //
-// Actions (`HH:MM  * nick text`) are NOT produced. The API's `Message` has no
-// kind field: `archive.rs` folds an IRC action into the body as `* waves`, so an
-// action copies as `14:32 <pippijn> * waves`. Correct and unambiguous, not
-// irssi's shape. Detecting it here would mean sniffing a leading `* `, which is
-// a second copy of an invariant that belongs in one place — task #1118.
+// ⚠ **An action's two spaces are irssi's, not a typo.** `HH:MM  * nick text`
+// against `HH:MM <nick> text` — the parser matches on it, so losing one space
+// makes the line unrecognisable to the thing this is the inverse of.
 
 import { Attachment, Message } from './models';
 
@@ -91,7 +90,10 @@ export function formatChatLog(messages: readonly Message[]): string {
       lines.push(marker);
       day = marker;
     }
-    const prefix = `${hhmm(at)} <${m.sender}> `;
+    // irssi puts the sender INSIDE an action's text, so the two forms differ by
+    // more than punctuation: `<nick> hello` against ` * nick waves`.
+    const prefix =
+      m.kind === 'action' ? `${hhmm(at)}  * ${m.sender} ` : `${hhmm(at)} <${m.sender}> `;
     for (const line of bodyLines(m)) lines.push(prefix + line);
   }
   return lines.join('\n');

@@ -73,6 +73,42 @@ impl ConversationKind {
     }
 }
 
+// ⚠ This doc REACHES TYPESCRIPT — ts_rs copies it into `generated/`. So no
+// intra-doc links (`[Foo::Bar]` renders as literal brackets there) and nothing
+// that only makes sense to a Rust reader; those go in `//` like this.
+/// Whether a line was said or done.
+///
+/// ⚠ **Two variants, and the IRC table has four.** Its column is
+/// `ENUM('message','action','event','notice')`, but every query restricts to
+/// message and action — joins, parts and server notices are not conversation.
+/// Widening this would be claiming the reader shows things it does not. Signal
+/// and Google Chat draw no such distinction and are always `message`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub enum MessageKind {
+    /// Someone said something.
+    Message,
+    /// Someone did something — written in the third person about its sender,
+    /// which is why every IRC client draws it `* nick waves` rather than
+    /// `nick: waves`.
+    Action,
+}
+
+impl MessageKind {
+    /// Parse an `irc_messages.kind` ENUM value, for the two the queries admit.
+    /// None means a row of a kind the filter should have excluded, which the
+    /// caller reports rather than drawing as speech.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "message" => Some(MessageKind::Message),
+            "action" => Some(MessageKind::Action),
+            _ => None,
+        }
+    }
+}
+
 /// Google Chat stores microsecond timestamps; the unified API uses milliseconds.
 pub fn us_to_ms(us: i64) -> i64 {
     us / 1000
@@ -170,6 +206,8 @@ pub struct Message {
     pub ts: i64,
     pub sender: String,
     pub is_outgoing: bool,
+    /// Said or done. Always `message` outside IRC.
+    pub kind: MessageKind,
     pub body: Option<String>,
     pub deleted: bool,
     pub edited: bool,
@@ -428,6 +466,7 @@ async fn signal_messages(
             ts,
             sender: r.try_get("sender")?,
             is_outgoing: is_outgoing != 0,
+            kind: MessageKind::Message, // Signal has no action
             body: r.try_get("body")?,
             deleted: deleted != 0,
             edited: edited != 0,
@@ -547,6 +586,7 @@ async fn gchat_messages(
                 .try_get::<Option<String>, _>("sender")?
                 .unwrap_or_default(),
             is_outgoing: is_self != 0,
+            kind: MessageKind::Message, // nor does Google Chat
             body: r.try_get("body")?,
             deleted: false,
             edited: false,
@@ -632,6 +672,13 @@ async fn irc_messages(
         let ts_s: i64 = r.try_get("ts_s")?;
         let is_self: i8 = r.try_get("is_self")?;
         let kind: String = r.try_get("kind")?;
+        // The query filters to the two this parses, so an unknown value means
+        // the filter and the enum have drifted apart — reported, not drawn as
+        // speech, because an event rendered as a line somebody said is a lie
+        // the reader cannot see through.
+        let Some(kind) = MessageKind::parse(&kind) else {
+            bail!("irc_messages.kind holds a value this query should have excluded: {kind:?}");
+        };
         let body: Option<String> = r.try_get("body")?;
         oldest = Some((ts_s, id));
         msgs.push(Message {
@@ -641,14 +688,8 @@ async fn irc_messages(
                 .try_get::<Option<String>, _>("sender")?
                 .unwrap_or_default(),
             is_outgoing: is_self != 0,
-            // An action is written in the third person about its sender, which
-            // is why every IRC client renders it `* nick waves` rather than
-            // `nick: waves`. The sender travels in its own field here, so the
-            // star alone carries what is left of that.
-            body: match kind.as_str() {
-                "action" => body.map(|b| format!("* {b}")),
-                _ => body,
-            },
+            kind,
+            body,
             deleted: false,
             edited: false,
             reactions: Vec::new(),   // IRC has none
