@@ -52,8 +52,7 @@ function attachmentLine(a: Attachment): string {
   return a.available ? `[${label}]` : `[${label} (not stored)]`;
 }
 
-/** One message's text, as the lines it occupies. Empty when the thread would
- *  render nothing — a deleted message whose body is already gone. */
+/** One message's text, as the lines it occupies. */
 function bodyLines(m: Message): string[] {
   const lines: string[] = [];
   // `thread.html` gates the body on `m.body` and only then swaps in
@@ -90,8 +89,7 @@ export function formatChatLog(messages: readonly Message[]): string {
       lines.push(marker);
       day = marker;
     }
-    // irssi puts the sender INSIDE an action's text, so the two forms differ by
-    // more than punctuation: `<nick> hello` against ` * nick waves`.
+    // An action's sender sits inside the text rather than in brackets.
     const prefix =
       m.kind === 'action' ? `${hhmm(at)}  * ${m.sender} ` : `${hhmm(at)} <${m.sender}> `;
     for (const line of bodyLines(m)) lines.push(prefix + line);

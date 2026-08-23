@@ -70,9 +70,11 @@ them, so check before trusting it.
 - `POST /api/telemetry` — fold client events into the server log. Always 204.
 
 `{origin}` is `signal`, `gchat` or `irc`; `{id}` is the Signal `thread_id`, the
-gchat `group_id`, or the numeric `irc_conversations.id`. Both it and a
-conversation's `kind` are Rust enums, so they reach the frontend as string unions
-rather than `string`, and an unknown `{origin}` is a 404.
+gchat `group_id`, or the numeric `irc_conversations.id`. That, a conversation's
+`kind` (`dm`/`group`) and a message's (`message`/`action`) are all Rust enums, so
+they reach the frontend as string unions rather than `string`, and an unknown
+`{origin}` is a 404. A message's `kind` is IRC's only — the star on an action is
+drawn by the client, not carried in the text.
 
 ## Local dev
 ```
@@ -105,8 +107,8 @@ session key and OAuth client (DB creds come from `signal-secret`).
 ## Tests
 `gate.dhall` is the whole gate (and the pre-commit hook), twelve named checks:
 fmt, clippy, generated-type drift, the Rust suite against a throwaway MariaDB,
-then the frontend's deps + lint + e2e typecheck + build + unit tests +
-phone-layout harness, and the shared dev-lint rules. Run it with
+then the frontend's deps + lint + e2e typecheck + build + unit tests + the
+browser suite, and the shared dev-lint rules. Run it with
 
 ```sh
 nix run ../dev-lint#gate -- . gate.json
@@ -123,19 +125,22 @@ no `dhall`; one of the checks re-renders and diffs the two.
 - **Frontend** vitest (`pnpm test`): `app.spec.ts` shell, `thread.spec.ts` paging
   and composer, `copy-log.spec.ts` the clipboard format, `messages-store.spec.ts`
   shared state. Then Playwright, split by whether jsdom could have answered:
-  - `pnpm run ui-check` — **in the gate**. Phone-width layout *and* the copy
-    specs, both against the production build in a real browser. ⚠ Copy is here
-    rather than on-demand because jsdom gets the Selection API wrong — measured
-    2026-08-16: its `containsNode` called a bubble past the range selected, and
-    the bubble a small selection sat inside unselected. Those specs are the
-    evidence, so they must not be the ones nobody runs.
-  - `pnpm run e2e:behaviour` — **on demand**. routing/scroll/smoke, which were
-    tuned against `ng serve` and land differently on a production build.
+  - `pnpm run ui-check` — **in the gate**: phone-width layout and the copy specs,
+    against the production build. ⚠ Copy runs here rather than on demand because
+    jsdom gets the Selection API *wrong*, not merely absent — its `containsNode`
+    called a bubble past the range selected, and the bubble a small selection sat
+    inside unselected. These are the evidence, so they cannot be the ones nobody
+    runs.
+  - `pnpm run e2e:behaviour` — **on demand**: routing/scroll/smoke, tuned against
+    `ng serve` and landing differently on a production build.
 
 ## Known limits
 - The Signal reaction count approximates live state as distinct non-removed
   authors per emoji, so a same-author add-then-remove inside one page is missed.
 - Signal edit history is flat: an edit shows as edited, not as a chain.
-- Google Chat has no attachments — the export carries none.
-- Attachments are Signal-only and served from the PVC, mounted read-only.
-  Metadata-only history rows are shown but marked not stored.
+- Attachments are Signal-only (the Google Chat export carries none, IRC has no
+  such thing), served from the PVC mounted read-only. Metadata-only history rows
+  are shown but marked not stored.
+- **Copying reaches only what is rendered.** The thread keeps a bounded window in
+  the DOM, so select-all in a long conversation copies that window and says
+  nothing about the rest.

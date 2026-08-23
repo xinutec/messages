@@ -249,12 +249,12 @@ export class Thread {
    * covers more than one message.
    *
    * Everything hard here is the browser's: it owns the selection, the touch
-   * handles, and every route to a copy — ⌘C and right-click in Chromium
-   * (e2e/copy.spec.ts), and on Android both the key command and the selection
-   * action bar, both confirmed on the Pixel 9 against the live app,
-   * 2026-08-16. We supply the format, and both flavours at once —
-   * `text/plain` for a terminal or editor, `text/html` for Slack or mail — so
-   * each target picks rather than us guessing.
+   * handles, and every route to a copy — ⌘C, right-click, Android's key command
+   * and its selection action bar all arrive as this one event. (⌘C is covered by
+   * e2e/copy.spec.ts; the Android pair was confirmed by hand on the Pixel 9
+   * against the live app, 2026-08-16.) We supply the format, and both flavours
+   * at once — `text/plain` for a terminal or editor, `text/html` for Slack or
+   * mail — so each target picks rather than us guessing.
    *
    * ⚠ **Below two messages we do nothing.** Selecting a phrase inside one
    * message and being handed a timestamped log line is a surprise; attribution
@@ -291,13 +291,12 @@ export class Thread {
     for (const node of el.querySelectorAll<HTMLElement>('.msg[data-id]')) {
       // ⚠ `Range.intersectsNode`, NOT `Selection.containsNode(node, true)`.
       // "Contains" asks whether the bubble sits inside the selection, so a
-      // selection sitting inside ONE bubble reports that bubble as unselected —
-      // the exact case the two-message threshold turns on. Intersects asks
-      // whether they overlap at all, which is the question: half a bubble
-      // selected is that message selected, because a log line is whole or it is
-      // a misquote. (jsdom's `containsNode` is separately wrong — it answered
-      // true for a bubble entirely past the range — so a test cannot be trusted
-      // to catch a switch back.)
+      // selection inside ONE bubble reports that bubble as unselected — the
+      // exact case the two-message threshold turns on. Intersects asks whether
+      // they overlap, which is the question: half a bubble selected is that
+      // message selected, because a log line is whole or it is a misquote.
+      // A switch back would be caught by e2e/copy.spec.ts and NOT by the vitest
+      // specs — jsdom gets both APIs wrong.
       if (ranges.some((r) => r.intersectsNode(node))) {
         const id = node.dataset['id'];
         if (id != null) ids.add(id);
