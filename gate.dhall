@@ -127,18 +127,21 @@ in  { name = "messages"
         , name = "frontend deps match the lockfile"
         , cwd = "frontend"
         , argv = G.inDevShell [ "pnpm", "install", "--frozen-lockfile" ]
+        , env = G.nonInteractive
         , timeout_s = 900
         }
       , G.Check::{
         , name = "frontend lint"
         , cwd = "frontend"
         , argv = G.inDevShell [ "pnpm", "run", "lint" ]
+        , env = G.nonInteractive
         , timeout_s = 900
         }
       , G.Check::{
         , name = "frontend typecheck (e2e)"
         , cwd = "frontend"
         , argv = G.inDevShell [ "pnpm", "run", "typecheck:e2e" ]
+        , env = G.nonInteractive
         , timeout_s = 900
         }
       , {-  `../../dev-lint`, not `../dev-lint`: cwd is `messages/frontend`.
@@ -151,13 +154,14 @@ in  { name = "messages"
               "../../"
               [ "dist/messages-web/browser" ]
               [ "pnpm", "exec", "ng", "build" ]
+        , env = G.nonInteractive
         , timeout_s = 1800
         }
       , G.Check::{
         , name = "frontend unit tests"
         , cwd = "frontend"
         , argv = G.inDevShell [ "pnpm", "test" ]
-        , env = G.oneAngularWorker
+        , env = G.nonInteractive # G.oneAngularWorker
         , timeout_s = 1800
         }
       , {-  Everything that needs a REAL BROWSER against the production build:
@@ -180,6 +184,7 @@ in  { name = "messages"
         , name = "frontend browser suite (layout + copy, phone width)"
         , cwd = "frontend"
         , argv = G.inDevShell [ "pnpm", "run", "ui-check" ]
+        , env = G.nonInteractive
         , timeout_s = 1800
         }
       , G.checkTable "../dev-lint"
