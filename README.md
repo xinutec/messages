@@ -50,6 +50,10 @@ them, so check before trusting it.
   thread view with reactions / edited / deleted markers, and a composer on IRC).
   Selecting across two or more messages and copying gives an irssi-style log —
   `src/app/copy-log.ts`, the inverse of `signal/src/irclog.rs`, actions included.
+  `src/app/thread-window.ts` is the scrolling: it collapses all but a window of a
+  long thread out of the DOM and re-anchors the viewport around every change.
+  `src/app/attachment.ts` decides what an attachment is CALLED, because the
+  screen and the clipboard both print it and drifted while each decided alone.
   `src/app/generated/` is written by ts-rs from the Rust wire types
   (`scripts/gen-types.sh`) and imported through `src/app/models.ts`; don't
   hand-edit either.
@@ -124,8 +128,11 @@ no `dhall`; one of the checks re-renders and diffs the two.
   proves less than it looks like it does** — the gate's `tests` row starts an
   ephemeral MariaDB via `dev-lint`'s `with-test-db`.
 - **Frontend** vitest (`pnpm test`): `app.spec.ts` shell, `thread.spec.ts` paging
-  and composer, `copy-log.spec.ts` the clipboard format, `messages-store.spec.ts`
-  shared state. Then Playwright, split by whether jsdom could have answered:
+  and composer, `copy-log.spec.ts` the clipboard format, `thread-window.spec.ts`
+  the windowing arithmetic, `messages-store.spec.ts` shared state. ⚠ The window
+  engine's MEASURING half is not there and should not be: jsdom has no layout, so
+  every rect would be zero and the test would be of a fake. That half is
+  `e2e/thread-scroll.spec.ts`, in a real browser. Then Playwright, split by whether jsdom could have answered:
   - `pnpm run ui-check` — **in the gate**: phone-width layout and the copy specs,
     against the production build. ⚠ Copy runs here rather than on demand because
     jsdom gets the Selection API *wrong*, not merely absent — its `containsNode`
