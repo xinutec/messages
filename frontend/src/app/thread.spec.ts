@@ -321,4 +321,35 @@ describe('Thread copy', () => {
     document.getSelection()!.removeAllRanges();
     expect(fireCopy(fixture).prevented).toBe(false);
   });
+
+  /** ⚠ The screen and the clipboard must call an attachment the same thing, and
+   *  they did not. Each composed the label itself — the template with a
+   *  `file_name || content_type || 'attachment'` chain, `copy-log.ts` with a
+   *  rule about when the type is worth printing — so a stored-less image with no
+   *  filename read `image/jpeg (not stored)` on screen and `[image (not stored)]`
+   *  in the paste. Naming lives in `attachment.ts` now; this is the case that
+   *  told the two copies apart, so it is the case that has to stay pinned. */
+  it('calls a nameless unavailable image what it is, as the clipboard does', async () => {
+    const { thread, ref, fixture } = setup();
+    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    api.messages.mockReturnValue(
+      page([
+        {
+          ...msg('a', new Date(2026, 7, 13, 14, 32).getTime()),
+          attachments: [
+            { id: 'x', content_type: 'image/jpeg', file_name: null, size: null, available: false, is_image: true },
+          ],
+        },
+      ]),
+    );
+    ref.setInput('origin', 'irc');
+    ref.setInput('id', '7');
+    fixture.detectChanges();
+    for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    fixture.detectChanges();
+
+    const text = (fixture.nativeElement as HTMLElement).querySelector('.attach')?.textContent ?? '';
+    expect(text).toContain('image (not stored)');
+    expect(text).not.toContain('image/jpeg');
+  });
 });

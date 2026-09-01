@@ -44,17 +44,22 @@
               }
               @for (a of m.attachments; track a.id) {
                 <div class="attach">
+                  <!-- The name comes from `attachment.ts`, which `copy-log.ts`
+                       also uses: the screen and the clipboard called a nameless
+                       unavailable image two different things while each worked
+                       it out for itself. The icon says what kind of thing it
+                       is, so only the name is printed here. -->
                   @if (a.available && a.is_image) {
                     <a [href]="'/api/attachments/' + a.id" target="_blank" rel="noopener">
-                      <img [src]="'/api/attachments/' + a.id" [alt]="a.file_name || 'image'" loading="lazy" />
+                      <img [src]="'/api/attachments/' + a.id" [alt]="attachmentName(a) ?? 'image'" loading="lazy" />
                     </a>
                   } @else if (a.available) {
                     <a [href]="'/api/attachments/' + a.id" target="_blank" rel="noopener">
-                      <mat-icon>attach_file</mat-icon>{{ a.file_name || a.content_type || 'attachment' }}
+                      <mat-icon>attach_file</mat-icon>{{ attachmentName(a) ?? attachmentNoun(a) }}
                     </a>
                   } @else {
                     <span class="unavailable">
-                      <mat-icon>attach_file</mat-icon>{{ a.file_name || a.content_type || 'attachment' }} (not stored)
+                      <mat-icon>attach_file</mat-icon>{{ attachmentName(a) ?? attachmentNoun(a) }} (not stored)
                     </span>
                   }
                 </div>

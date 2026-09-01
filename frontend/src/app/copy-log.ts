@@ -19,6 +19,7 @@
 // against `HH:MM <nick> text` — the parser matches on it, so losing one space
 // makes the line unrecognisable to the thing this is the inverse of.
 
+import { attachmentLabel } from './attachment';
 import { Attachment, Message } from './models';
 
 const pad2 = (n: number): string => String(n).padStart(2, '0');
@@ -32,23 +33,11 @@ const hhmm = (d: Date): string => `${pad2(d.getHours())}:${pad2(d.getMinutes())}
  *  marker has to keep the one shape the importer parses. */
 const dayMarker = (d: Date): string => `--- Day changed ${d.toDateString()}`;
 
-/** An EMPTY name is as good as a missing one — `[image: ]` names nothing. This
- *  is what `thread.html`'s `||` chain does; spelt out because `??` would keep
- *  the empty string and the difference is invisible until it happens. */
-const named = (s: string | null): string | null => (s != null && s !== '' ? s : null);
-
-/** What an attachment is, and what it is called when that adds anything.
- *
- *  ⚠ The content type stands in for a MISSING FILENAME, and only when it says
- *  more than the first word already did. A nameless jpeg printed
- *  `[image: image/jpeg]` — the word twice — and it reached a real paste before
- *  anyone noticed, because on screen that branch does not exist: `thread.html`
- *  renders the picture, and falls back to the type only for the file it cannot
- *  show. */
+/** An attachment as one bracketed line. The naming is `attachment.ts`'s, shared
+ *  with the template so the paste and the screen cannot disagree; the brackets
+ *  and `(not stored)` are this format's own. */
 function attachmentLine(a: Attachment): string {
-  const what = a.is_image ? 'image' : 'attachment';
-  const name = named(a.file_name) ?? (a.is_image ? null : named(a.content_type));
-  const label = name != null ? `${what}: ${name}` : what;
+  const label = attachmentLabel(a);
   return a.available ? `[${label}]` : `[${label} (not stored)]`;
 }
 
