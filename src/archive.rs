@@ -114,7 +114,9 @@ pub fn us_to_ms(us: i64) -> i64 {
     us / 1000
 }
 
-/// Conversation kind from the gchat `is_dm` flag.
+/// Google Chat stores no kind at all, only a boolean, so the two-valued enum
+/// the reader works in is DERIVED here rather than read from a column. Signal
+/// and IRC both carry theirs, which is why only this origin needs a function.
 pub fn kind_from_is_dm(is_dm: bool) -> ConversationKind {
     if is_dm {
         ConversationKind::Dm
