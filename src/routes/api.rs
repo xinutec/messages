@@ -84,13 +84,26 @@ pub async fn attachment(
     let Some((content_type, stored_path)) = archive::attachment_blob(&app.pool, id).await? else {
         return Err(AppError::NotFound);
     };
-    let name = std::path::Path::new(&stored_path)
-        .file_name()
-        .ok_or(AppError::NotFound)?;
+    // ⚠ **A 404 FROM HERE MEANS THE DATABASE AND THE PVC DISAGREE**, and that is
+    // worth saying out loud. Reaching this point means `stored_path` was NOT
+    // null — the archive claims these bytes exist and the UI has already drawn
+    // the picture rather than "(not stored)". So a failure is a mount that did
+    // not come up, a file removed underneath us, or a permission change, and
+    // collapsing all of those into a bare 404 makes them indistinguishable from
+    // an attachment that was never downloaded. The client still gets 404, which
+    // is honest; what changes is that the cause is no longer discarded.
+    let Some(name) = std::path::Path::new(&stored_path).file_name() else {
+        tracing::warn!("attachment {id}: stored_path names no file: {stored_path:?}");
+        return Err(AppError::NotFound);
+    };
     let path = std::path::Path::new(&app.cfg.attachments_dir).join(name);
-    let bytes = tokio::fs::read(&path)
-        .await
-        .map_err(|_| AppError::NotFound)?;
+    let bytes = tokio::fs::read(&path).await.map_err(|e| {
+        tracing::warn!(
+            "attachment {id}: archive says stored, but reading {} failed: {e}",
+            path.display()
+        );
+        AppError::NotFound
+    })?;
     let ct = content_type.unwrap_or_else(|| "application/octet-stream".to_string());
     Ok(([(header::CONTENT_TYPE, ct)], Body::from(bytes)).into_response())
 }

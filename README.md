@@ -193,6 +193,11 @@ say less than nothing.
 - Attachments are Signal-only (the Google Chat export carries none, IRC has no
   such thing), served from the PVC mounted read-only. Metadata-only history rows
   are shown but marked not stored.
+- **A large attachment is read whole into memory** (`tokio::fs::read`), against
+  the pod's 256Mi limit. Not a risk at today's sizes — 591 stored files, largest
+  22.6 MB, mean 687 KB, measured 2026-09-03 — but the mechanism is unbounded
+  while the ceiling is not, so re-measure rather than assume if Signal's cap or
+  the limit moves. Streaming would remove the coupling.
 - **Copying reaches only what is rendered — and now says so.** The thread keeps a
   bounded window in the DOM (400 messages), so a select-all in a long
   conversation copies that window rather than the conversation. The limit is
