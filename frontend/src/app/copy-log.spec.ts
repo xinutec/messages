@@ -115,9 +115,43 @@ describe('formatChatLog', () => {
     expect(out).toContain('01:01 <a> fixed (edited)');
   });
 
-  it('omits a deleted message whose body is gone, as the thread does', () => {
+  /** ⚠ This used to assert the opposite — that such a message produced NO line
+   *  at all, "as the thread does". That justification stopped being true on
+   *  2026-09-03, when the thread started drawing a bubble with a reveal control
+   *  for exactly this shape. A log that silently drops a message is worse than
+   *  one that says a message was here and is gone. */
+  it('still says (deleted) when the body is gone, so the line is not dropped', () => {
     const out = formatChatLog([msg({ ts: at(2026, 8, 13, 1, 0), sender: 'a', deleted: true })]);
-    expect(out).toBe('--- Day changed Thu Aug 13 2026');
+    expect(out).toContain('01:00 <a> (deleted)');
+  });
+
+  /** ⚠ **A DELETION COVERS THE PICTURES TOO** — the same rule the thread got on
+   *  2026-09-03 and the clipboard did not. A deleted message with attachments
+   *  copied as `[image: shot.png]`, naming a file the reader had chosen to
+   *  retract, and an attachment-only one copied with no sign it was deleted at
+   *  all. Found by listing every place `deleted` is interpreted, which is how
+   *  the same rule ends up applied in some of them. */
+  it('does not name the attachments of a deleted message', () => {
+    const out = formatChatLog([
+      msg({
+        ts: at(2026, 8, 13, 1, 0),
+        sender: 'a',
+        body: 'gone',
+        deleted: true,
+        attachments: [file({ file_name: 'shot.png', is_image: true })],
+      }),
+      // The attachment-only shape: no body at all, so nothing said "deleted".
+      msg({
+        ts: at(2026, 8, 13, 1, 1),
+        sender: 'a',
+        deleted: true,
+        attachments: [file({ file_name: 'secret.jpg', is_image: true })],
+      }),
+    ]);
+    expect(out).not.toContain('shot.png');
+    expect(out).not.toContain('secret.jpg');
+    expect(out).toContain('01:00 <a> (deleted)');
+    expect(out).toContain('01:01 <a> (deleted)');
   });
 
   it('names attachments, and says which are not stored', () => {

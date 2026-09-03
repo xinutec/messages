@@ -164,6 +164,28 @@ no `dhall`; one of the checks re-renders and diffs the two.
   - `pnpm run e2e:behaviour` — **on demand**: routing/scroll/smoke, tuned against
     `ng serve` and landing differently on a production build.
 
+## One concept, several readers
+
+Every field below is interpreted in more than one place, and each place can
+forget the rule independently. That is not hypothetical: **three of the four
+defects found on 2026-09-03 were exactly this**, and the last of them was found
+by writing this table rather than by anyone hitting it. Add a row when a field
+gains a second reader.
+
+| field | Rust | thread.html | copy-log.ts | search |
+| --- | --- | --- | --- | --- |
+| `deleted` | Signal reads it; gchat/IRC are always `false`; **search filters it out in SQL** | hidden behind a click, body AND attachments | `(deleted)` and nothing else, attachments included | never leaves the server |
+| `edited` | Signal only | `edited` tag in the meta line | ` (edited)` on the last line | not shown |
+| `kind` | IRC only; two of the column's four values | `* ` before the body | `HH:MM  * nick ` prefix | not shown |
+| `is_outgoing` | all three origins | `.out` class | nothing — the sender's name carries it | not shown |
+
+⚠ **Two known divergences, both deliberate, both would otherwise look like
+bugs.** Deleted content is filtered in SQL for search but *sent and hidden* in a
+thread — different policies for one concept, worth choosing between if either
+side changes. And a message with no body and no attachments (20 of them) draws
+an empty bubble but produces no line in a copied log; an empty log line would
+say less than nothing.
+
 ## Known limits
 - The Signal reaction count approximates live state as distinct non-removed
   authors per emoji, so a same-author add-then-remove inside one page is missed.

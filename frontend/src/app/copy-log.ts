@@ -41,12 +41,21 @@ function attachmentLine(a: Attachment): string {
   return a.available ? `[${label}]` : `[${label} (not stored)]`;
 }
 
-/** One message's text, as the lines it occupies. */
+/** One message's text, as the lines it occupies.
+ *
+ *  ⚠ **A DELETION COVERS EVERYTHING THE MESSAGE CARRIED**, and this returns
+ *  early to make that structural rather than remembered. Gating only the body
+ *  left the attachments to the loop below, so a retracted message copied as
+ *  `[image: shot.png]` — naming the file — and an attachment-only one copied
+ *  with no sign it had been deleted at all. The thread was fixed on 2026-09-03
+ *  and this was not, because the rule lived in two places.
+ *
+ *  One line either way: a log that drops the message entirely is worse than one
+ *  saying a message was here and is gone. */
 function bodyLines(m: Message): string[] {
+  if (m.deleted) return ['(deleted)'];
   const lines: string[] = [];
-  // `thread.html` gates the body on `m.body` and only then swaps in
-  // `(deleted)`, so a deleted message with no body shows nothing at all.
-  if (m.body) lines.push(...(m.deleted ? ['(deleted)'] : m.body.split('\n')));
+  if (m.body) lines.push(...m.body.split('\n'));
   for (const a of m.attachments) lines.push(attachmentLine(a));
   // On the last line, so it reads as a note about the message rather than about
   // its first line.
