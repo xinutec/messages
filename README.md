@@ -136,6 +136,12 @@ no `dhall`; one of the checks re-renders and diffs the two.
   comma-only `ALLOWED_USERS`. Ablated two ways — dropping the parser's
   empty-entry filter, and reading "no list configured" as "no restriction" —
   and each fails it.
+- **Backend** `tests/session_cookie.rs`, `tests/error_responses.rs` — the cookie
+  signature that makes a session unforgeable (tampered value, tampered or
+  truncated signature, a cookie signed by another secret), and the rule that a
+  500 describes nothing about itself. Both are about REJECTING, not the happy
+  path. Ablated three ways — `find` for `rfind`, dropping the MAC check, putting
+  the error in the body — and each fails only its own tests.
 - **Backend** `tests/archive.rs` — pure units always run; the end-to-end ones seed
   a fixture into a throwaway MariaDB and assert the real queries. They need
   `MESSAGES_TEST_DATABASE_URL` and skip without it, so **running `cargo test` bare
