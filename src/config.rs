@@ -7,6 +7,22 @@
 use anyhow::{Context, Result};
 use sqlx::mysql::MySqlConnectOptions;
 
+/// Split `ALLOWED_USERS` into the ids that may use the app.
+///
+/// ⚠ **The empty-entry filter is a security property, not tidiness.** A stray
+/// comma, or the variable set but blank, otherwise yields a list containing the
+/// empty string — and an empty entry matches a caller presenting an empty user
+/// id. Trimming and dropping empties means every way of configuring nothing
+/// ends in a list that admits nobody, which is what makes the gate fail closed.
+/// Pinned by tests/access.rs; separated from `from_env` so it can be, since the
+/// environment is global and a test that set it would race every other test.
+pub fn parse_allowed_users(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     /// MariaDB connection options, built from DB_* parts. Built from parts (not a
@@ -92,11 +108,7 @@ impl Config {
             .password(&db_password)
             .database(&db_name);
 
-        let allowed_users = env("ALLOWED_USERS")?
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>();
+        let allowed_users = parse_allowed_users(&env("ALLOWED_USERS")?);
 
         Ok(Self {
             db_options,

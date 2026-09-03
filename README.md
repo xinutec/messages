@@ -129,6 +129,13 @@ nix run ../dev-lint#gate -- . gate.json
 `gate.json` is rendered from the Dhall and committed, so running the gate needs
 no `dhall`; one of the checks re-renders and diffs the two.
 
+- **Backend** `tests/access.rs` — the allow-list, which is the gate the security
+  model above actually rests on (layer 2 is obscurity by its own admission). It
+  had no test until 2026-09-03. What it pins is FAIL-CLOSED: every way of ending
+  up with nobody on the list rejects everybody, including a blank or
+  comma-only `ALLOWED_USERS`. Ablated two ways — dropping the parser's
+  empty-entry filter, and reading "no list configured" as "no restriction" —
+  and each fails it.
 - **Backend** `tests/archive.rs` — pure units always run; the end-to-end ones seed
   a fixture into a throwaway MariaDB and assert the real queries. They need
   `MESSAGES_TEST_DATABASE_URL` and skip without it, so **running `cargo test` bare
