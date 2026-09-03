@@ -200,6 +200,103 @@ test("open an IRC thread — the composer: lays out cleanly @ phone width", asyn
 // backend that answers. It is the one most likely to be wrong at phone width,
 // because it is the one nobody looks at — a sentence plus a button, in the
 // column the conversation list usually fills.
+/** ⚠ THE ANDROID KEYBOARD, which is where a chat composer usually goes wrong.
+ *
+ *  `index.html` asks for `interactive-widget=resizes-content`, so the soft
+ *  keyboard shrinks the LAYOUT viewport rather than sliding over it — which is
+ *  precisely what `setViewportSize` does, so this is the real geometry and not
+ *  an approximation of it.
+ *
+ *  Both mechanisms it guards were ablated and both fail it: dropping the
+ *  composer's `position: sticky`, and `height: 100vh` on the thread in place of
+ *  `100%`. The vh one is not "vh does not shrink" — it does — it is that vh
+ *  measures the whole viewport and ignores the shell above it, so the composer
+ *  lands below the fold.
+ *
+ *  ⚠ **What this canNOT see is the meta token itself.** Remove
+ *  `interactive-widget=resizes-content` and a real phone stops shrinking the
+ *  layout viewport at all, while this test goes on shrinking it directly and
+ *  stays green. That half is pinned by the test below, which is the whole
+ *  reason there are two. */
+test("the composer stays above the Android keyboard @ phone width", async ({ page }, testInfo) => {
+  await mockApi(page);
+  await page.goto("/conversation/irc/7");
+  const input = page.getByLabel("Message", { exact: true });
+  await input.waitFor();
+  await input.fill("half a sentence, still being typed");
+
+  const full = page.viewportSize()!;
+  const KEYBOARD = 350; // a Pixel's, near enough
+  await page.setViewportSize({ width: full.width, height: full.height - KEYBOARD });
+
+  // Wholly on screen: not clipped at the bottom, not pushed off the top.
+  const box = (await input.boundingBox())!;
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.y + box.height).toBeLessThanOrEqual(full.height - KEYBOARD);
+  // And the button that sends it, which is the half that gets squeezed out.
+  const send = (await page.getByRole("button", { name: "Send" }).boundingBox())!;
+  expect(send.y + send.height).toBeLessThanOrEqual(full.height - KEYBOARD);
+  expect(send.x + send.width).toBeLessThanOrEqual(full.width);
+  // What was typed is still there, and still the value being edited.
+  await expect(input).toHaveValue("half a sentence, still being typed");
+
+  await expectNoTextOverlaps(page, testInfo);
+  await expectNoHorizontalOverflow(page, testInfo);
+});
+
+/** ⚠ ONE TOKEN, AND NOTHING ELSE KNEW ABOUT IT. `interactive-widget=
+ *  resizes-content` is what makes the Android soft keyboard shrink the layout
+ *  viewport instead of sliding over the page; without it the composer sits
+ *  behind the keys and every geometry test above still passes, because they
+ *  resize the viewport themselves.
+ *
+ *  It lives in a generated-looking file that an `ng update` may rewrite, it had
+ *  no comment, and losing it is invisible everywhere except on a real phone with
+ *  a real keyboard. Asserted against the SERVED page rather than the source, so
+ *  a build step that drops it is caught too. */
+test("the served page asks the keyboard to shrink the layout viewport", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/");
+  const content = await page.locator('meta[name="viewport"]').getAttribute("content");
+  expect(content).toContain("interactive-widget=resizes-content");
+});
+
+/** ⚠ The IME half of "does it work while you are typing", driven by a REAL
+ *  composition rather than a hand-built KeyboardEvent. `Input.imeSetComposition`
+ *  puts Chromium into the same state Gboard does mid-word, so the Enter that
+ *  follows carries `isComposing` for real.
+ *
+ *  The unit test asserts the guard; this asserts that the browser actually
+ *  reports the state the guard reads, which is the assumption the unit test has
+ *  to make and cannot check. */
+test("Enter while the IME is composing does not send @ phone width", async ({ page, context }) => {
+  await mockApi(page);
+  let sends = 0;
+  await page.route("**/api/conversations/*/*/send", async (r) => {
+    sends += 1;
+    await r.fulfill({ json: { sent: true, error: null, archived: true } });
+  });
+  await page.goto("/conversation/irc/7");
+  const input = page.getByLabel("Message", { exact: true });
+  await input.click();
+
+  const cdp = await context.newCDPSession(page);
+  await cdp.send("Input.imeSetComposition", {
+    text: "hello wor",
+    selectionStart: 9,
+    selectionEnd: 9,
+  });
+  await page.keyboard.press("Enter");
+  expect(sends).toBe(0);
+
+  // And a plain Enter, with nothing composing, still sends — otherwise this
+  // would pass just as well against a composer that never sends at all.
+  await cdp.send("Input.imeSetComposition", { text: "", selectionStart: 0, selectionEnd: 0 });
+  await input.fill("a finished sentence");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => sends).toBe(1);
+});
+
 test("search — a failed search says so rather than \"No matches.\" @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   await page.route("**/api/search**", (r) => r.fulfill({ status: 500, body: "boom" }));

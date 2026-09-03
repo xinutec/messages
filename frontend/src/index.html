@@ -4,6 +4,12 @@
     <meta charset="utf-8" />
     <title>messages</title>
     <base href="/" />
+    <!-- interactive-widget=resizes-content: the Android soft keyboard shrinks
+         the LAYOUT viewport rather than sliding over the page, which is what
+         keeps the composer above the keys. Without it the app looks fine
+         everywhere except on a phone someone is typing on. Pinned by
+         e2e/ui-pages.spec.ts, because an `ng update` rewriting this file would
+         drop it in silence. -->
     <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
     <meta name="theme-color" content="#1e88e5" />
     <link rel="icon" type="image/svg+xml" href="icon.svg" />

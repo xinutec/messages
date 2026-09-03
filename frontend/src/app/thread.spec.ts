@@ -477,3 +477,68 @@ describe('Thread copy — saying what was left out', () => {
     expect(fireCopy(f).written.get('text/plain')).not.toContain('not loaded');
   });
 });
+
+describe('Thread composer — typing with an IME', () => {
+  async function composer(): Promise<{ thread: Thread; api: { send: ReturnType<typeof vi.fn> } }> {
+    const { thread, ref, fixture } = setup();
+    const api = TestBed.inject(MessagesApi) as unknown as {
+      messages: ReturnType<typeof vi.fn>;
+      send: ReturnType<typeof vi.fn>;
+    };
+    api.messages.mockReturnValue(page([msg('a', 1000)]));
+    ref.setInput('origin', 'irc');
+    ref.setInput('id', '7');
+    fixture.detectChanges();
+    for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    return { thread, api };
+  }
+
+  const enter = (over: KeyboardEventInit = {}): KeyboardEvent =>
+    new KeyboardEvent('keydown', { key: 'Enter', cancelable: true, ...over });
+
+  /** ⚠ **THE ANDROID ONE.** While an IME has a composition in flight — a word
+   *  still underlined under predictive text, a swipe-typed word, anything in a
+   *  language that composes — Enter means "accept the candidate", not "send".
+   *  The browser says so with `isComposing`, and a handler that does not ask
+   *  sends half a word the moment the user reaches for their own keyboard's
+   *  autocomplete. Nothing about this is visible on a desktop with a hardware
+   *  keyboard, which is where it was written. */
+  it('leaves a composing Enter to the IME rather than answering it', async () => {
+    const { thread, api } = await composer();
+    thread.draft.set('hello wor');
+    const e = enter({ isComposing: true });
+    thread.onComposerKey(e);
+    expect(api.send).not.toHaveBeenCalled();
+    // The key is left to the IME, which needs it to commit the candidate.
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  /** ⚠ **AND THAT IS NOT ENOUGH, WHICH THIS LAYER CANNOT SEE.** The test above
+   *  passed against a version that still sent the composed word: not answering
+   *  the key leaves the browser to submit the `<form>` implicitly, and `send`
+   *  was reached that way instead. Calling the handler in isolation never
+   *  involves a form, so jsdom reported a fix that a real browser refuted —
+   *  `e2e/ui-pages.spec.ts` drives an actual composition through CDP and is the
+   *  evidence. What IS worth pinning here is the backstop it led to: `send`
+   *  refuses on its own, whichever route reached it. */
+  it('refuses to send while composing, whatever route reached send', async () => {
+    const { thread, api } = await composer();
+    thread.draft.set('hello wor');
+    thread.composing.set(true);
+    await thread.send();
+    expect(api.send).not.toHaveBeenCalled();
+
+    thread.composing.set(false);
+    await thread.send();
+    expect(api.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends on a plain Enter, as before', async () => {
+    const { thread, api } = await composer();
+    thread.draft.set('hello world');
+    const e = enter();
+    thread.onComposerKey(e);
+    expect(api.send).toHaveBeenCalledTimes(1);
+    expect(e.defaultPrevented).toBe(true);
+  });
+});

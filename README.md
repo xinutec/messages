@@ -134,6 +134,14 @@ no `dhall`; one of the checks re-renders and diffs the two.
   `MESSAGES_TEST_DATABASE_URL` and skip without it, so **running `cargo test` bare
   proves less than it looks like it does** — the gate's `tests` row starts an
   ephemeral MariaDB via `dev-lint`'s `with-test-db`.
+- ⚠ **The composer is where jsdom lies to you.** A unit test for the IME guard
+  passed against a version that still sent the half-composed word: calling the
+  keydown handler in isolation never involves the `<form>`, and implicit
+  submission reached `send` by a route the guard did not cover. Composition,
+  implicit submission and the Android keyboard's viewport are browser behaviour;
+  `e2e/ui-pages.spec.ts` drives a real composition through CDP and a real
+  keyboard-sized viewport, and both were ablated. Do not accept a green vitest
+  run as evidence about the composer.
 - **Frontend** vitest (`pnpm test`): `app.spec.ts` shell, `thread.spec.ts` paging
   and composer, `copy-log.spec.ts` the clipboard format, `thread-window.spec.ts`
   the windowing arithmetic, `messages-store.spec.ts` shared state. ⚠ The window

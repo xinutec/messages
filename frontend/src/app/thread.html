@@ -114,6 +114,8 @@
         [value]="draft()"
         (input)="draft.set($any($event.target).value)"
         (keydown)="onComposerKey($event)"
+        (compositionstart)="composing.set(true)"
+        (compositionend)="composing.set(false)"
         [disabled]="sending()"
         placeholder="Message"
         aria-label="Message"

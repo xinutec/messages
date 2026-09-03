@@ -384,6 +384,16 @@ export class Thread {
    *  showing a box that always failed would be worse than showing none. */
   readonly canSend = computed(() => this.origin() === 'irc' && this.routed());
   readonly draft = signal('');
+  /** True between `compositionstart` and `compositionend` — an IME has a
+   *  candidate in flight.
+   *
+   *  ⚠ **The keydown guard alone is NOT enough, and a unit test cannot see
+   *  why.** Returning early from `onComposerKey` leaves the browser to do what
+   *  it does with Enter in a single-line input inside a `<form>`: implicit
+   *  submission. So the composed word went out anyway, through the submit
+   *  handler, with the keydown check sitting there looking correct. Refusing in
+   *  `send` covers every route into it rather than the one we remembered. */
+  readonly composing = signal(false);
   readonly sending = signal(false);
   /** The far side's refusal, shown as-is: it is the only place that knows why,
    *  and "could not send" would hide the usual reason (no tab open there). */
@@ -393,7 +403,7 @@ export class Thread {
     const o = this.origin();
     const i = this.id();
     const text = this.draft().trim();
-    if (o == null || i == null || !text || this.sending()) return;
+    if (o == null || i == null || !text || this.sending() || this.composing()) return;
 
     this.sending.set(true);
     this.sendError.set(null);
@@ -427,6 +437,16 @@ export class Thread {
    *  sent at all (IRC lines are newline-delimited and the far side refuses one),
    *  so the box is single-line and this only stops the form feeling odd. */
   onComposerKey(e: KeyboardEvent): void {
+    // ⚠ **ASK THE IME FIRST.** While a composition is in flight — a word still
+    // underlined under Android's predictive text, a swipe-typed word, anything
+    // in a composing script — Enter means "accept that candidate", not "send".
+    // Taking it ourselves sends half a word AND swallows the key the IME needed
+    // to finish. Invisible on a desktop with a hardware keyboard, which is where
+    // this was written; it is the phone this app is for that hits it.
+    //
+    // `keyCode === 229` is the same state as reported by Android WebViews that
+    // predate the flag, and this ships inside one (see android/).
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       void this.send();
