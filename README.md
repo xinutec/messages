@@ -161,14 +161,15 @@ no `dhall`; one of the checks re-renders and diffs the two.
   engine's MEASURING half is not there and should not be: jsdom has no layout, so
   every rect would be zero and the test would be of a fake. That half is
   `e2e/thread-scroll.spec.ts`, in a real browser. Then Playwright, split by whether jsdom could have answered:
-  - `pnpm run ui-check` — **in the gate**: phone-width layout and the copy specs,
-    against the production build. ⚠ Copy runs here rather than on demand because
-    jsdom gets the Selection API *wrong*, not merely absent — its `containsNode`
-    called a bubble past the range selected, and the bubble a small selection sat
-    inside unselected. These are the evidence, so they cannot be the ones nobody
-    runs.
-  - `pnpm run e2e:behaviour` — **on demand**: routing/scroll/smoke, tuned against
-    `ng serve` and landing differently on a production build.
+  - `pnpm run ui-check` — **the whole browser suite, in the gate**: phone-width
+    layout, the copy specs, the Android-keyboard and IME specs, and the
+    scroll/routing/smoke behaviour specs. 31 tests, ~6s.
+  - ⚠ There was a second config for scroll/routing/smoke until 2026-09-03,
+    because they were written against `ng serve` and one was believed to need
+    it. Re-tested rather than inherited: they pass against the production build,
+    45/45 on repeat. The cost of that split was that the windowing engine — the
+    subtlest code here — had its only browser coverage in the suite nobody
+    ran.
 
 ## One concept, several readers
 

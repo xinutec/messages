@@ -23,12 +23,18 @@ import harness from './e2e/harness.mjs';
  * (repo ~/Code/ui-harness); see dev-lint/docs/layout-quality-architecture.md.
  * What this app says about itself is in e2e/harness.mjs.
  *
- * ⚠ What is NOT here, and why it is not an oversight: smoke/routing/
- * thread-scroll were written and tuned against `ng serve` and land differently
- * on a production build, so they keep their own dev-serve config in
- * playwright.behaviour.config.ts and run on demand. `copy` has no such
- * dependency — it was run against the LIVE deployment before being moved here.
+ * ⚠ **`smoke`, `routing` and `thread-scroll` used to live in a second config**
+ * (`playwright.behaviour.config.ts`, deleted 2026-09-03) because they were
+ * written against `ng serve` and thread-scroll's image-load re-pin was said to
+ * "fire on a different tick under a production build". That verdict was
+ * re-tested rather than inherited: all three pass here against the production
+ * build, thread-scroll 5/5 on repeat and the trio 45/45. They mock every
+ * `/api/**` call, so they never needed the dev server's proxy — the whole suite
+ * is 31 tests in ~6s.
+ *
+ * The cost of the old arrangement was that the app's subtlest code — the scroll
+ * windowing engine — had its only browser coverage in the config nobody runs.
  */
 export default defineConfig(
-  phoneConfig(harness, devices, { testMatch: '**/{ui-pages,copy}.spec.ts', goldens: true }),
+  phoneConfig(harness, devices, { testMatch: '**/*.spec.ts', goldens: true }),
 );

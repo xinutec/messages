@@ -10,7 +10,6 @@
     "lint": "eslint src e2e playwright.config.ts",
     "test": "ng test --watch=false",
     "ui-check": "playwright test",
-    "e2e:behaviour": "playwright test --config playwright.behaviour.config.ts",
     "typecheck:e2e": "tsc -p tsconfig.e2e.json"
   },
   "dependencies": {

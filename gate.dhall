@@ -181,7 +181,7 @@ in  { name = "messages"
             a check quietly loses scope.
         -}
         G.Check::{
-        , name = "frontend browser suite (layout + copy, phone width)"
+        , name = "frontend browser suite (layout, copy, scroll, routing, smoke)"
         , cwd = "frontend"
         , argv = G.inDevShell [ "pnpm", "run", "ui-check" ]
         , env = G.nonInteractive

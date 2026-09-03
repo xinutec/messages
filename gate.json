@@ -186,7 +186,7 @@
       "env": {
         "CI": "true"
       },
-      "name": "frontend browser suite (layout + copy, phone width)",
+      "name": "frontend browser suite (layout, copy, scroll, routing, smoke)",
       "timeout_s": 1800
     },
     {
