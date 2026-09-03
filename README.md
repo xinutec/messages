@@ -136,6 +136,13 @@ no `dhall`; one of the checks re-renders and diffs the two.
   comma-only `ALLOWED_USERS`. Ablated two ways — dropping the parser's
   empty-entry filter, and reading "no list configured" as "no restriction" —
   and each fails it.
+- **Backend** `tests/api_routes.rs` — the API through the real router, via
+  `tower`'s `oneshot`. Everything else tests the decisions a handler makes; this
+  tests that a request reaches it and that the auth extractor sits in front of
+  every route needing one. ⚠ It touches no archive table on purpose: those are
+  DROPped and recreated by `tests/archive.rs`, and cargo runs test binaries in
+  parallel against the one database. Every case is decided before the archive is
+  reached, which is the auth-and-routing surface and exactly what was untested.
 - **Backend** `tests/session_cookie.rs`, `tests/error_responses.rs` — the cookie
   signature that makes a session unforgeable (tampered value, tampered or
   truncated signature, a cookie signed by another secret), and the rule that a
