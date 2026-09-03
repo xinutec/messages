@@ -54,6 +54,32 @@ function bodyLines(m: Message): string[] {
   return lines;
 }
 
+/** What the copied messages are a fragment OF, when the caller knows.
+ *
+ *  Only ever supplied for a copy that TRIED to take everything; see the caller
+ *  in `thread.ts`. Deliberately not "how many are collapsed" — the reader of a
+ *  paste does not care about the DOM, only whether they are holding the whole
+ *  conversation. */
+export interface LogScope {
+  /** Messages in the whole conversation. */
+  total: number;
+}
+
+/** What the paste says when it is only part of the conversation.
+ *
+ *  ⚠ **It has to travel WITH the log.** The thread renders a bounded window, so
+ *  a select-all in a long conversation copies that window — 400 lines against
+ *  #linux's 401,794 — and produces something that reads as complete. A warning
+ *  in the app is not present when the paste is read somewhere else a week later;
+ *  a line in the text is.
+ *
+ *  Spelled as a `--- ` marker because that is irssi's own shape for a line that
+ *  is not speech (`--- Day changed`, `--- Log opened`). `signal/src/irclog.rs`
+ *  files an unrecognised one under `unparsed` rather than mistaking it for
+ *  something anyone said, which is exactly right: nobody said this. */
+const omissionNotice = (copied: number, total: number): string =>
+  `--- copied ${copied} of ${total} messages; the rest were not loaded on screen`;
+
 /**
  * Selected messages as an irssi-style log, ready for the clipboard.
  *
@@ -68,7 +94,7 @@ function bodyLines(m: Message): string[] {
  * Reactions are left out. They are not something anybody said, and a log has
  * nowhere to put them.
  */
-export function formatChatLog(messages: readonly Message[]): string {
+export function formatChatLog(messages: readonly Message[], scope?: LogScope): string {
   const lines: string[] = [];
   let day: string | null = null;
   for (const m of messages) {
@@ -82,6 +108,11 @@ export function formatChatLog(messages: readonly Message[]): string {
     const prefix =
       m.kind === 'action' ? `${hhmm(at)}  * ${m.sender} ` : `${hhmm(at)} <${m.sender}> `;
     for (const line of bodyLines(m)) lines.push(prefix + line);
+  }
+  // `<` not `!==`: a stale total smaller than what we hold is a bad count, and
+  // "copied 400 of 12" would be worse than saying nothing.
+  if (scope != null && messages.length < scope.total) {
+    lines.push(omissionNotice(messages.length, scope.total));
   }
   return lines.join('\n');
 }

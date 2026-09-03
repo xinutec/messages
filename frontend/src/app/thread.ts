@@ -8,7 +8,7 @@ import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { firstValueFrom } from 'rxjs';
 
 import { attachmentName, attachmentNoun } from './attachment';
-import { chatLogHtml, formatChatLog } from './copy-log';
+import { LogScope, chatLogHtml, formatChatLog } from './copy-log';
 import { PAGE, ThreadWindow } from './thread-window';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
@@ -244,10 +244,29 @@ export class Thread {
     if (data == null) return;
     const picked = this.selectedMessages();
     if (picked.length < 2) return;
-    const text = formatChatLog(picked);
+    const text = formatChatLog(picked, this.copyScope(picked));
     data.setData('text/plain', text);
     data.setData('text/html', chatLogHtml(text));
     e.preventDefault();
+  }
+
+  /** The conversation this copy is a fragment of — supplied ONLY when the
+   *  selection took the whole rendered window.
+   *
+   *  ⚠ **That condition is the point.** Taking the window is the signature of a
+   *  select-all, which is the case that silently returns 400 lines of a 401,794
+   *  line conversation. A deliberate two-message quote is not a truncated copy,
+   *  and telling its reader how big the conversation was would put a footnote on
+   *  every paste. `picked` is filtered from `rendered`, so equal lengths mean it
+   *  covers all of it.
+   *
+   *  The total is the conversation list's `message_count`, absent on a deep link
+   *  that rendered before the list arrived — in which case we say nothing rather
+   *  than guess. */
+  private copyScope(picked: Message[]): LogScope | undefined {
+    if (picked.length !== this.rendered().length) return undefined;
+    const total = this.conversation()?.message_count;
+    return total != null ? { total } : undefined;
   }
 
   /** Which rendered messages the selection touches, in thread order.

@@ -14,8 +14,12 @@ import { expect, test, type Page } from "@playwright/test";
 test.use({ timezoneId: "UTC", permissions: ["clipboard-read", "clipboard-write"] });
 
 const ME = { user_id: "u1", display_name: "Test User" };
-const CONVERSATIONS = [
-  { origin: "irc", id: "7", name: "#chan", kind: "group", network: "xinutec", message_count: 3, last_ts: Date.UTC(2026, 7, 14, 9, 5) },
+/** `message_count` is the WHOLE conversation, and the copy compares itself
+ *  against it — so it has to match the four messages served below, or every
+ *  copy here would be reporting a truncation that did not happen. It said 3
+ *  until 2026-09-03, when nothing read it. */
+const conversations = (total = 4) => [
+  { origin: "irc", id: "7", name: "#chan", kind: "group", network: "xinutec", message_count: total, last_ts: Date.UTC(2026, 7, 14, 9, 5) },
 ];
 const line = (id: string, ts: number, sender: string, body: string, kind = "message") => ({
   id, ts, sender, body, kind, is_outgoing: false, deleted: false, edited: false, reactions: [], attachments: [],
@@ -29,10 +33,10 @@ const MESSAGES = [
 ];
 
 /** Catch-all first: Playwright runs handlers last-registered-first. */
-async function openThread(page: Page): Promise<void> {
+async function openThread(page: Page, total = 4): Promise<void> {
   await page.route("**/api/**", (r) => r.fulfill({ status: 204, body: "" }));
   await page.route("**/api/me", (r) => r.fulfill({ json: ME }));
-  await page.route("**/api/conversations", (r) => r.fulfill({ json: CONVERSATIONS }));
+  await page.route("**/api/conversations", (r) => r.fulfill({ json: conversations(total) }));
   await page.route("**/api/conversations/**/messages**", (r) =>
     r.fulfill({ json: { messages: MESSAGES, has_more: false, next_cursor: null } }),
   );
@@ -106,4 +110,31 @@ test("the rich flavour is the same log, monospaced", async ({ page }) => {
   });
   expect(html).toContain("<pre>");
   expect(html).toContain("&lt;pippijn&gt;");
+});
+
+/** ⚠ The silent one. The thread keeps a bounded window in the DOM, so a
+ *  select-all in a long conversation copies that window and produces a log that
+ *  reads as complete — 400 lines where the conversation holds 401,794. Here the
+ *  window is all four messages and the conversation claims far more, which is
+ *  the same shape.
+ *
+ *  In the browser rather than only in jsdom because it rides on the real
+ *  selection: the notice appears exactly when the drag took the WHOLE window,
+ *  and jsdom is not trustworthy about what a selection covers. */
+test("a select-all that only got the window says so in the paste", async ({ page }) => {
+  await openThread(page, 401794);
+  await dragSelect(page, "a", "c");
+  await page.keyboard.press("ControlOrMeta+c");
+  const text = await clipboardText(page);
+  expect(text).toContain("--- copied 4 of 401794 messages; the rest were not loaded on screen");
+  expect(text.split("\n").at(-1)).toMatch(/^--- copied 4 of 401794 messages/);
+});
+
+test("a quote of two messages carries no such notice", async ({ page }) => {
+  await openThread(page, 401794);
+  await dragSelect(page, "a", "b");
+  await page.keyboard.press("ControlOrMeta+c");
+  const text = await clipboardText(page);
+  expect(text).toContain("hello there");
+  expect(text).not.toContain("not loaded on screen");
 });

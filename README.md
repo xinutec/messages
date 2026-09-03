@@ -156,6 +156,11 @@ no `dhall`; one of the checks re-renders and diffs the two.
 - Attachments are Signal-only (the Google Chat export carries none, IRC has no
   such thing), served from the PVC mounted read-only. Metadata-only history rows
   are shown but marked not stored.
-- **Copying reaches only what is rendered.** The thread keeps a bounded window in
-  the DOM, so select-all in a long conversation copies that window and says
-  nothing about the rest.
+- **Copying reaches only what is rendered — and now says so.** The thread keeps a
+  bounded window in the DOM (400 messages), so a select-all in a long
+  conversation copies that window rather than the conversation. The limit is
+  unchanged; what changed on 2026-09-03 is that such a copy ends with
+  `--- copied 400 of 401794 messages; the rest were not loaded on screen`. The
+  notice rides in the text because a warning in the app is not there when the
+  paste is read somewhere else, and it appears only when the selection took the
+  WHOLE window — a deliberate two-line quote is not a truncated copy.

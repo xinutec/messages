@@ -197,3 +197,36 @@ describe('chatLogHtml', () => {
     expect(chatLogHtml('a & <b> "c"')).toBe('<pre>a &amp; &lt;b&gt; &quot;c&quot;</pre>');
   });
 });
+
+describe('what the log leaves out', () => {
+  const two = [
+    msg({ ts: at(2026, 8, 13, 1, 0), sender: 'a', body: 'one' }),
+    msg({ ts: at(2026, 8, 13, 1, 1), sender: 'a', body: 'two' }),
+  ];
+
+  it('says nothing extra when the copy IS the whole conversation', () => {
+    expect(formatChatLog(two, { total: 2 })).not.toContain('not loaded');
+  });
+
+  it('says nothing when nobody said how big the conversation is', () => {
+    expect(formatChatLog(two)).not.toContain('not loaded');
+  });
+
+  /** ⚠ The failure this exists for is SILENT. A select-all in a long thread
+   *  copies the rendered window — 400 messages against a conversation of
+   *  401,794 — and produces a log that looks complete. The count has to travel
+   *  WITH the paste, because a banner in the app is not there when the paste is
+   *  read. */
+  it('names what was left out when the window held only part of it', () => {
+    const out = formatChatLog(two, { total: 401794 });
+    expect(out).toContain('copied 2 of 401794 messages');
+    // Last line, after the conversation, where a footnote belongs.
+    expect(out.split('\n').at(-1)).toMatch(/^--- copied 2 of 401794 messages/);
+  });
+
+  it('leaves the messages themselves untouched', () => {
+    const withScope = formatChatLog(two, { total: 99 }).split('\n');
+    const without = formatChatLog(two).split('\n');
+    expect(withScope.slice(0, without.length)).toEqual(without);
+  });
+});

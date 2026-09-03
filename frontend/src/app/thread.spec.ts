@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { Thread } from './thread';
 import { MessagesApi } from './messages-api';
+import { MessagesStore } from './messages-store';
 import { Message, MessagesPage } from './models';
 
 function msg(id: string, ts: number): Message {
@@ -437,5 +438,42 @@ describe('Thread deleted messages', () => {
     const { written } = fireCopy(f);
     expect(written.get('text/plain')).toContain('(deleted)');
     expect(written.get('text/plain')).not.toContain('the retracted words');
+  });
+});
+
+describe('Thread copy — saying what was left out', () => {
+  /** The thread as three rendered messages out of a conversation of `total`. */
+  async function opened3(total: number): Promise<ComponentFixture<Thread>> {
+    const f = await threeRendered();
+    TestBed.inject(MessagesStore).conversations.set([
+      { origin: 'irc', id: '7', name: '#linux', kind: 'group', network: 'xinutec', message_count: total, last_ts: 1 },
+    ]);
+    f.detectChanges();
+    return f;
+  }
+
+  /** ⚠ A select-all that quietly returns a fraction is the whole bug. The DOM
+   *  holds a bounded window, so "everything" means "everything loaded". */
+  it('a whole-window copy in a truncated thread says what was left out', async () => {
+    const f = await opened3(401794);
+    select(f, ['a', 0], ['c', 7]);
+    expect(fireCopy(f).written.get('text/plain')).toContain('copied 3 of 401794 messages');
+  });
+
+  /** ⚠ And it must NOT fire for an ordinary selection. Picking two lines out of
+   *  a long conversation is not a truncated copy; it is a quote, and appending
+   *  "copied 2 of 401794" to it would be noise on every paste. */
+  it('a deliberate two-message copy says nothing about the rest', async () => {
+    const f = await opened3(401794);
+    select(f, ['a', 0], ['b', 2]);
+    const out = fireCopy(f).written.get('text/plain');
+    expect(out).toContain('hello there');
+    expect(out).not.toContain('not loaded');
+  });
+
+  it('says nothing when the window already holds the whole conversation', async () => {
+    const f = await opened3(3);
+    select(f, ['a', 0], ['c', 7]);
+    expect(fireCopy(f).written.get('text/plain')).not.toContain('not loaded');
   });
 });
