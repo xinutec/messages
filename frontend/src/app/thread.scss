@@ -138,6 +138,34 @@
   .tag {
     font-style: italic;
   }
+  // Real <button>s, so revealing a retraction is keyboard-reachable and
+  // announced rather than a click target that only a mouse can find. Styled to
+  // sit exactly where the text would: the message keeps its place in the thread
+  // whether or not you choose to read it.
+  // ⚠ The dotted underline is the whole affordance. Without it `(deleted)` is
+  // indistinguishable from the plain placeholder it used to be, and nobody
+  // learns there is anything to click — found by looking at the render, which
+  // no assertion about the DOM was ever going to say.
+  .body.reveal {
+    text-decoration: underline dotted;
+    text-underline-offset: 0.2em;
+  }
+  .body.reveal,
+  .rehide {
+    background: none;
+    border: 0;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    text-align: left;
+  }
+  .rehide {
+    font: var(--mat-sys-label-small);
+    font-style: italic;
+    opacity: 0.7;
+    margin-top: 0.3rem;
+  }
   .attach {
     margin-top: 0.3rem;
     img {

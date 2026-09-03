@@ -54,6 +54,13 @@ them, so check before trusting it.
   long thread out of the DOM and re-anchors the viewport around every change.
   `src/app/attachment.ts` decides what an attachment is CALLED, because the
   screen and the clipboard both print it and drifted while each decided alone.
+  A **deleted message shows `(deleted)` and nothing else until you click it** —
+  its words AND its pictures. The archive keeps both (65 of 68 deleted rows still
+  hold their text; 17 stored images hang off 3 of them), and the API sends them
+  unredacted, so this is the reader deciding what to put on screen rather than
+  anything being recovered. Until 2026-09-03 only the words were hidden and the
+  images drew in full. A revealed message still copies as `(deleted)`: the log is
+  built from the model, which the reveal does not touch.
   `src/app/generated/` is written by ts-rs from the Rust wire types
   (`scripts/gen-types.sh`) and imported through `src/app/models.ts`; don't
   hand-edit either.

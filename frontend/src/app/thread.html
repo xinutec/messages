@@ -31,17 +31,34 @@
                 @if (m.edited) {
                   <span class="tag">edited</span>
                 }
+                <!-- Only once revealed. While hidden the body already says
+                     `(deleted)` and a tag beside it is the same word twice; once
+                     the text is showing, this is what stops a retraction reading
+                     as an ordinary line. -->
+                @if (m.deleted && isRevealed(m.id)) {
+                  <span class="tag">deleted</span>
+                }
               </div>
-              @if (m.body) {
-                <!-- An action is written in the third person about its sender,
-                     so every IRC client draws it `* nick waves`. The star is
-                     the client's, not the text's — the backend sends the words
-                     alone and `kind` says which they are.
+              <!-- ⚠ A DELETION HIDES THE PICTURES TOO. Until 2026-09-03 the
+                   attachment loop was not gated on `m.deleted`, so a deleted
+                   message read `(deleted)` where its words had been and drew its
+                   images in full underneath — 17 of them, across the archive,
+                   with the bytes still on the PVC. Whatever a deletion meant, it
+                   did not mean that. Both halves sit behind the one control. -->
+              @if (m.deleted && !isRevealed(m.id)) {
+                <button type="button" class="body deleted reveal" (click)="toggleReveal(m.id)"
+                        aria-label="Show this deleted message">(deleted)</button>
+              } @else {
+                @if (m.body) {
+                  <!-- An action is written in the third person about its sender,
+                       so every IRC client draws it `* nick waves`. The star is
+                       the client's, not the text's — the backend sends the words
+                       alone and `kind` says which they are.
 
-                     interpolation flush with the tags: white-space:pre-wrap
-                     would otherwise render the template indent as a leading space -->
-                <div class="body" [class.deleted]="m.deleted">{{ m.deleted ? '(deleted)' : (m.kind === 'action' ? '* ' + m.body : m.body) }}</div>
-              }
+                       interpolation flush with the tags: white-space:pre-wrap
+                       would otherwise render the template indent as a leading space -->
+                  <div class="body" [class.deleted]="m.deleted">{{ m.kind === 'action' ? '* ' + m.body : m.body }}</div>
+                }
               @for (a of m.attachments; track a.id) {
                 <div class="attach">
                   <!-- The name comes from `attachment.ts`, which `copy-log.ts`
@@ -64,6 +81,11 @@
                   }
                 </div>
               }
+                @if (m.deleted) {
+                  <button type="button" class="rehide" (click)="toggleReveal(m.id)">hide</button>
+                }
+              }
+
               @if (m.reactions.length) {
                 <div class="reactions">
                   @for (r of m.reactions; track r.emoji) {

@@ -353,3 +353,89 @@ describe('Thread copy', () => {
     expect(text).not.toContain('image/jpeg');
   });
 });
+
+/** A thread holding one ordinary message and one deleted one, rendered.
+ *  `withImage` gives the deleted message an available image instead of a body —
+ *  the attachment-only shape, which renders no `.body` div at all. */
+async function withDeleted(withImage = false): Promise<ComponentFixture<Thread>> {
+  const { thread, ref, fixture } = setup();
+  const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+  const del: Message = withImage
+    ? {
+        ...msg('d', new Date(2026, 7, 13, 14, 33).getTime()),
+        body: null,
+        deleted: true,
+        attachments: [
+          { id: 'i1', content_type: 'image/jpeg', file_name: 'x.jpg', size: 10, available: true, is_image: true },
+        ],
+      }
+    : { ...msg('d', new Date(2026, 7, 13, 14, 33).getTime()), sender: 'simon', body: 'the retracted words', deleted: true };
+  api.messages.mockReturnValue(
+    page([{ ...msg('a', new Date(2026, 7, 13, 14, 32).getTime()), sender: 'pippijn', body: 'hello there' }, del]),
+  );
+  ref.setInput('origin', 'irc');
+  ref.setInput('id', '7');
+  fixture.detectChanges();
+  for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+  fixture.detectChanges();
+  return fixture;
+}
+
+const revealBtn = (f: ComponentFixture<Thread>): HTMLButtonElement | null =>
+  (f.nativeElement as HTMLElement).querySelector('.msg[data-id="d"] .reveal');
+
+describe('Thread deleted messages', () => {
+  it('does not render a deleted message\'s text until it is revealed', async () => {
+    const f = await withDeleted();
+    const bubble = (f.nativeElement as HTMLElement).querySelector('.msg[data-id="d"]')!;
+    expect(bubble.textContent).toContain('(deleted)');
+    expect(bubble.textContent).not.toContain('the retracted words');
+
+    revealBtn(f)!.click();
+    f.detectChanges();
+    expect(bubble.textContent).toContain('the retracted words');
+  });
+
+  /** ⚠ THE HALF THAT WAS NEVER HIDDEN. The attachment loop was not gated on
+   *  `m.deleted`, so a deleted message drew its pictures in full while its words
+   *  read `(deleted)`. Measured against the live archive on 2026-09-03: 17 stored
+   *  images on 3 deleted messages, 16 with loaded pixels on screen.
+   *
+   *  ⚠ And this is the shape that hides from a careless check: with no body,
+   *  `@if (m.body)` renders no `.body` div, so a DOM probe keyed on
+   *  `.body.deleted` reports zero of exactly these. Key on the bubble. */
+  it('does not render a deleted message\'s images until it is revealed', async () => {
+    const f = await withDeleted(true);
+    const bubble = (f.nativeElement as HTMLElement).querySelector('.msg[data-id="d"]')!;
+    expect(bubble.querySelectorAll('img').length).toBe(0);
+
+    revealBtn(f)!.click();
+    f.detectChanges();
+    expect(bubble.querySelectorAll('img').length).toBe(1);
+  });
+
+  it('re-hides on a second click', async () => {
+    const f = await withDeleted();
+    revealBtn(f)!.click();
+    f.detectChanges();
+    const bubble = (f.nativeElement as HTMLElement).querySelector('.msg[data-id="d"]')!;
+    expect(bubble.textContent).toContain('the retracted words');
+    bubble.querySelector<HTMLButtonElement>('.rehide')!.click();
+    f.detectChanges();
+    expect(bubble.textContent).not.toContain('the retracted words');
+  });
+
+  /** Revealing is a decision about THIS screen. The clipboard is a different
+   *  place with a different audience, so it keeps saying `(deleted)` — and it
+   *  does because the log is built from the model, which the reveal never
+   *  touches. This test exists to keep it that way. */
+  it('still copies a revealed message as (deleted)', async () => {
+    const f = await withDeleted();
+    revealBtn(f)!.click();
+    f.detectChanges();
+    select(f, ['a', 0], ['d', 5]);
+    const { written } = fireCopy(f);
+    expect(written.get('text/plain')).toContain('(deleted)');
+    expect(written.get('text/plain')).not.toContain('the retracted words');
+  });
+});

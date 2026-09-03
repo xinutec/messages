@@ -43,6 +43,19 @@ const CONVERSATIONS = [
   { origin: "irc", id: "9", name: "s_20", kind: "dm", network: "euirc", message_count: 8071, last_ts: Date.UTC(2026, 0, 1, 22, 40) },
 ];
 
+/** Real bytes for the one attachment that is `available`. Without them the
+ *  <img> 404s and renders as a broken-image glyph, which still satisfies "an img
+ *  element exists" — so the test would pass while proving nothing about whether
+ *  revealing shows a picture. The live measurement counted LOADED pixels; this
+ *  lets the test hold the same standard.
+ *
+ *  ⚠ SVG rather than a base64 PNG because `Buffer` needs @types/node, which
+ *  tsconfig.e2e.json does not carry. Text needs no binary type and still decodes
+ *  to something with a naturalWidth. */
+const PIXELS =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="64">' +
+  '<rect width="96" height="64" fill="#5a6e96"/></svg>';
+
 /** A busy thread: long sender, a long unbroken-ish body, an "edited" tag, an
  *  unavailable attachment, and a row of reaction chips — every element that can
  *  crowd or overflow the bubble. */
@@ -57,6 +70,12 @@ const THREAD = {
       attachments: [{ id: "a1", content_type: "application/pdf", file_name: "referral-scan-2026-final-v2.pdf", size: 91234, available: false, is_image: false }] },
     { id: "3", ts: Date.UTC(2026, 0, 1, 12, 9), sender: "Alice Andersson", is_outgoing: false,
       body: "Thankyouuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu", deleted: false, edited: false, reactions: [], attachments: [] },
+    // A deleted message with BOTH halves behind the reveal: words and a stored
+    // image. The attachment-only shape is the one that renders no `.body` at
+    // all, so it is the one a careless selector misses.
+    { id: "4", ts: Date.UTC(2026, 0, 1, 12, 11), sender: "Alice Andersson", is_outgoing: false,
+      body: "something said and then taken back", deleted: true, edited: false, reactions: [],
+      attachments: [{ id: "a2", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true }] },
   ],
   has_more: false,
   next_cursor: null,
@@ -71,6 +90,14 @@ async function mockApi(page: Page): Promise<void> {
   await page.route("**/api/me", (r) => r.fulfill({ json: ME }));
   await page.route("**/api/conversations", (r) => r.fulfill({ json: CONVERSATIONS }));
   await page.route("**/api/conversations/**/messages**", (r) => r.fulfill({ json: THREAD }));
+  // Real bytes for the one attachment that is `available`. Without them the
+  // <img> 404s and renders as a broken-image glyph, which still satisfies "an
+  // img element exists" — so the test would pass while proving nothing about
+  // whether revealing actually shows a picture. The live measurement counted
+  // LOADED pixels; this lets the test hold the same standard.
+  await page.route("**/api/attachments/**", (r) =>
+    r.fulfill({ contentType: "image/svg+xml", body: PIXELS }),
+  );
 }
 
 // The checker-checker: fail loudly here if the device preset is ever lost and
@@ -111,6 +138,41 @@ test("open thread — meta + reactions + attachment: lays out cleanly @ phone wi
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
+test("a deleted message: hidden by default @ phone width", async ({ page }, testInfo) => {
+  await mockApi(page);
+  await page.goto("/conversation/signal/dm:a");
+  await page.locator(".msg .body").first().waitFor();
+
+  const bubble = page.locator('.msg[data-id="4"]');
+  // Absent from the DOM, not merely covered — and the stored image is never
+  // fetched. The `deleted` tag in the meta line is what says a message is here
+  // at all, so the thread does not silently skip a beat.
+  await bubble.getByRole("button", { name: "Show this deleted message" }).waitFor();
+  await expect(bubble).not.toContainText("something said and then taken back");
+  await expect(bubble.locator("img")).toHaveCount(0);
+  await expectNoTextOverlaps(page, testInfo);
+  await expectNoHorizontalOverflow(page, testInfo);
+});
+
+test("a deleted message: revealed on click @ phone width", async ({ page }, testInfo) => {
+  await mockApi(page);
+  await page.goto("/conversation/signal/dm:a");
+  await page.locator(".msg .body").first().waitFor();
+
+  const bubble = page.locator('.msg[data-id="4"]');
+  await bubble.getByRole("button", { name: "Show this deleted message" }).click();
+  await expect(bubble).toContainText("something said and then taken back");
+  await expect(bubble.locator("img")).toHaveCount(1);
+  // Decoded, not merely present — a broken <img> counts as an element too.
+  await expect
+    .poll(() => bubble.locator("img").first().evaluate((i: HTMLImageElement) => i.naturalWidth))
+    .toBeGreaterThan(0);
+  // The revealed bubble is the taller one, and an image at phone width is where
+  // an overflow would actually show.
+  await expectNoTextOverlaps(page, testInfo);
+  await expectNoHorizontalOverflow(page, testInfo);
+});
+
 test("open an IRC thread — the composer: lays out cleanly @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   await page.goto("/conversation/irc/7");
@@ -123,7 +185,11 @@ test("open an IRC thread — the composer: lays out cleanly @ phone width", asyn
   // A long draft is what actually crowds this row — the input, the button, and
   // the phone's width all compete, and a flex item's default min-width is its
   // content, so an unconstrained field pushes the button off the edge.
-  await page.getByLabel("Message").fill(
+  // ⚠ `exact` because getByLabel matches on a SUBSTRING: the deleted-message
+  // reveal button is named "Show this deleted message" and otherwise resolves
+  // here too, failing on strict mode. Two controls a screen reader tells apart
+  // perfectly well; it is the locator that has to say which one it means.
+  await page.getByLabel("Message", { exact: true }).fill(
     "a fairly long line of the sort somebody actually types on a phone, to see whether the send button survives it",
   );
   await expectNoTextOverlaps(page, testInfo);

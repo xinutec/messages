@@ -47,6 +47,30 @@ export class Thread {
   protected readonly attachmentName = attachmentName;
   protected readonly attachmentNoun = attachmentNoun;
 
+  /** Which deleted messages the reader has asked to see, by id.
+   *
+   *  ⚠ **A decision about THIS screen, and nothing further.** It never reaches
+   *  the clipboard — `copy-log.ts` builds from the model, which this does not
+   *  touch, so a revealed message still pastes as `(deleted)`. And it is dropped
+   *  when the conversation changes (`resetState`): reading one retraction must
+   *  not quietly arm every other thread.
+   *
+   *  Held as ids rather than a flag on the message because `pollNewer` replaces
+   *  the array wholesale; a flag would be lost on the next tick. */
+  private readonly revealedIds = signal<ReadonlySet<string>>(new Set());
+
+  protected isRevealed(id: string): boolean {
+    return this.revealedIds().has(id);
+  }
+
+  protected toggleReveal(id: string): void {
+    this.revealedIds.update((cur) => {
+      const next = new Set(cur);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }
+
   // Bound from the route (withComponentInputBinding); both absent on `/` → the
   // placeholder. Ids can contain ':' and '/'; the router encodes/decodes them.
   // Our navigation only ever routes valid origins, so `origin` is typed as such.
@@ -145,6 +169,7 @@ export class Thread {
   private resetState(): void {
     this.messages.set([]);
     this.win.reset();
+    this.revealedIds.set(new Set());
     this.hasMore.set(false);
     this.cursor = null;
   }
