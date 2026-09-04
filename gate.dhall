@@ -78,6 +78,7 @@ in  { name = "messages"
             G.clippyTarget
         , timeout_s = 1800
         }
+      , G.cargoDoc
       , {-  The frontend types are generated from the Rust wire types; fail if the
             committed output no longer matches them. Placed before the frontend
             rows, since a drifted type is what the build would then compile
