@@ -104,9 +104,17 @@ cd frontend && pnpm install && pnpm start  # http://localhost:4200
 The manifests are in the home monorepo (`xinutec/pippijn`
 `code/kubes/messages/k8s/`); run these from that checkout.
 
-**Every time:** push to main, CI builds `xinutec/messages:latest`, then
-`kubectl apply -f k8s/03-app.yaml -f k8s/04-ingress.yaml` and
-`kubectl -n signal rollout status deploy/messages`.
+**Every time:** push to main, wait for CI to build `xinutec/messages:latest`,
+then `code/kubes/deploy.sh messages` from the home monorepo.
+
+⚠ The hand-run `kubectl apply -f …` pair this used to name is superseded and was
+never rewritten here. `deploy.sh` is the single implementation for every app: it
+refuses unless the repo is on main with the manifests committed and pushed AND
+isis's own checkout at that same commit, deploys the HOST's files rather than
+this machine's, applies nothing when the cluster already matches, and restarts a
+`:latest` workload only when the registry says the running image is behind — the
+step a hand-run `apply` of an unchanged manifest silently skips, which is how
+this app would have been "deployed" without ever restarting.
 
 **Done once, written down in case it must be redone:** register the OAuth2 client
 in Nextcloud admin (redirect URI `https://messages.xinutec.org/auth/callback`);
@@ -192,6 +200,19 @@ gains a second reader.
 | `edited` | Signal only | `edited` tag in the meta line | ` (edited)` on the last line | not shown |
 | `kind` | IRC only; two of the column's four values | `* ` before the body | `HH:MM  * nick ` prefix | not shown |
 | `is_outgoing` | all three origins | `.out` class | nothing — the sender's name carries it | not shown |
+
+**Naming a conversation is the same problem one level up, and had three answers
+until 2026-09-04.** `MessagesStore.title` is the namer: it trims, and falls back
+to "Direct message" or "Group" by kind. The conversation list used it; a search
+result said "(unnamed)" and passed whitespace through; the thread header says
+"Conversation". They are one question. The search row now asks `title` too,
+through the store, and keeps a fallback only for the case `title` cannot serve —
+the list has not arrived, so there is no `kind` to name a nameless conversation
+by. The thread header's "Conversation" is that same case and stays.
+
+A search row also carries the origin and the network, for the reason the
+conversation list does: the archive holds one IRC target on more than one
+network, and without the label the two are one row.
 
 ⚠ **One known divergence, deliberate.** A message with no body and no
 attachments (20 of them) draws an empty bubble but produces no line in a copied

@@ -308,6 +308,12 @@ const SEARCH = [
     sender: "Alice Andersson", snippet: "posted the letter on Tuesday", deleted: true },
   { origin: "irc", conversation_id: "7", conversation_name: "#a-channel-with-a-long-name", ts: Date.UTC(2025, 11, 30, 16, 40),
     sender: "s_20", snippet: "no letter here, wrong channel", deleted: false },
+  // ⚠ The same target on two networks — two rows the list can tell apart and
+  // this one could not. Both are in CONVERSATIONS, ids 8 and 9.
+  { origin: "irc", conversation_id: "8", conversation_name: "s_20", ts: Date.UTC(2025, 11, 29, 12, 0),
+    sender: "s_20", snippet: "letter sent, check the pigeon", deleted: false },
+  { origin: "irc", conversation_id: "9", conversation_name: "s_20", ts: Date.UTC(2025, 11, 28, 12, 0),
+    sender: "s_20", snippet: "letter never arrived", deleted: false },
 ];
 
 /** ⚠ **A RETRACTION IS FOUND WITHOUT BEING SPELLED OUT.** Search stopped
@@ -329,9 +335,16 @@ test("search — a retracted hit is listed without its text @ phone width", asyn
   await list.getByText("(deleted)").waitFor();
   // The words themselves, nowhere on the screen.
   await expect(page.locator("body")).not.toContainText("posted the letter on Tuesday");
-  // And the hit is still a hit — three rows, the retracted one among them.
-  await expect(list.getByRole("button")).toHaveCount(3);
+  // And the hit is still a hit — five rows, the retracted one among them.
+  await expect(list.getByRole("button")).toHaveCount(5);
   await expect(list).toContainText("the referral letter finally turned up");
+
+  // ⚠ The two `s_20` rows are told apart, by the same network label the
+  // conversation list carries. Without it these are one row twice. Located by
+  // their snippets: title AND sender are `s_20` on both, which is the point.
+  const rows = list.getByRole("button");
+  await expect(rows.filter({ hasText: "letter sent, check the pigeon" })).toContainText("IRC xinutec");
+  await expect(rows.filter({ hasText: "letter never arrived" })).toContainText("IRC euirc");
 
   await expectNoTextOverlaps(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);

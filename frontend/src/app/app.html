@@ -28,9 +28,21 @@
           <mat-progress-bar mode="indeterminate" />
         }
         <mat-action-list>
-          @for (h of results(); track h.origin + h.conversation_id + h.ts) {
-            <button mat-list-item (click)="openHit(h)">
-              <span matListItemTitle>{{ h.conversation_name || '(unnamed)' }}</span>
+          <!-- ⚠ **BY INDEX, because nothing in a hit is unique.** Tracked by
+               `origin + conversation_id + ts` this logged NG0955 on two matching
+               IRC lines from one channel in the same second: `irc_messages.sent_at`
+               is a DATETIME, so an IRC hit's ts is `ts_s * 1000` and a second is
+               the resolution. `SearchHit` carries no message id to key on.
+               The index is sound here and not a shrug: `results` is replaced
+               wholesale by each search and is never reordered or spliced. -->
+          @for (h of results(); track $index) {
+            <button mat-list-item lines="3" (click)="openHit(h)">
+              <span matListItemTitle>{{ hitTitle(h) }}</span>
+              <!-- The same two disambiguators the conversation list row carries.
+                   Without them a hit is titled by its target alone, and `s_20`
+                   on two networks — or one contact's name in Signal and in
+                   Google Chat — are one row. -->
+              <span matListItemLine>{{ hitOrigin(h) }}</span>
               <!-- ⚠ A RETRACTION IS FOUND WITHOUT BEING SPELLED OUT. Search matches
                    on text its sender withdrew, and printing it in the list hands it
                    over unasked — the one thing the thread is careful not to do. The
@@ -38,14 +50,20 @@
                    clicking through reaches the thread's reveal.
                    No reveal button here: the row IS a button, and one nested inside
                    it is neither valid HTML nor separately clickable. -->
-              <span matListItemLine>
-                {{ h.sender }}:
-                @if (h.deleted) {
-                  <span class="deleted">(deleted)</span>
-                } @else {
-                  {{ h.snippet }}
-                }
-              </span>
+              <!-- One expression picks the text, so there is no branch that could
+                   print a snippet the other branch withholds.
+                   ⚠ **NO NESTED SPAN, and the class goes on the LINE.** Wrapping
+                   just the text in its own element cost the ellipsis: a nested box
+                   is not what `matListItemLine` truncates, so a long snippet ran
+                   103.5px past the right edge at phone width. The whole line goes
+                   italic instead, which also reads better — the row is about a
+                   retraction, not a message whose middle happens to be missing.
+                   Interpolation flush with the tags for the reason thread.html
+                   gives: the template's own indent renders as a leading space, and
+                   this line has to align with the one above it. -->
+              <span matListItemLine [class.deleted]="h.deleted"
+                >{{ h.sender }}: {{ h.deleted ? '(deleted)' : h.snippet }}</span
+              >
               <span matListItemMeta>{{ h.ts | date: 'shortDate' }}</span>
             </button>
           } @empty {

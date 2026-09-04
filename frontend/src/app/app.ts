@@ -203,10 +203,59 @@ export class App {
   }
 
 
-  /** Open the conversation a search hit belongs to (looked up from the list). */
+  /** Open the conversation a search hit belongs to.
+   *
+   *  ⚠ **It routes from the HIT, not from the list.** This used to look the
+   *  conversation up in the store and do nothing at all when it was absent —
+   *  a tap that produced no navigation, no error and no explanation. The store
+   *  is loaded by `refresh()`, which swallows its errors deliberately (a stale
+   *  list beats an empty one), so a first load that fails leaves search working,
+   *  every result rendered, and every one of them dead.
+   *
+   *  Nothing was gained by the lookup: a route needs an origin and an id, both
+   *  of which the hit already carries, and the thread renders from a deep link
+   *  without the list — that is why `headTitle` has a fallback. */
   openHit(h: SearchHit): void {
+    void this.router.navigate(['/conversation', h.origin, h.conversation_id], {
+      queryParams: { from: null },
+      queryParamsHandling: 'merge',
+    });
+  }
+
+  /** What to call the conversation a hit is in.
+   *
+   *  ⚠ **ONE NAMER, because there were three.** The list called an unnamed
+   *  conversation "Direct message" or "Group" (`MessagesStore.title`, which also
+   *  treats a whitespace-only name as no name); this list called it
+   *  "(unnamed)" and passed whitespace straight through; the thread header calls
+   *  it "Conversation". Three answers to one question, in three places, none
+   *  referencing the others — the shape of every defect found on 2026-09-03.
+   *
+   *  The hit's own `conversation_name` is the fallback rather than the source,
+   *  for the case `title` cannot serve: the list has not arrived, so there is no
+   *  `kind` to name a nameless conversation by. */
+  hitTitle(h: SearchHit): string {
     const c = this.store.find(h.origin, h.conversation_id);
-    if (c) this.open(c);
+    if (c) return this.title(c);
+    // The explicit length check `MessagesStore.title` uses, and for its reason:
+    // an empty name is no name. `??` would be wrong here — after `trim` the case
+    // to catch is `''`, which a nullish fallback passes straight through.
+    const name = h.conversation_name?.trim() ?? '';
+    return name.length > 0 ? name : 'Conversation';
+  }
+
+  /** Which archive a hit came from, and on which network — the two things the
+   *  conversation list shows and this one did not.
+   *
+   *  ⚠ Without the network, two IRC conversations with the same target are the
+   *  same row. That is not hypothetical: the layout suite's fixture carries
+   *  `s_20` on both `xinutec` and `euirc` precisely because the real archive
+   *  does, and the conversation list already prints the network for it. Search
+   *  showed the target alone, so the two were indistinguishable — and so were a
+   *  Signal and a Google Chat conversation with the same contact's name. */
+  hitOrigin(h: SearchHit): string {
+    const network = this.store.find(h.origin, h.conversation_id)?.network;
+    return network ? `${this.originLabels[h.origin]} ${network}` : this.originLabels[h.origin];
   }
 
   title(c: Conversation): string {

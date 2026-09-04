@@ -1,7 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { Router, provideRouter } from '@angular/router';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 
 import { App } from './app';
@@ -26,6 +26,14 @@ function msg(id: string, ts: number, extra: Partial<Message> = {}): Message {
 
 const CONVS: Conversation[] = [
   { origin: 'signal', id: 'dm:a', name: 'Alice', kind: 'dm', network: null, message_count: 5, last_ts: 200 },
+  { origin: 'gchat', id: 'gc1', name: 'Bob', kind: 'dm', network: null, message_count: 3, last_ts: 300 },
+];
+
+/** The same IRC target on two networks — the case the network label exists for,
+ *  and the one a search row could not tell apart. */
+const TWO_NETWORKS: Conversation[] = [
+  { origin: 'irc', id: '8', name: 's_20', kind: 'dm', network: 'xinutec', message_count: 14446, last_ts: 200 },
+  { origin: 'irc', id: '9', name: 's_20', kind: 'dm', network: 'euirc', message_count: 8071, last_ts: 100 },
   { origin: 'gchat', id: 'gc1', name: 'Bob', kind: 'dm', network: null, message_count: 3, last_ts: 300 },
 ];
 
@@ -108,6 +116,56 @@ describe('App', () => {
     expect(nav).toHaveBeenCalledWith(['/conversation', 'gchat', 'gc1'], expect.objectContaining({ queryParams: { from: null } }));
   });
 
+  /** ⚠ **A DEAD TAP, AND NOTHING ON SCREEN SAID SO.** `openHit` looked the
+   *  conversation up in the store and did nothing when it was absent. The store
+   *  is filled by `refresh()`, which swallows its errors on purpose — a stale
+   *  list beats an empty one — so a failed first load left search working, every
+   *  result drawn, and every one of them unclickable.
+   *
+   *  A route needs an origin and an id, which the hit carries, and the thread
+   *  renders from a deep link. The lookup bought nothing and cost this. */
+  it('opens a hit even when the conversation list never loaded', () => {
+    const conversations = vi.fn(() => throwError(() => new Error('offline')));
+    const { app, router } = setup(makeApi({ conversations }));
+    expect(app.conversations()).toEqual([]); // the precondition, not an assumption
+    const nav = vi.spyOn(router, 'navigate').mockResolvedValue(true);
+    app.openHit({ origin: 'irc', conversation_id: '7', conversation_name: '#chan', ts: 1, sender: 's', snippet: 'x', deleted: false });
+    expect(nav).toHaveBeenCalledWith(['/conversation', 'irc', '7'], expect.objectContaining({ queryParams: { from: null } }));
+  });
+
+  /** ⚠ **ONE NAMER, WHERE THERE WERE THREE.** An unnamed conversation was a
+   *  "Direct message" in the list, "(unnamed)" in the search results and
+   *  "Conversation" in the thread header — one question, three answers, three
+   *  places, none referencing the others.
+   *
+   *  The list's namer also treats a whitespace-only name as no name; search's
+   *  `||` passed it through, so a hit rendered as a blank title. */
+  it('names a hit the way the conversation list names it', () => {
+    const { app } = setup(makeApi());
+    const hit = { origin: 'signal' as const, conversation_id: 'dm:a', conversation_name: null, ts: 1, sender: 's', snippet: 'x', deleted: false };
+    // The list holds `dm:a` as a named dm, so both readers say "Alice" — even
+    // though the hit itself carries no name at all.
+    expect(app.hitTitle(hit)).toBe('Alice');
+    expect(app.hitTitle({ ...hit, conversation_id: 'nope' })).toBe('Conversation');
+    expect(app.hitTitle({ ...hit, conversation_id: 'nope', conversation_name: '   ' })).toBe('Conversation');
+  });
+
+  /** ⚠ **THE NETWORK IS WHAT SEPARATES TWO IDENTICAL ROWS.** The archive holds
+   *  the same IRC target on more than one network, and the conversation list
+   *  prints it for exactly that reason. Search printed the target alone, so the
+   *  two were one row — as were a Signal and a Google Chat conversation with the
+   *  same contact's name. */
+  it('says which archive and which network a hit came from', () => {
+    const { app } = setup(makeApi({ conversations: vi.fn(() => of(TWO_NETWORKS)) }));
+    const hit = { conversation_name: 's_20', ts: 1, sender: 's', snippet: 'x', deleted: false };
+    expect(app.hitOrigin({ ...hit, origin: 'irc', conversation_id: '8' })).toBe('IRC xinutec');
+    expect(app.hitOrigin({ ...hit, origin: 'irc', conversation_id: '9' })).toBe('IRC euirc');
+    // No network to add, and none invented: Signal and Google Chat have none.
+    expect(app.hitOrigin({ ...hit, origin: 'gchat', conversation_id: 'gc1' })).toBe('Google Chat');
+    // Unknown to the list — still says which archive, which is the half it knows.
+    expect(app.hitOrigin({ ...hit, origin: 'irc', conversation_id: 'nope' })).toBe('IRC');
+  });
+
   it('runs a search and clears it', () => {
     const hit: SearchHit = { origin: 'signal', conversation_id: 'dm:a', conversation_name: 'Alice', ts: 1, sender: 's', snippet: 'hi', deleted: false };
     const search = vi.fn(() => of([hit]));
@@ -170,6 +228,38 @@ describe('App', () => {
     const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
     expect(text).toContain('still here');
     expect(text).not.toContain('(deleted)');
+  });
+
+  /** ⚠ **TWO IRC LINES IN ONE SECOND ARE ONE TRACK KEY.** The rows were tracked
+   *  by `origin + conversation_id + ts`, and an IRC hit's `ts` is
+   *  `ts_s * 1000` — the column is a DATETIME, so the resolution is a second, not
+   *  a millisecond. Two matching lines in the same channel in the same second
+   *  therefore key identically, which `@for` rejects (NG0955).
+   *
+   *  Nothing in `SearchHit` is unique — it carries no message id — so the index
+   *  is the key, and it is a sound one here: the array is replaced wholesale on
+   *  every search and never reordered or spliced. */
+  it('renders two hits from the same channel in the same second', async () => {
+    const at = Date.UTC(2026, 0, 2, 9, 14, 0);
+    const both: SearchHit[] = [
+      { origin: 'irc', conversation_id: '7', conversation_name: '#chan', ts: at, sender: 'a', snippet: 'first line', deleted: false },
+      { origin: 'irc', conversation_id: '7', conversation_name: '#chan', ts: at, sender: 'b', snippet: 'second line', deleted: false },
+    ];
+    const warnings: string[] = [];
+    const spy = vi.spyOn(console, 'warn').mockImplementation((...a) => { warnings.push(a.map(String).join(' ')); });
+    const err = vi.spyOn(console, 'error').mockImplementation((...a) => { warnings.push(a.map(String).join(' ')); });
+    try {
+    const fixture = render(makeApi({ search: vi.fn(() => of(both)) }));
+    fixture.componentInstance.query.set('line');
+    fixture.componentInstance.runSearch();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
+    expect(text).toContain('first line');
+    expect(text).toContain('second line');
+    expect(warnings.join(' ')).not.toContain('NG0955');
+    } finally { spy.mockRestore(); err.mockRestore(); }
   });
 
   it('title falls back when a conversation is unnamed', () => {
