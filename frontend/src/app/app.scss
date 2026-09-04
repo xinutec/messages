@@ -60,6 +60,13 @@
     padding: 1rem;
     opacity: 0.6;
   }
+  // The same italic-and-dimmed as a retracted body in the thread
+  // (`thread.scss`), because it is the same thing seen from the list: a message
+  // is here and its text is not being shown.
+  .deleted {
+    font-style: italic;
+    opacity: 0.6;
+  }
   // The search did not run. Full strength and in the error colour, where
   // `.empty` is dimmed: this one withholds an answer rather than being one.
   .search-failed {

@@ -714,20 +714,35 @@ pub struct SearchHit {
     pub ts: i64,
     pub sender: String,
     pub snippet: String,
+    /// The message was retracted. The snippet still carries its text; the reader
+    /// hides it behind a click, exactly as a thread hides a deleted body.
+    pub deleted: bool,
 }
 
 /// Simple substring search across all three origins' message text. Newest first.
+///
+/// ⚠ **RETRACTED MESSAGES MATCH.** Signal's `deleted` rows were excluded here
+/// until 2026-09-04 while a thread sent the same text and hid it behind a click:
+/// one concept, two policies, chosen in two places, neither aware of the other.
+/// Decided 2026-09-04 — a search that cannot find what was retracted is not an
+/// archive's search, and the hit is hidden the way the thread hides a body. The
+/// rule now lives in the reader for both, rather than half here and half there.
+///
+/// Only Signal has retraction at all: gchat and IRC have no such column, so their
+/// hits are `deleted: false` because there is nothing to be deleted, not because
+/// anything was checked.
 pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchHit>> {
     let like = escape_like(q);
     let mut hits = Vec::new();
 
     let srows = sqlx::query(
         r"SELECT m.thread_id AS cid, c.name AS cname, m.server_ts AS ts,
-                 COALESCE(ct.profile_name, m.sender_uuid) AS sender, m.body AS body
+                 COALESCE(ct.profile_name, m.sender_uuid) AS sender, m.body AS body,
+                 m.deleted AS deleted
           FROM messages m
           LEFT JOIN conversations c ON c.thread_id = m.thread_id
           LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
-          WHERE m.deleted = 0 AND m.body LIKE ?
+          WHERE m.body LIKE ?
           ORDER BY m.server_ts DESC LIMIT ?",
     )
     .bind(&like)
@@ -735,6 +750,7 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
     .fetch_all(pool)
     .await?;
     for r in srows {
+        let deleted: i8 = r.try_get("deleted")?;
         hits.push(SearchHit {
             origin: Origin::Signal,
             conversation_id: r.try_get("cid")?,
@@ -742,6 +758,7 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
             ts: r.try_get("ts")?,
             sender: r.try_get("sender")?,
             snippet: r.try_get::<Option<String>, _>("body")?.unwrap_or_default(),
+            deleted: deleted != 0,
         });
     }
 
@@ -768,6 +785,7 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
                 .try_get::<Option<String>, _>("sender")?
                 .unwrap_or_default(),
             snippet: r.try_get::<Option<String>, _>("body")?.unwrap_or_default(),
+            deleted: false, // Google Chat's export records no retraction
         });
     }
 
@@ -829,6 +847,7 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
                 .try_get::<Option<String>, _>("sender")?
                 .unwrap_or_default(),
             snippet: r.try_get::<Option<String>, _>("body")?.unwrap_or_default(),
+            deleted: false, // IRC has no retraction
         });
     }
 

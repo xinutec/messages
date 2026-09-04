@@ -31,7 +31,21 @@
           @for (h of results(); track h.origin + h.conversation_id + h.ts) {
             <button mat-list-item (click)="openHit(h)">
               <span matListItemTitle>{{ h.conversation_name || '(unnamed)' }}</span>
-              <span matListItemLine>{{ h.sender }}: {{ h.snippet }}</span>
+              <!-- ⚠ A RETRACTION IS FOUND WITHOUT BEING SPELLED OUT. Search matches
+                   on text its sender withdrew, and printing it in the list hands it
+                   over unasked — the one thing the thread is careful not to do. The
+                   row still says who, where and when, which is what a search is for;
+                   clicking through reaches the thread's reveal.
+                   No reveal button here: the row IS a button, and one nested inside
+                   it is neither valid HTML nor separately clickable. -->
+              <span matListItemLine>
+                {{ h.sender }}:
+                @if (h.deleted) {
+                  <span class="deleted">(deleted)</span>
+                } @else {
+                  {{ h.snippet }}
+                }
+              </span>
               <span matListItemMeta>{{ h.ts | date: 'shortDate' }}</span>
             </button>
           } @empty {

@@ -615,7 +615,7 @@ async fn gchat_messages_convert_us_and_self() {
 }
 
 #[tokio::test]
-async fn search_spans_origins_excludes_deleted_newest_first() {
+async fn search_spans_origins_finds_deleted_newest_first() {
     let Some(pool) = seeded_pool().await else {
         return;
     };
@@ -646,8 +646,23 @@ async fn search_spans_origins_excludes_deleted_newest_first() {
     );
     assert_eq!(hits[2].conversation_id, "group:g1");
 
-    // The deleted Signal message 'gone' must never surface.
-    assert!(archive::search(&pool, "gone", 50).await.unwrap().is_empty());
+    // ⚠ **A RETRACTED MESSAGE IS FINDABLE, AND SAYS SO.** It was filtered out in
+    // SQL until 2026-09-04, while a thread sent the same text and hid it behind a
+    // click: one concept, two policies. Both halves matter here — an empty result
+    // means search has silently gone back to deciding this for itself, and a hit
+    // with `deleted: false` means the flag stopped travelling and the reader will
+    // print somebody's retraction in the list.
+    let gone = archive::search(&pool, "gone", 50).await.unwrap();
+    assert_eq!(gone.len(), 1, "the deleted Signal message is findable");
+    assert_eq!(gone[0].snippet, "gone");
+    assert!(gone[0].deleted, "and the hit says it was retracted");
+
+    // Nothing else is: a flag that came back true for every row would satisfy the
+    // assertion above and mark the whole archive as retracted.
+    assert!(
+        hits.iter().all(|h| !h.deleted),
+        "the live 'findme' hits are not marked deleted"
+    );
 }
 
 /// A short page must not be filled by rows that were going to be thrown away.

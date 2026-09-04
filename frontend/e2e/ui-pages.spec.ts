@@ -297,6 +297,46 @@ test("Enter while the IME is composing does not send @ phone width", async ({ pa
   await expect.poll(() => sends).toBe(1);
 });
 
+/** Search results, as the list renders them. Two ordinary hits and a retracted
+ *  one, whose `snippet` still carries the withdrawn words — the server sends
+ *  them and the reader is what hides them, so a fixture with the text stripped
+ *  out would be testing a backend that does not exist. */
+const SEARCH = [
+  { origin: "signal", conversation_id: "dm:a", conversation_name: "Alice Andersson", ts: Date.UTC(2026, 0, 2, 9, 14),
+    sender: "Alice Andersson", snippet: "the referral letter finally turned up this morning, second post", deleted: false },
+  { origin: "signal", conversation_id: "dm:a", conversation_name: "Alice Andersson", ts: Date.UTC(2026, 0, 1, 18, 3),
+    sender: "Alice Andersson", snippet: "posted the letter on Tuesday", deleted: true },
+  { origin: "irc", conversation_id: "7", conversation_name: "#a-channel-with-a-long-name", ts: Date.UTC(2025, 11, 30, 16, 40),
+    sender: "s_20", snippet: "no letter here, wrong channel", deleted: false },
+];
+
+/** ⚠ **A RETRACTION IS FOUND WITHOUT BEING SPELLED OUT.** Search stopped
+ *  filtering `deleted` rows in SQL on 2026-09-04, so the withdrawn text now
+ *  reaches the browser and only the template keeps it off the list.
+ *
+ *  jsdom pins the absence already (`app.spec.ts`). What needs a real render is
+ *  the other half: `(deleted)` has to read as a retraction sitting among
+ *  ordinary hits rather than as something somebody said, and the extra inline
+ *  span must not crowd a list row that already truncates at phone width. */
+test("search — a retracted hit is listed without its text @ phone width", async ({ page }, testInfo) => {
+  await mockApi(page);
+  await page.route("**/api/search**", (r) => r.fulfill({ json: SEARCH }));
+  await page.goto("/");
+  await page.getByPlaceholder("Search messages").fill("letter");
+  await page.getByPlaceholder("Search messages").press("Enter");
+
+  const list = page.locator("mat-action-list");
+  await list.getByText("(deleted)").waitFor();
+  // The words themselves, nowhere on the screen.
+  await expect(page.locator("body")).not.toContainText("posted the letter on Tuesday");
+  // And the hit is still a hit — three rows, the retracted one among them.
+  await expect(list.getByRole("button")).toHaveCount(3);
+  await expect(list).toContainText("the referral letter finally turned up");
+
+  await expectNoTextOverlaps(page, testInfo);
+  await expectNoHorizontalOverflow(page, testInfo);
+});
+
 test("search — a failed search says so rather than \"No matches.\" @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   await page.route("**/api/search**", (r) => r.fulfill({ status: 500, body: "boom" }));

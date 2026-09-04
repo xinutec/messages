@@ -188,17 +188,31 @@ gains a second reader.
 
 | field | Rust | thread.html | copy-log.ts | search |
 | --- | --- | --- | --- | --- |
-| `deleted` | Signal reads it; gchat/IRC are always `false`; **search filters it out in SQL** | hidden behind a click, body AND attachments | `(deleted)` and nothing else, attachments included | never leaves the server |
+| `deleted` | Signal reads it; gchat/IRC are always `false` | hidden behind a click, body AND attachments | `(deleted)` and nothing else, attachments included | the hit matches and is listed, with `(deleted)` where the snippet goes |
 | `edited` | Signal only | `edited` tag in the meta line | ` (edited)` on the last line | not shown |
 | `kind` | IRC only; two of the column's four values | `* ` before the body | `HH:MM  * nick ` prefix | not shown |
 | `is_outgoing` | all three origins | `.out` class | nothing — the sender's name carries it | not shown |
 
-⚠ **Two known divergences, both deliberate, both would otherwise look like
-bugs.** Deleted content is filtered in SQL for search but *sent and hidden* in a
-thread — different policies for one concept, worth choosing between if either
-side changes. And a message with no body and no attachments (20 of them) draws
-an empty bubble but produces no line in a copied log; an empty log line would
-say less than nothing.
+⚠ **One known divergence, deliberate.** A message with no body and no
+attachments (20 of them) draws an empty bubble but produces no line in a copied
+log; an empty log line would say less than nothing.
+
+**Deleted content: one policy, decided 2026-09-04.** Search excluded `deleted`
+rows in SQL while a thread sent the same text and hid it behind a click — two
+policies for one concept, chosen in two places, neither aware of the other. It
+is now the thread's, everywhere: **the server sends retracted text, and every
+reader hides it until asked**. A search that cannot find what was retracted is
+not an archive's search, so a hit is listed with `(deleted)` where its snippet
+would go — you learn a retraction matched, in which conversation and when,
+without being handed the words. Clicking through reaches the thread's reveal.
+
+Withholding the text server-side was the alternative and was rejected on cost,
+not on principle: searching and returning are separable (the `LIKE` runs in
+MySQL either way), so the hit could carry no text at all and a per-message
+endpoint could serve the reveal. It buys only that devtools cannot see a
+retraction on a screen its authenticated owner is already looking at, and costs
+an endpoint, a round trip and a second loading state. Revisit if this archive
+ever has a reader who is not its owner.
 
 ## Known limits
 - The Signal reaction count approximates live state as distinct non-removed

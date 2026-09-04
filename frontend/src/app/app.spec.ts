@@ -1,5 +1,5 @@
+import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
-import { TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
 import { of } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
@@ -39,6 +39,22 @@ function makeApi(over: { search?: ReturnType<typeof vi.fn>; conversations?: Retu
     search: over.search ?? vi.fn(() => of([] as SearchHit[])),
     logout: vi.fn(() => of({})),
   } as unknown as MessagesApi;
+}
+
+/** The search list, actually rendered. The rest of this file drives the model;
+ *  the two assertions below are about what reaches the screen, which is where
+ *  the retraction rule is applied. */
+function render(api: MessagesApi): ComponentFixture<App> {
+  TestBed.configureTestingModule({
+    providers: [
+      provideZonelessChangeDetection(),
+      provideRouter([]),
+      { provide: MessagesApi, useValue: api },
+    ],
+  });
+  const fixture = TestBed.createComponent(App);
+  fixture.detectChanges();
+  return fixture;
 }
 
 function setup(api: MessagesApi): { app: App; router: Router } {
@@ -88,12 +104,12 @@ describe('App', () => {
   it('openHit routes to the conversation a search hit belongs to', () => {
     const { app, router } = setup(makeApi());
     const nav = vi.spyOn(router, 'navigate').mockResolvedValue(true);
-    app.openHit({ origin: 'gchat', conversation_id: 'gc1', conversation_name: 'Bob', ts: 1, sender: 's', snippet: 'x' });
+    app.openHit({ origin: 'gchat', conversation_id: 'gc1', conversation_name: 'Bob', ts: 1, sender: 's', snippet: 'x', deleted: false });
     expect(nav).toHaveBeenCalledWith(['/conversation', 'gchat', 'gc1'], expect.objectContaining({ queryParams: { from: null } }));
   });
 
   it('runs a search and clears it', () => {
-    const hit: SearchHit = { origin: 'signal', conversation_id: 'dm:a', conversation_name: 'Alice', ts: 1, sender: 's', snippet: 'hi' };
+    const hit: SearchHit = { origin: 'signal', conversation_id: 'dm:a', conversation_name: 'Alice', ts: 1, sender: 's', snippet: 'hi', deleted: false };
     const search = vi.fn(() => of([hit]));
     const { app } = setup(makeApi({ search }));
     app.query.set('hi');
@@ -111,6 +127,49 @@ describe('App', () => {
     app.runSearch();
     expect(search).not.toHaveBeenCalled();
     expect(app.results()).toBeNull();
+  });
+
+  /**
+   * ⚠ **THE ASSERTION THAT MATTERS IS AN ABSENCE.** Search stopped filtering
+   * `deleted = 0` on 2026-09-04 so that a retraction can be found; the text now
+   * arrives in the browser and only the template keeps it off the screen. That
+   * makes the list one careless edit away from printing what somebody withdrew,
+   * and nothing about the model would look wrong — `results()` is *supposed* to
+   * hold the words.
+   *
+   * jsdom can answer this one: it is text content, not layout. What it cannot
+   * answer is whether the dimmed italic reads as retracted, which is why the
+   * thread's affordance was settled by looking at the render instead.
+   */
+  it('does not print what a retracted message said', async () => {
+    const hit: SearchHit = { origin: 'signal', conversation_id: 'dm:a', conversation_name: 'Alice', ts: 5, sender: 'alice', snippet: 'withdrawn text', deleted: true };
+    const fixture = render(makeApi({ search: vi.fn(() => of([hit])) }));
+    fixture.componentInstance.query.set('withdrawn');
+    fixture.componentInstance.runSearch();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
+    expect(text).not.toContain('withdrawn text');
+    // The hit is still a hit: whose and when, and that there is something here.
+    expect(text).toContain('(deleted)');
+    expect(text).toContain('alice');
+    expect(text).toContain('Alice');
+  });
+
+  /** The other half. A gate that hid every snippet would satisfy the test above
+   *  and leave search showing nothing at all. */
+  it('prints an ordinary hit in full', async () => {
+    const hit: SearchHit = { origin: 'signal', conversation_id: 'dm:a', conversation_name: 'Alice', ts: 5, sender: 'alice', snippet: 'still here', deleted: false };
+    const fixture = render(makeApi({ search: vi.fn(() => of([hit])) }));
+    fixture.componentInstance.query.set('still');
+    fixture.componentInstance.runSearch();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
+    expect(text).toContain('still here');
+    expect(text).not.toContain('(deleted)');
   });
 
   it('title falls back when a conversation is unnamed', () => {
