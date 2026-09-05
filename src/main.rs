@@ -27,8 +27,25 @@ async fn main() -> Result<()> {
     // Sending is a capability, not a requirement: with no key mounted the app
     // still serves the archive and refuses every send. Failing to boot here
     // would take a working viewer down over something it does not need to read.
+    //
+    // ⚠ **AN ERROR HERE IS THE SAME ANSWER AS NO KEY, and this used to be `?`.**
+    // The paragraph above was already the intent, and `config.rs` says it a
+    // second time on `IrcSend` itself — but the code honoured it for only ONE of
+    // the two ways sending can be unavailable. A key that is absent returned
+    // `Ok(None)` and the viewer served; a key that could not be STAGED returned
+    // `Err`, and the `?` exited the process. On 2026-09-04 that took the archive
+    // down for 26 hours over a scratch file.
+    //
+    // Loud rather than quiet: this is a real fault and the log says so at error
+    // level. What it must not do is decide that nobody may read.
     let irc = match &cfg.irc_send {
-        Some(c) => IrcSender::prepare(c).await?,
+        Some(c) => match IrcSender::prepare(c).await {
+            Ok(sender) => sender,
+            Err(e) => {
+                tracing::error!("IRC send setup failed; sending is disabled: {e:#}");
+                None
+            }
+        },
         None => None,
     };
     tracing::info!(

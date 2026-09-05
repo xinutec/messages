@@ -235,6 +235,16 @@ retraction on a screen its authenticated owner is already looking at, and costs
 an endpoint, a round trip and a second loading state. Revisit if this archive
 ever has a reader who is not its owner.
 
+⚠ **Sending is a capability, not a requirement, and the code has to keep saying
+so in one voice.** `main.rs`, `config.rs` and `IrcSender::prepare` each state
+that a viewer must serve the archive when it cannot send — and the code honoured
+it for a MISSING key while an unstageable one exited the process. `/run/irc` is
+an emptyDir, kept across a container restart, and the staged key is 0400: the
+second start of a pod met a file it owned and could not write. messages.xinutec.org
+answered 502 for 26 hours and 244 restarts on 2026-09-04/05. `prepare` clears the
+stale copy now, and `main.rs` treats a staging failure the way it treats a missing
+key — loudly logged, sending off, the archive still served.
+
 ## Known limits
 - The Signal reaction count approximates live state as distinct non-removed
   authors per emoji, so a same-author add-then-remove inside one page is missed.

@@ -185,6 +185,29 @@ impl IrcSender {
         let bytes = tokio::fs::read(&src)
             .await
             .with_context(|| format!("reading {}", src.display()))?;
+
+        // ⚠ **THE WORK DIR OUTLIVES THE CONTAINER, AND THE KEY IT HOLDS IS 0400.**
+        // It is a k8s emptyDir: wiped when the POD goes, kept when the container
+        // merely restarts. `set_owner_only` below tightens this file to 0400 —
+        // readable by its owner, writable by nobody — so the SECOND start of the
+        // same pod finds a file it owns and cannot open for writing. EACCES, and
+        // nothing in the pod ever clears it, so every later start fails the same
+        // way.
+        //
+        // Measured on isis: one container restart at 2026-09-04T08:19Z, then 244
+        // identical failures across 26 hours with the archive returning 502 the
+        // whole time — over a scratch copy of a key nobody had asked it to use.
+        //
+        // Removed rather than truncated: `write` opens with O_TRUNC, and it is
+        // the mode of the EXISTING file that refuses the open.
+        match tokio::fs::remove_file(&key).await {
+            Ok(()) => tracing::info!("cleared {} left by an earlier start", key.display()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(e).with_context(|| format!("clearing {}", key.display()));
+            }
+        }
+
         tokio::fs::write(&key, &bytes)
             .await
             .with_context(|| format!("writing {}", key.display()))?;
