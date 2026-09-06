@@ -92,6 +92,22 @@ async fn signed_in(pool: &MySqlPool) -> String {
     .expect("create session")
 }
 
+/// ⚠ **THE POSITIVE HALF of `/healthz/deep`, and it needs a real database.**
+/// `tests/deep_health.rs` proves the 503 against a pool pointed at nothing,
+/// which is reachable anywhere — but a test suite that only ever sees the
+/// failure would pass just as well against an endpoint that is always 503, and
+/// the fleet would read this name as permanently broken.
+///
+/// So: a reachable archive answers 200, here, where a database exists.
+#[tokio::test]
+async fn a_reachable_archive_reports_itself_healthy() {
+    let Some(pool) = pool().await else { return };
+    assert_eq!(
+        go(&pool, "GET", "/healthz/deep", None).await,
+        StatusCode::OK
+    );
+}
+
 /// ⚠ The whole API is private. A route added without the extractor would serve
 /// the archive to anyone who asked, and nothing but this would say so.
 #[tokio::test]

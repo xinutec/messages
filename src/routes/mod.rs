@@ -2,6 +2,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod health;
 pub mod telemetry;
 
 use axum::Router;
@@ -59,7 +60,15 @@ pub fn router(state: AppState) -> Router {
         .route("/telemetry", post(telemetry::record));
 
     let app = Router::new()
+        // ⚠ **DELIBERATELY DUMB, and it must stay that way.** This is kubelet's
+        // LIVENESS target (`apps/messages.dhall`: initialDelaySeconds 5,
+        // periodSeconds 20). A liveness probe that checks a dependency turns a
+        // database blip into a crashloop — kubelet kills the pod for something
+        // restarting cannot fix, and the restarts make the dependency's load
+        // worse. Whether the archive is READABLE is `/api/health`'s question.
         .route("/healthz", get(|| async { "ok" }))
+        // The dependency question the line above must never learn to ask.
+        .route("/healthz/deep", get(health::deep))
         .route("/login", get(auth::login))
         .route("/auth/callback", get(auth::callback))
         .route("/logout", post(auth::logout))
