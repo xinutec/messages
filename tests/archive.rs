@@ -115,6 +115,10 @@ fn cursor_round_trips_and_rejects_garbage() {
 use sqlx::mysql::MySqlPoolOptions;
 use sqlx::{AssertSqlSafe, MySqlPool};
 
+use messages::config::Config;
+use messages::irc_send::IrcSender;
+use messages::state::AppState;
+
 async fn test_pool() -> Option<MySqlPool> {
     let url = std::env::var("MESSAGES_TEST_DATABASE_URL").ok()?;
     let pool = MySqlPoolOptions::new()
@@ -1071,6 +1075,154 @@ async fn the_echo_takes_its_timestamp_from_the_log_line() {
         .execute(&pool)
         .await
         .unwrap();
+}
+
+// ---- the send guard, through the real router --------------------------------
+
+/// ⚠ **THIS LIVES HERE RATHER THAN IN `tests/api_routes.rs`, AND THAT IS THE
+/// CHEAPER HALF OF A REAL CHOICE.** The guard needs a row in
+/// `irc_conversations`, and `api_routes.rs` deliberately touches no archive
+/// table: `seed` below DROPs and recreates them, and cargo runs test binaries in
+/// parallel against the one database named by `MESSAGES_TEST_DATABASE_URL`, so a
+/// fixture there would race this file's DDL. The alternative is a second
+/// database, which means teaching `dev-lint`'s `with-test-db` to take more than
+/// one `--database` — a shared tool three repositories gate on. That is the right
+/// move when a SECOND route test needs archive rows; it is not worth it for the
+/// first. The cost of being here is that one HTTP-level test sits among the
+/// query-layer ones, which this comment is paying.
+///
+/// ⚠ **THE FILED REASON WAS HALF OF IT.** #1392 said the guard was uncovered for
+/// want of a row. True and insufficient: `routes/api.rs::send` reads
+/// `let Some(sender) = app.irc` BEFORE it looks the conversation up, and
+/// `api_routes.rs` builds its state with `irc_send: None`, so every send case
+/// there stops at that line and reaches no guard whatever the database holds.
+/// Covering this needs a CONFIGURED SENDER as well as the row. The sender never
+/// connects — the guard returns before `send()` is called — so a key that could
+/// not authenticate anywhere is exactly right.
+async fn sending_state(pool: &MySqlPool) -> AppState {
+    // Under `nix develop` TMPDIR has been unreadable, so use the directory cargo
+    // hands integration tests, as `tests/irc_send_key.rs` does.
+    let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("send-guard");
+    let (keys, work) = (root.join("secret"), root.join("run"));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&keys).unwrap();
+    std::fs::create_dir_all(&work).unwrap();
+    std::fs::write(keys.join("id_ed25519"), b"not a real key, and never used\n").unwrap();
+    std::fs::write(
+        keys.join("known_hosts"),
+        b"[127.0.0.1]:1 ssh-ed25519 AAAA\n",
+    )
+    .unwrap();
+
+    let send = messages::config::IrcSend {
+        // ⚠ Port 1, so the ordinary-conversation half FAILS FAST and locally
+        // rather than reaching for anything. What that half asserts is "got past
+        // the guard", and an unreachable host proves that better than a reachable
+        // one would — nothing can be sent by accident.
+        host: "127.0.0.1".to_string(),
+        port: 1,
+        key_dir: keys.display().to_string(),
+        work_dir: work.display().to_string(),
+    };
+    let sender = IrcSender::prepare(&send).await.unwrap();
+    assert!(sender.is_some(), "the fixture key should stage");
+
+    let cfg = Config {
+        db_options: sqlx::mysql::MySqlConnectOptions::new(),
+        session_secret: SEND_SECRET.to_string(),
+        bind_addr: String::new(),
+        nc_base_url: "https://nc.invalid".to_string(),
+        nc_client_id: String::new(),
+        nc_client_secret: String::new(),
+        nc_redirect_uri: String::new(),
+        allowed_users: vec!["pippijn".to_string()],
+        static_dir: None,
+        attachments_dir: "/nonexistent".to_string(),
+        // Unread by the handler, which consults `app.irc` — the prepared sender
+        // above is what decides whether sending is configured.
+        irc_send: None,
+    };
+    AppState::new(pool.clone(), cfg, reqwest::Client::new(), sender)
+}
+
+const SEND_SECRET: &str = "test session secret";
+
+async fn send_to(pool: &MySqlPool, conversation_id: i32) -> axum::http::StatusCode {
+    use tower::ServiceExt;
+
+    // ⚠ `seed` DROPs `sessions` along with the archive tables, and recreates only
+    // the archive ones — `sessions` is the app's own table and `db::ensure_schema`
+    // is the single place that builds it. Without this the request arrives with a
+    // cookie naming a row in a table that does not exist, which fails as a
+    // database error rather than as the 401 it looks like.
+    messages::db::ensure_schema(pool)
+        .await
+        .expect("sessions table");
+
+    let cookie = messages::session::create_session(
+        pool,
+        SEND_SECRET,
+        &messages::session::UserSession {
+            user_id: "pippijn".to_string(),
+            display_name: "Pippijn".to_string(),
+        },
+    )
+    .await
+    .expect("create session");
+
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri(format!("/api/conversations/irc/{conversation_id}/send"))
+        .header(
+            "cookie",
+            format!("{}={cookie}", messages::session::COOKIE_NAME),
+        )
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(r#"{"text":"hello"}"#))
+        .unwrap();
+
+    messages::routes::router(sending_state(pool).await)
+        .oneshot(req)
+        .await
+        .unwrap()
+        .status()
+}
+
+/// The status log is refused, and an ordinary conversation is NOT.
+///
+/// ⚠ **BOTH HALVES, because the first alone passes against a handler that 404s
+/// every send.** That is not a hypothetical failure: a one-sided test is exactly
+/// what would have let a broken send path read as a working guard. The second
+/// half asserts only "not 404" — it goes on to attempt a real ssh to a closed
+/// port and fails there, which is the distinction being drawn: refused BY THE
+/// GUARD versus refused LATER.
+#[tokio::test]
+async fn sending_to_the_status_log_is_refused_and_to_a_conversation_is_not() {
+    let Some(pool) = seeded_pool().await else {
+        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
+        return;
+    };
+
+    let status: i32 =
+        sqlx::query_scalar("SELECT id FROM irc_conversations WHERE target='me' AND is_status=1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let ordinary: i32 = sqlx::query_scalar("SELECT id FROM irc_conversations WHERE target='carol'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        send_to(&pool, status).await,
+        axum::http::StatusCode::NOT_FOUND,
+        "the pseudo-conversation irssi files server notices into must not be sendable"
+    );
+    assert_ne!(
+        send_to(&pool, ordinary).await,
+        axum::http::StatusCode::NOT_FOUND,
+        "an ordinary conversation must get PAST the guard"
+    );
 }
 
 // ---- what a leading slash means (no DB) -------------------------------------
