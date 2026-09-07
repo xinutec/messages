@@ -24,6 +24,13 @@ import { Message } from './models';
 export const PAGE = 100;
 /** Soft cap on how many messages are ever in the DOM. */
 export const MAX_RENDERED = 400;
+/** How many pages `loadThread` will fetch to restore a saved scroll depth.
+ *
+ *  Five times `MAX_RENDERED`, so a legitimate restore never reaches it: what it
+ *  bounds is a `?from` that no longer sits anywhere near the newest page — a
+ *  stale bookmark, or a hand-edited URL — where the loop would otherwise issue
+ *  one request per hundred messages all the way back. See `loadThread`. */
+export const MAX_RESTORE_PAGES = (MAX_RENDERED * 5) / PAGE;
 /** How close (px) to an edge before we load/reveal — big enough to stay ahead of
  *  the scroll so the user rarely sees the blank spacer. */
 const EDGE = 1200;

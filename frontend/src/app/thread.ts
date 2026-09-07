@@ -9,7 +9,7 @@ import { firstValueFrom } from 'rxjs';
 
 import { attachmentName, attachmentNoun } from './attachment';
 import { LogScope, chatLogHtml, formatChatLog } from './copy-log';
-import { PAGE, ThreadWindow } from './thread-window';
+import { MAX_RESTORE_PAGES, PAGE, ThreadWindow } from './thread-window';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
 import { Conversation, Message, Origin } from './models';
@@ -188,7 +188,33 @@ export class Thread {
       let hasMore = first.has_more;
       let cursor = first.next_cursor;
       // Page older until we've reached the saved depth (or run out).
-      while (from != null && hasMore && cursor != null && msgs.length > 0 && msgs[0].ts > from) {
+      //
+      // ⚠ BOUNDED, and the bound is the point rather than defensive habit. Each
+      // turn is one sequential request, and `from` is a TIMESTAMP with no
+      // relation to how far back it sits: a bookmark into #linux (401,794 lines)
+      // asks for roughly 4,000 of them, one after another, with the thread blank
+      // throughout. Nothing about the loop notices — it has more pages and has
+      // not reached the timestamp, so it keeps going.
+      //
+      // `MAX_RESTORE_PAGES * PAGE` messages is already several times
+      // MAX_RENDERED, so everything past it is fetched only for `trimToWindow`
+      // to collapse straight back out of the DOM. Stopping early is not a lost
+      // position either: `scrollToTs` falls back to the oldest message it
+      // loaded, so the thread opens near where it should and scrolling in
+      // loads the rest.
+      //
+      // Landing on a message FAR back is a different problem and wants a cursor
+      // rather than a deeper loop — #1401.
+      let pages = 0;
+      while (
+        from != null &&
+        hasMore &&
+        cursor != null &&
+        msgs.length > 0 &&
+        msgs[0].ts > from &&
+        pages < MAX_RESTORE_PAGES
+      ) {
+        pages++;
         const older = await firstValueFrom(this.api.messages(origin, id, cursor, PAGE));
         if (older.messages.length === 0) break;
         msgs = [...older.messages, ...msgs];

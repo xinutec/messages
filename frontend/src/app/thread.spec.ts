@@ -1,6 +1,6 @@
 import { ComponentRef, provideZonelessChangeDetection } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { Router, provideRouter } from '@angular/router';
+import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import { Observable, of } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -8,6 +8,7 @@ import { Thread } from './thread';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
 import { Message, MessagesPage } from './models';
+import { MAX_RESTORE_PAGES } from './thread-window';
 
 function msg(id: string, ts: number): Message {
   return { id, ts, sender: 's', is_outgoing: false, kind: 'message', body: 'b', deleted: false, edited: false, reactions: [], attachments: [] };
@@ -540,5 +541,63 @@ describe('Thread composer — typing with an IME', () => {
     thread.onComposerKey(e);
     expect(api.send).toHaveBeenCalledTimes(1);
     expect(e.defaultPrevented).toBe(true);
+  });
+});
+describe('restoring a saved scroll depth', () => {
+  /** An `?from` older than anything the API will ever return, with the API
+   *  always claiming another page. That is a stale bookmark: the loop cannot
+   *  reach the timestamp and nothing else stops it. */
+  async function openWithFrom(from: string): Promise<{ calls: number }> {
+    TestBed.configureTestingModule({
+      providers: [
+        provideZonelessChangeDetection(),
+        provideRouter([]),
+        { provide: MessagesApi, useValue: makeApi() },
+        {
+          provide: ActivatedRoute,
+          useValue: { snapshot: { queryParamMap: convertToParamMap({ from }) } },
+        },
+      ],
+    });
+    const fixture = TestBed.createComponent(Thread);
+    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    // Every page is newer than `from`, so nothing but the bound ends the loop.
+    //
+    // ⚠ THE SUPPLY IS FINITE ON PURPOSE, and it is not a weaker test for it.
+    // Against a server that never runs out — the real shape of this — removing
+    // the bound does not fail this test, it HANGS: the loop is driven by
+    // resolved promises, so it starves the macrotask queue and the wait below
+    // never gets a turn. Verified by ablation 2026-09-07 (no output in 240s).
+    // A suite that wedges is a worse instrument than one that fails, so the
+    // supply stops a few pages past the budget: the bound makes
+    // MAX_RESTORE_PAGES + 1 requests, and its absence makes more and says so.
+    let n = 1000;
+    let left = MAX_RESTORE_PAGES + 5;
+    api.messages.mockImplementation(() => page([msg(String(n--), 5000)], left-- > 0, 'c'));
+    fixture.componentRef.setInput('origin', 'irc');
+    fixture.componentRef.setInput('id', '7');
+    fixture.detectChanges();
+    const thread = fixture.componentInstance;
+    for (let i = 0; i < 200 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    expect(thread.loadingThread()).toBe(false);
+    return { calls: api.messages.mock.calls.length };
+  }
+
+  /** ⚠ Without the bound this does not fail, it HANGS — the loop has more pages
+   *  and has not reached the timestamp, forever. A bookmark into a busy channel
+   *  is the real shape of it. */
+  it('stops after a bounded number of requests when `from` is unreachable', async () => {
+    const { calls } = await openWithFrom('1');
+    // The first page, plus at most the restore budget.
+    expect(calls).toBeLessThanOrEqual(MAX_RESTORE_PAGES + 1);
+    // And it did page back rather than giving up at the first turn — a bound
+    // that stopped immediately would pass the line above and break restoring.
+    expect(calls).toBeGreaterThan(1);
+  });
+
+  it('stops as soon as the saved depth is reached, well inside the bound', async () => {
+    // `from` is at the first page's own timestamp, so the loop never runs.
+    const { calls } = await openWithFrom('5000');
+    expect(calls).toBe(1);
   });
 });
