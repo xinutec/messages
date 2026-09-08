@@ -227,6 +227,27 @@ not an archive's search, so a hit is listed with `(deleted)` where its snippet
 would go — you learn a retraction matched, in which conversation and when,
 without being handed the words. Clicking through reaches the thread's reveal.
 
+⚠ **That sentence was aspirational until 2026-09-04's decision was finished by
+#1401.** A hit used to open the conversation at its NEWEST page while the
+message might be years back, so "clicking through reaches the reveal" described
+an intention rather than the app. A result now lands ON its message, marked,
+with the conversation loaded both sides of it.
+
+**`?at` and `?from` are different questions and must not be confused.** `at`
+carries a hit's opaque cursor and means *put me here*; `from` carries a scroll
+position and means *I was here*. `at` wins on load, and the first scroll clears
+it — the marker on the landed message has exactly that lifetime, because
+"this is where you were put" stops being true the moment the reader moves.
+
+⚠ **A landing's forward half is `dir=at`, NOT `dir=newer`.** Both `older` and
+`newer` are STRICT, so a landing composed of the pair skips the row it is aimed
+at — which shipped, put the reader one message past the hit, and had the marker
+naming its neighbour. The backend tests were right about each direction alone;
+what nothing tested was the two of them composed, and the frontend's mock
+described a backend that included the hit because that is what its author
+believed. `tests/archive.rs::a_landing_contains_the_message_it_landed_on` is the
+test that now holds the seam.
+
 Withholding the text server-side was the alternative and was rejected on cost,
 not on principle: searching and returning are separable (the `LIKE` runs in
 MySQL either way), so the hit could carry no text at all and a per-message
