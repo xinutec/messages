@@ -65,10 +65,10 @@ async function mockApi(page: Page): Promise<void> {
     // Newest page (no cursor); opening at the bottom needs only this page.
     // Older history exists (has_more) but is fetched lazily on scroll-up.
     if (cursor) {
-      await route.fulfill({ json: { messages: [], has_more: false, next_cursor: null } });
+      await route.fulfill({ json: { messages: [], has_more: false, next_cursor: null, prev_cursor: null } });
     } else {
       await route.fulfill({
-        json: { messages: newestPage(100), has_more: true, next_cursor: "1000000" },
+        json: { messages: newestPage(100), has_more: true, next_cursor: "1000000", prev_cursor: null },
       });
     }
   });

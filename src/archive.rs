@@ -242,6 +242,23 @@ pub async fn attachment_blob(
     }
 }
 
+/// Which way a page runs from its cursor.
+///
+/// ⚠ **The direction cannot be a bound parameter**: `ORDER BY` will not take
+/// one, and multiplying the sort keys by ±1 to fake it costs the index on a
+/// 401,794-row table. So each origin carries the comparison twice, once per
+/// direction, and this enum is what chooses between them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PageDir {
+    /// Back in time, strictly before the cursor. The whole archive read this way
+    /// until #1401, because the thread's window was anchored to the newest
+    /// message and could only grow one way.
+    Older,
+    /// Forward in time, strictly after the cursor. What landing on an old search
+    /// hit needs: without it the hit is somewhere you can only scroll away from.
+    Newer,
+}
+
 #[derive(Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -249,8 +266,16 @@ pub struct MessagesPage {
     /// Ascending by ts.
     pub messages: Vec<Message>,
     pub has_more: bool,
-    /// Opaque cursor to fetch the next older page; pass back as `?cursor`.
+    /// Opaque cursor addressing the page's OLDEST row — where to continue
+    /// backwards. Pass back as `?cursor` with `dir=older`.
+    ///
+    /// ⚠ Named for the direction the reader travels, NOT for the order the page
+    /// was fetched in. Both cursors describe the page's own ends, so a forward
+    /// page and a backward page over the same rows hand back the same pair.
     pub next_cursor: Option<String>,
+    /// Opaque cursor addressing the page's NEWEST row — where to continue
+    /// forwards. Pass back as `?cursor` with `dir=newer`.
+    pub prev_cursor: Option<String>,
 }
 
 /// All conversations across all three origins, newest activity first.
@@ -394,31 +419,63 @@ pub async fn irc_target(pool: &MySqlPool, conversation_id: &str) -> Result<Optio
     }))
 }
 
-/// One page of a conversation, oldest→newest, with reactions attached. `cursor`
-/// (from a previous page's `next_cursor`) pages backwards in time; None starts at
-/// the most recent. The per-origin fetchers mint `next_cursor` from their own
-/// native ts, so it round-trips at full precision.
+/// One page of a conversation, oldest→newest, with reactions attached.
+///
+/// `cursor` is a position from a previous page — its `next_cursor` to continue
+/// backwards, its `prev_cursor` to continue forwards — and `dir` says which.
+/// None starts at the most recent page, which only makes sense with
+/// [`PageDir::Older`] and is what the thread opens with.
+///
+/// Each fetcher returns its rows ASCENDING plus the native `(ts, id)` of each
+/// end, whichever direction it read in. Minting happens here, from the page
+/// rather than from the query, so the two cursors mean the same thing on every
+/// page: `next_cursor` is the oldest row and `prev_cursor` the newest.
 pub async fn messages_page(
     pool: &MySqlPool,
     origin: Origin,
     id: &str,
     cursor: Option<(i64, i64)>,
     limit: i64,
+    dir: PageDir,
 ) -> Result<MessagesPage> {
-    // Each fetcher returns its page (DESC, newest first) plus the cursor for the
-    // next older page — it alone knows the native ts unit + row id.
-    let (mut msgs, next_cursor) = match origin {
-        Origin::Signal => signal_messages(pool, id, cursor, limit).await?,
-        Origin::Gchat => gchat_messages(pool, id, cursor, limit).await?,
-        Origin::Irc => irc_messages(pool, id, cursor, limit).await?,
+    let page = match origin {
+        Origin::Signal => signal_messages(pool, id, cursor, limit, dir).await?,
+        Origin::Gchat => gchat_messages(pool, id, cursor, limit, dir).await?,
+        Origin::Irc => irc_messages(pool, id, cursor, limit, dir).await?,
     };
-    let has_more = msgs.len() as i64 == limit;
-    msgs.reverse(); // present ascending
+    let has_more = page.msgs.len() as i64 == limit;
     Ok(MessagesPage {
-        messages: msgs,
+        messages: page.msgs,
         has_more,
-        next_cursor,
+        next_cursor: page.oldest.map(|(ts, id)| encode_cursor(ts, id)),
+        prev_cursor: page.newest.map(|(ts, id)| encode_cursor(ts, id)),
     })
+}
+
+/// What a per-origin fetcher hands back: the page ASCENDING, and the native
+/// `(ts, id)` of its two ends. Ascending regardless of direction, so that
+/// everything above this line is direction-blind — the alternative, letting the
+/// order follow the query, put a `reverse()` at the caller that was correct for
+/// exactly one of the two directions.
+struct Fetched {
+    msgs: Vec<Message>,
+    oldest: Option<(i64, i64)>,
+    newest: Option<(i64, i64)>,
+}
+
+impl Fetched {
+    /// Rows arrive in the query's order; `dir` says what that order was.
+    fn new(mut msgs: Vec<Message>, mut keys: Vec<(i64, i64)>, dir: PageDir) -> Self {
+        if dir == PageDir::Older {
+            msgs.reverse();
+            keys.reverse();
+        }
+        Self {
+            msgs,
+            oldest: keys.first().copied(),
+            newest: keys.last().copied(),
+        }
+    }
 }
 
 async fn signal_messages(
@@ -426,13 +483,15 @@ async fn signal_messages(
     thread_id: &str,
     cursor: Option<(i64, i64)>,
     limit: i64,
-) -> Result<(Vec<Message>, Option<String>)> {
+    dir: PageDir,
+) -> Result<Fetched> {
     let (cur_ts, cur_id) = (cursor.map(|(ts, _)| ts), cursor.map(|(_, id)| id));
-    // Newest first, tie-broken by id so a page boundary never splits a run of
-    // messages sharing a server_ts. The first `?` (cur_ts) doubles as the
-    // "no cursor → whole thread" guard.
-    let rows = sqlx::query(
-        r"SELECT m.id AS id, m.server_ts AS ts,
+    // Tie-broken by id so a page boundary never splits a run of messages sharing
+    // a server_ts. The first `?` (cur_ts) doubles as the "no cursor → whole
+    // thread" guard, in both directions.
+    let sql = match dir {
+        PageDir::Older => {
+            r"SELECT m.id AS id, m.server_ts AS ts,
                  COALESCE(ct.profile_name, m.sender_uuid) AS sender,
                  m.is_outgoing AS is_outgoing, m.body AS body,
                  m.deleted AS deleted, m.edited AS edited
@@ -441,23 +500,43 @@ async fn signal_messages(
           WHERE m.thread_id = ?
             AND (? IS NULL OR m.server_ts < ? OR (m.server_ts = ? AND m.id < ?))
           ORDER BY m.server_ts DESC, m.id DESC
-          LIMIT ?",
-    )
-    .bind(thread_id)
-    .bind(cur_ts)
-    .bind(cur_ts)
-    .bind(cur_ts)
-    .bind(cur_id)
-    .bind(limit)
-    .fetch_all(pool)
-    .await?;
+          LIMIT ?"
+        }
+        PageDir::Newer => {
+            r"SELECT m.id AS id, m.server_ts AS ts,
+                 COALESCE(ct.profile_name, m.sender_uuid) AS sender,
+                 m.is_outgoing AS is_outgoing, m.body AS body,
+                 m.deleted AS deleted, m.edited AS edited
+          FROM messages m
+          LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
+          WHERE m.thread_id = ?
+            AND (? IS NULL OR m.server_ts > ? OR (m.server_ts = ? AND m.id > ?))
+          ORDER BY m.server_ts ASC, m.id ASC
+          LIMIT ?"
+        }
+    };
+    // Nothing is BUILT here. The rule guards against constructed SQL, and a
+    // match over two constants keeps every property it is guarding; the reason
+    // there are two is that `ORDER BY` will not take a bound parameter.
+    // dev-lint: allow-sqlx — `sql` is one of the two literals directly above.
+    let rows = sqlx::query(sql)
+        .bind(thread_id)
+        .bind(cur_ts)
+        .bind(cur_ts)
+        .bind(cur_ts)
+        .bind(cur_id)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
 
     let mut msgs = Vec::with_capacity(rows.len());
     let mut ts_list = Vec::with_capacity(rows.len());
     let mut ids = Vec::with_capacity(rows.len());
+    let mut keys = Vec::with_capacity(rows.len());
     for r in rows {
         let id: i64 = r.try_get("id")?;
         let ts: i64 = r.try_get("ts")?;
+        keys.push((ts, id));
         let is_outgoing: i8 = r.try_get("is_outgoing")?;
         let deleted: i8 = r.try_get("deleted")?;
         let edited: i8 = r.try_get("edited")?;
@@ -537,12 +616,7 @@ async fn signal_messages(
         }
     }
 
-    // The oldest row (last, since DESC) is the cursor for the next older page.
-    let next_cursor = ids
-        .last()
-        .zip(ts_list.last())
-        .map(|(&id, &ts)| encode_cursor(ts, id));
-    Ok((msgs, next_cursor))
+    Ok(Fetched::new(msgs, keys, dir))
 }
 
 async fn gchat_messages(
@@ -550,37 +624,54 @@ async fn gchat_messages(
     group_id: &str,
     cursor: Option<(i64, i64)>,
     limit: i64,
-) -> Result<(Vec<Message>, Option<String>)> {
+    dir: PageDir,
+) -> Result<Fetched> {
     // The cursor carries the native µs ts (not the ms the UI sees), so paging
     // never skips rows that share a millisecond; id tie-breaks an exact µs match.
     let (cur_ts, cur_id) = (cursor.map(|(ts, _)| ts), cursor.map(|(_, id)| id));
-    let rows = sqlx::query(
-        r"SELECT m.id AS id, m.ts_us AS ts_us, m.sender_name AS sender,
+    let sql = match dir {
+        PageDir::Older => {
+            r"SELECT m.id AS id, m.ts_us AS ts_us, m.sender_name AS sender,
                  m.is_self AS is_self, m.text AS body
           FROM gchat_messages m
           WHERE m.group_id = ?
             AND (? IS NULL OR m.ts_us < ? OR (m.ts_us = ? AND m.id < ?))
           ORDER BY m.ts_us DESC, m.id DESC
-          LIMIT ?",
-    )
-    .bind(group_id)
-    .bind(cur_ts)
-    .bind(cur_ts)
-    .bind(cur_ts)
-    .bind(cur_id)
-    .bind(limit)
-    .fetch_all(pool)
-    .await?;
+          LIMIT ?"
+        }
+        PageDir::Newer => {
+            r"SELECT m.id AS id, m.ts_us AS ts_us, m.sender_name AS sender,
+                 m.is_self AS is_self, m.text AS body
+          FROM gchat_messages m
+          WHERE m.group_id = ?
+            AND (? IS NULL OR m.ts_us > ? OR (m.ts_us = ? AND m.id > ?))
+          ORDER BY m.ts_us ASC, m.id ASC
+          LIMIT ?"
+        }
+    };
+    // Nothing is BUILT here. The rule guards against constructed SQL, and a
+    // match over two constants keeps every property it is guarding; the reason
+    // there are two is that `ORDER BY` will not take a bound parameter.
+    // dev-lint: allow-sqlx — `sql` is one of the two literals directly above.
+    let rows = sqlx::query(sql)
+        .bind(group_id)
+        .bind(cur_ts)
+        .bind(cur_ts)
+        .bind(cur_ts)
+        .bind(cur_id)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
 
     let mut msgs = Vec::with_capacity(rows.len());
     let mut ids = Vec::with_capacity(rows.len());
-    let mut oldest: Option<(i64, i64)> = None; // (ts_us, id) of the last row seen
+    let mut keys = Vec::with_capacity(rows.len());
     for r in rows {
         let id: i64 = r.try_get("id")?;
         let ts_us: i64 = r.try_get("ts_us")?;
+        keys.push((ts_us, id));
         let is_self: i8 = r.try_get("is_self")?;
         ids.push(id);
-        oldest = Some((ts_us, id));
         msgs.push(Message {
             id: id.to_string(),
             ts: us_to_ms(ts_us),
@@ -620,11 +711,10 @@ async fn gchat_messages(
         }
     }
 
-    let next_cursor = oldest.map(|(ts_us, id)| encode_cursor(ts_us, id));
-    Ok((msgs, next_cursor))
+    Ok(Fetched::new(msgs, keys, dir))
 }
 
-/// One page of an IRC conversation, newest first.
+/// One page of an IRC conversation.
 ///
 /// ⚠ **The cursor's native unit is seconds, and it is the coarsest of the three
 /// origins by a wide margin.** irssi's default `timestamp_format` is `%H:%M`, so
@@ -642,10 +732,12 @@ async fn irc_messages(
     conversation_id: &str,
     cursor: Option<(i64, i64)>,
     limit: i64,
-) -> Result<(Vec<Message>, Option<String>)> {
+    dir: PageDir,
+) -> Result<Fetched> {
     let (cur_ts, cur_id) = (cursor.map(|(ts, _)| ts), cursor.map(|(_, id)| id));
-    let rows = sqlx::query(
-        r"SELECT m.id AS id,
+    let sql = match dir {
+        PageDir::Older => {
+            r"SELECT m.id AS id,
                  TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) AS ts_s,
                  m.nick AS sender, m.is_self AS is_self, m.text AS body, m.kind AS kind
           FROM irc_messages m
@@ -656,22 +748,43 @@ async fn irc_messages(
                  OR (TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) = ?
                      AND m.id < ?))
           ORDER BY ts_s DESC, m.id DESC
-          LIMIT ?",
-    )
-    .bind(conversation_id)
-    .bind(cur_ts)
-    .bind(cur_ts)
-    .bind(cur_ts)
-    .bind(cur_id)
-    .bind(limit)
-    .fetch_all(pool)
-    .await?;
+          LIMIT ?"
+        }
+        PageDir::Newer => {
+            r"SELECT m.id AS id,
+                 TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) AS ts_s,
+                 m.nick AS sender, m.is_self AS is_self, m.text AS body, m.kind AS kind
+          FROM irc_messages m
+          WHERE m.conversation_id = ?
+            AND m.kind IN ('message', 'action')
+            AND (? IS NULL
+                 OR TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) > ?
+                 OR (TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) = ?
+                     AND m.id > ?))
+          ORDER BY ts_s ASC, m.id ASC
+          LIMIT ?"
+        }
+    };
+    // Nothing is BUILT here. The rule guards against constructed SQL, and a
+    // match over two constants keeps every property it is guarding; the reason
+    // there are two is that `ORDER BY` will not take a bound parameter.
+    // dev-lint: allow-sqlx — `sql` is one of the two literals directly above.
+    let rows = sqlx::query(sql)
+        .bind(conversation_id)
+        .bind(cur_ts)
+        .bind(cur_ts)
+        .bind(cur_ts)
+        .bind(cur_id)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
 
     let mut msgs = Vec::with_capacity(rows.len());
-    let mut oldest: Option<(i64, i64)> = None;
+    let mut keys = Vec::with_capacity(rows.len());
     for r in rows {
         let id: i64 = r.try_get("id")?;
         let ts_s: i64 = r.try_get("ts_s")?;
+        keys.push((ts_s, id));
         let is_self: i8 = r.try_get("is_self")?;
         let kind: String = r.try_get("kind")?;
         // The query filters to the two this parses, so an unknown value means
@@ -682,7 +795,6 @@ async fn irc_messages(
             bail!("irc_messages.kind holds a value this query should have excluded: {kind:?}");
         };
         let body: Option<String> = r.try_get("body")?;
-        oldest = Some((ts_s, id));
         msgs.push(Message {
             id: id.to_string(),
             ts: ts_s * 1000,
@@ -699,8 +811,7 @@ async fn irc_messages(
         });
     }
 
-    let next_cursor = oldest.map(|(ts_s, id)| encode_cursor(ts_s, id));
-    Ok((msgs, next_cursor))
+    Ok(Fetched::new(msgs, keys, dir))
 }
 
 #[derive(Serialize)]

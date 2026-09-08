@@ -38,7 +38,7 @@ async function openThread(page: Page, total = 4): Promise<void> {
   await page.route("**/api/me", (r) => r.fulfill({ json: ME }));
   await page.route("**/api/conversations", (r) => r.fulfill({ json: conversations(total) }));
   await page.route("**/api/conversations/**/messages**", (r) =>
-    r.fulfill({ json: { messages: MESSAGES, has_more: false, next_cursor: null } }),
+    r.fulfill({ json: { messages: MESSAGES, has_more: false, next_cursor: null, prev_cursor: null } }),
   );
   await page.goto("/conversation/irc/7");
   await page.locator('.msg[data-id="c"] .body').waitFor();

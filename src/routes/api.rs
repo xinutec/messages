@@ -45,9 +45,18 @@ pub async fn conversations(
 
 #[derive(Deserialize)]
 pub struct MessagesQuery {
-    /// Opaque cursor from a previous page's `next_cursor`; absent → newest page.
+    /// Opaque cursor from a previous page — its `next_cursor` to continue
+    /// backwards, its `prev_cursor` to continue forwards. Absent → newest page.
     cursor: Option<String>,
     limit: Option<i64>,
+    /// `older` (the default) or `newer`.
+    ///
+    /// ⚠ **An unrecognised value is `older`, deliberately.** The alternative — a
+    /// 400 — would make every client that predates #1401 an error the moment it
+    /// sent nothing, and "absent" and "misspelled" are the same state to a query
+    /// string. Reading backwards is what this endpoint did for its whole life,
+    /// so it is the answer that cannot surprise a caller.
+    dir: Option<String>,
 }
 
 /// GET /api/conversations/{origin}/{id}/messages → one page, oldest→newest.
@@ -63,7 +72,11 @@ pub async fn messages(
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
     // A malformed cursor just falls back to the newest page (treated as absent).
     let cursor = q.cursor.as_deref().and_then(archive::parse_cursor);
-    let page = archive::messages_page(&app.pool, origin, &id, cursor, limit).await?;
+    let dir = match q.dir.as_deref() {
+        Some("newer") => archive::PageDir::Newer,
+        _ => archive::PageDir::Older,
+    };
+    let page = archive::messages_page(&app.pool, origin, &id, cursor, limit, dir).await?;
     Ok(Json(page))
 }
 

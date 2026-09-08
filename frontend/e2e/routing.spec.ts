@@ -77,11 +77,11 @@ async function mockApiPaged(page: Page): Promise<void> {
     const cursor = new URL(route.request().url()).searchParams.get("cursor");
     if (cursor) {
       await route.fulfill({
-        json: { messages: bulk("antique", 1000, 30), has_more: false, next_cursor: null },
+        json: { messages: bulk("antique", 1000, 30), has_more: false, next_cursor: null, prev_cursor: null },
       });
     } else {
       await route.fulfill({
-        json: { messages: bulk("fresh", 5000, 30), has_more: true, next_cursor: "5000" },
+        json: { messages: bulk("fresh", 5000, 30), has_more: true, next_cursor: "5000", prev_cursor: null },
       });
     }
   });
@@ -104,7 +104,7 @@ test("scroll position is reflected in ?from", async ({ page }) => {
   await mockApi(page);
   // One tall page (oldest ts = 1000), no older pages.
   await page.route("**/api/conversations/**/messages**", (r) =>
-    r.fulfill({ json: { messages: bulk("only", 1000, 40), has_more: false, next_cursor: null } }),
+    r.fulfill({ json: { messages: bulk("only", 1000, 40), has_more: false, next_cursor: null, prev_cursor: null } }),
   );
   await page.goto("/conversation/signal/dm:a");
   await page.getByText("only39", { exact: true }).waitFor();

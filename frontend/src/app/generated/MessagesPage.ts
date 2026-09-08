@@ -7,6 +7,16 @@ export type MessagesPage = {
  */
 messages: Array<Message>, has_more: boolean, 
 /**
- * Opaque cursor to fetch the next older page; pass back as `?cursor`.
+ * Opaque cursor addressing the page's OLDEST row — where to continue
+ * backwards. Pass back as `?cursor` with `dir=older`.
+ *
+ * ⚠ Named for the direction the reader travels, NOT for the order the page
+ * was fetched in. Both cursors describe the page's own ends, so a forward
+ * page and a backward page over the same rows hand back the same pair.
  */
-next_cursor: string | null, };
+next_cursor: string | null, 
+/**
+ * Opaque cursor addressing the page's NEWEST row — where to continue
+ * forwards. Pass back as `?cursor` with `dir=newer`.
+ */
+prev_cursor: string | null, };

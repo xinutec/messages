@@ -11,8 +11,8 @@
 //! them too. NEVER point it at the real signal DB.
 
 use messages::archive::{
-    self, ConversationKind, MessageKind, Origin, encode_cursor, escape_like, kind_from_is_dm,
-    parse_cursor, us_to_ms,
+    self, ConversationKind, MessageKind, Origin, PageDir, encode_cursor, escape_like,
+    kind_from_is_dm, parse_cursor, us_to_ms,
 };
 
 // ---- pure units (no DB) -----------------------------------------------------
@@ -482,7 +482,7 @@ async fn signal_messages_flags_reactions_and_pagination() {
         return;
     };
 
-    let page = archive::messages_page(&pool, Origin::Signal, "dm:alice", None, 100)
+    let page = archive::messages_page(&pool, Origin::Signal, "dm:alice", None, 100, PageDir::Older)
         .await
         .unwrap();
     let ts: Vec<_> = page.messages.iter().map(|m| m.ts).collect();
@@ -506,9 +506,10 @@ async fn signal_messages_flags_reactions_and_pagination() {
     let mut seen = Vec::new();
     let mut cursor = None;
     loop {
-        let p = archive::messages_page(&pool, Origin::Signal, "dm:alice", cursor, 2)
-            .await
-            .unwrap();
+        let p =
+            archive::messages_page(&pool, Origin::Signal, "dm:alice", cursor, 2, PageDir::Older)
+                .await
+                .unwrap();
         if p.messages.is_empty() {
             break;
         }
@@ -538,7 +539,7 @@ async fn pagination_never_skips_messages_sharing_a_timestamp() {
     let mut seen = Vec::new();
     let mut cursor = None;
     loop {
-        let p = archive::messages_page(&pool, Origin::Signal, "dm:tie", cursor, 2)
+        let p = archive::messages_page(&pool, Origin::Signal, "dm:tie", cursor, 2, PageDir::Older)
             .await
             .unwrap();
         if p.messages.is_empty() {
@@ -560,7 +561,7 @@ async fn signal_attachments_available_flag_and_blob_lookup() {
         return;
     };
 
-    let page = archive::messages_page(&pool, Origin::Signal, "dm:alice", None, 100)
+    let page = archive::messages_page(&pool, Origin::Signal, "dm:alice", None, 100, PageDir::Older)
         .await
         .unwrap();
     let m0 = &page.messages[0]; // ts=1000 'hi'
@@ -604,7 +605,7 @@ async fn gchat_messages_convert_us_and_self() {
         return;
     };
 
-    let page = archive::messages_page(&pool, Origin::Gchat, "gc1", None, 100)
+    let page = archive::messages_page(&pool, Origin::Gchat, "gc1", None, 100, PageDir::Older)
         .await
         .unwrap();
     let ts: Vec<_> = page.messages.iter().map(|m| m.ts).collect();
@@ -765,7 +766,7 @@ async fn irc_page_shows_speech_only_and_marks_actions() {
         .iter()
         .find(|c| c.origin == Origin::Irc && c.name.as_deref() == Some("#chan"))
         .unwrap();
-    let page = archive::messages_page(&pool, Origin::Irc, &chan.id, None, 50)
+    let page = archive::messages_page(&pool, Origin::Irc, &chan.id, None, 50, PageDir::Older)
         .await
         .unwrap();
 
@@ -825,7 +826,7 @@ async fn irc_page_orders_lines_that_share_a_minute() {
     let mut seen = Vec::new();
     let mut cursor = None;
     loop {
-        let page = archive::messages_page(&pool, Origin::Irc, &chan.id, cursor, 1)
+        let page = archive::messages_page(&pool, Origin::Irc, &chan.id, cursor, 1, PageDir::Older)
             .await
             .unwrap();
         let Some(m) = page.messages.first() else {
@@ -1290,14 +1291,146 @@ async fn a_search_hit_carries_a_cursor_the_pager_accepts() {
         // off-by-one here is a cursor pointing one row past where it claims,
         // which shows up as the reader landing next to the message rather than
         // on it.
-        let older =
-            archive::messages_page(&pool, hit.origin, &hit.conversation_id, Some(cursor), 50)
-                .await
-                .unwrap();
+        let older = archive::messages_page(
+            &pool,
+            hit.origin,
+            &hit.conversation_id,
+            Some(cursor),
+            50,
+            PageDir::Older,
+        )
+        .await
+        .unwrap();
         assert!(
             !older.messages.iter().any(|m| m.ts == hit.ts),
             "{:?}: paging older than the hit returned the hit",
             hit.origin
         );
     }
+}
+
+/// **Walking FORWARD returns the same messages as walking back, and no others.**
+///
+/// #1401: the thread's loaded window is anchored to the newest message, so the
+/// only direction it can grow is backwards. Landing on a 2005 search hit needs
+/// the other end — without it the hit is a dead end you can only scroll away
+/// from, which is half a conversation and usually the half being searched for.
+///
+/// The property, rather than a hand-written expected list: read the whole
+/// conversation, then walk it forward two at a time, and the two must agree
+/// message for message. A direction that skips a row, repeats one, or stops
+/// early differs from the whole — and each of those is a real way to get `>` and
+/// `ASC` wrong, where a fixed list catches only the one the author thought of.
+#[tokio::test]
+async fn paging_forward_mirrors_reading_the_whole_conversation() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+
+    // ⚠ `gc1`, not `group:g1` — the latter is a SIGNAL thread. Each origin
+    // spells a conversation id its own way, and picking the wrong one gives an
+    // empty page, which reads as "the fixture is small" rather than as a typo.
+    //
+    // ⚠ **`dm:tie` is the row that makes this test bite.** Its four messages all
+    // share `server_ts = 1500`, so the ONLY thing ordering them is the id
+    // tie-break — which is the half of the comparison a forward query gets wrong
+    // by copying the backward one. Without it, flipping `m.id > ?` to `m.id < ?`
+    // passed: the other conversations have distinct timestamps, so the ts
+    // comparison alone carried the whole walk. Measured, not assumed.
+    for (origin, cid) in [
+        (Origin::Signal, "dm:alice"),
+        (Origin::Signal, "dm:tie"),
+        (Origin::Gchat, "gc1"),
+        (Origin::Irc, "1"),
+    ] {
+        let whole = archive::messages_page(&pool, origin, cid, None, 1000, PageDir::Older)
+            .await
+            .unwrap();
+        // By ID, not by ts. `dm:tie`'s four messages share a timestamp, so a ts
+        // list is [1500, 1500, 1500, 1500] and reads identical however the rows
+        // are ordered — the assertion would hold while the order was wrong.
+        let all: Vec<String> = whole.messages.iter().map(|m| m.id.clone()).collect();
+        assert!(all.len() >= 2, "{origin:?}: fixture too small to page");
+
+        // `next_cursor` of a page that reached the start IS the oldest row, so
+        // it is where a forward walk begins — and that row is behind the walk,
+        // which is why it is seeded by hand rather than fetched.
+        let mut fwd = vec![all[0].clone()];
+        let mut cursor = whole.next_cursor.as_deref().and_then(parse_cursor);
+        while let Some(c) = cursor {
+            // ONE at a time: every step is then a page boundary, which is where
+            // an off-by-one in `>` or a mis-minted `prev_cursor` actually lives.
+            let p = archive::messages_page(&pool, origin, cid, Some(c), 1, PageDir::Newer)
+                .await
+                .unwrap();
+            if p.messages.is_empty() {
+                break;
+            }
+            fwd.extend(p.messages.iter().map(|m| m.id.clone()));
+            if !p.has_more {
+                break;
+            }
+            cursor = p.prev_cursor.as_deref().and_then(parse_cursor);
+        }
+
+        assert_eq!(fwd, all, "{origin:?}: forward walk differs from the whole");
+    }
+}
+
+/// Both ends, on one page. `next_cursor` addresses the OLDEST row and
+/// `prev_cursor` the NEWEST, whichever way the page was fetched — a window that
+/// can grow in two directions needs a handle on each, and a `prev_cursor` that
+/// silently tracked the fetch direction instead of the page would send a
+/// forward scroll backwards.
+#[tokio::test]
+async fn a_page_addresses_both_of_its_ends() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+
+    let whole = archive::messages_page(
+        &pool,
+        Origin::Signal,
+        "dm:alice",
+        None,
+        1000,
+        PageDir::Older,
+    )
+    .await
+    .unwrap();
+    let oldest = parse_cursor(whole.next_cursor.as_deref().unwrap()).unwrap();
+    let newest = parse_cursor(whole.prev_cursor.as_deref().unwrap()).unwrap();
+    assert!(oldest.0 < newest.0, "the two ends are not the same row");
+
+    // Older than the oldest is the start of the conversation: nothing before it.
+    let before = archive::messages_page(
+        &pool,
+        Origin::Signal,
+        "dm:alice",
+        Some(oldest),
+        10,
+        PageDir::Older,
+    )
+    .await
+    .unwrap();
+    assert!(
+        before.messages.is_empty(),
+        "nothing precedes the first message"
+    );
+
+    // Newer than the newest is the present: nothing after it either.
+    let after = archive::messages_page(
+        &pool,
+        Origin::Signal,
+        "dm:alice",
+        Some(newest),
+        10,
+        PageDir::Newer,
+    )
+    .await
+    .unwrap();
+    assert!(
+        after.messages.is_empty(),
+        "nothing follows the last message"
+    );
 }

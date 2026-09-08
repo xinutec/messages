@@ -80,7 +80,7 @@ test("favicon is linked and served", async ({ page }) => {
 test("message bubbles are not content-visibility:auto (would jump on scroll-up)", async ({ page }) => {
   await mockApi(page);
   await page.route("**/api/conversations/**/messages**", (r) =>
-    r.fulfill({ json: { messages: multiDayThread(), has_more: false, next_cursor: null } }),
+    r.fulfill({ json: { messages: multiDayThread(), has_more: false, next_cursor: null, prev_cursor: null } }),
   );
   await page.goto("/conversation/signal/dm:a");
   await page.locator(".msg").first().waitFor();
@@ -95,7 +95,7 @@ test("message bubbles are not content-visibility:auto (would jump on scroll-up)"
 test("a scrolled multi-day thread does not stack date separators", async ({ page }, testInfo) => {
   await mockApi(page);
   await page.route("**/api/conversations/**/messages**", (r) =>
-    r.fulfill({ json: { messages: multiDayThread(), has_more: false, next_cursor: null } }),
+    r.fulfill({ json: { messages: multiDayThread(), has_more: false, next_cursor: null, prev_cursor: null } }),
   );
   await page.goto("/conversation/signal/dm:a");
   await page.getByText("msg 1-24", { exact: true }).waitFor();
@@ -112,7 +112,7 @@ test("a scrolled multi-day thread does not stack date separators", async ({ page
 test("the current day's date stays pinned at the top while scrolling", async ({ page }) => {
   await mockApi(page);
   await page.route("**/api/conversations/**/messages**", (r) =>
-    r.fulfill({ json: { messages: multiDayThread(), has_more: false, next_cursor: null } }),
+    r.fulfill({ json: { messages: multiDayThread(), has_more: false, next_cursor: null, prev_cursor: null } }),
   );
   await page.goto("/conversation/signal/dm:a");
   await page.getByText("msg 0-0", { exact: true }).waitFor();
