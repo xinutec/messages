@@ -49,7 +49,12 @@ pub struct MessagesQuery {
     /// backwards, its `prev_cursor` to continue forwards. Absent → newest page.
     cursor: Option<String>,
     limit: Option<i64>,
-    /// `older` (the default) or `newer`.
+    /// `older` (the default), `newer`, or `at`.
+    ///
+    /// `newer` is strictly after the cursor — what scrolling forward wants,
+    /// since the caller already holds that row. `at` INCLUDES it, which is what
+    /// a landing wants: composed of `older` + `newer`, a landing skipped the
+    /// very message it was aimed at.
     ///
     /// ⚠ **An unrecognised value is `older`, deliberately.** The alternative — a
     /// 400 — would make every client that predates #1401 an error the moment it
@@ -74,6 +79,7 @@ pub async fn messages(
     let cursor = q.cursor.as_deref().and_then(archive::parse_cursor);
     let dir = match q.dir.as_deref() {
         Some("newer") => archive::PageDir::Newer,
+        Some("at") => archive::PageDir::AtAndNewer,
         _ => archive::PageDir::Older,
     };
     let page = archive::messages_page(&app.pool, origin, &id, cursor, limit, dir).await?;

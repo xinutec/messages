@@ -239,16 +239,18 @@ export class Thread {
    *  puts the hit at the newest end with nothing after it, and a message
    *  without the reply to it is usually the half somebody was searching for.
    *
-   *  ⚠ The newer half INCLUDES the hit, because the backend's `newer` is
-   *  strictly after its cursor and the hit's own cursor addresses the hit. So
-   *  the older half is everything strictly before, and the two concatenate
-   *  without a gap and without a duplicate.
+   *  ⚠ **The forward half is `at`, NOT `newer`.** Both `older` and `newer` are
+   *  STRICT, so a landing built from the pair skipped the very row it was aimed
+   *  at: the reader was put one message past the hit, and the marker naming
+   *  "the message you searched for" pointed at its neighbour. Shipped that way
+   *  on 2026-09-08 and found by looking at a phone. `at` includes the cursor's
+   *  own row, so the two halves concatenate with no gap and no duplicate.
    */
   private async loadAround(origin: Origin, id: string, at: string): Promise<boolean> {
     const half = Math.floor(PAGE / 2);
     const [older, newer] = await Promise.all([
       firstValueFrom(this.api.messages(origin, id, at, half, 'older')),
-      firstValueFrom(this.api.messages(origin, id, at, half, 'newer')),
+      firstValueFrom(this.api.messages(origin, id, at, half, 'at')),
     ]);
 
     // ⚠ **DO THE TWO HALVES ACTUALLY MEET?** The server treats a cursor it

@@ -652,7 +652,12 @@ describe('landing on a search hit', () => {
         // Older-half: the two before the hit. Newer-half: the hit and the two
         // after it, which is what makes the landing readable in both
         // directions rather than an end with nothing past it.
-        return dir === 'newer'
+        // ⚠ `at`, not `newer`. A landing asks for the INCLUSIVE direction; a
+        // mock that answered `newer` was standing in for a backend that
+        // included the hit, which is what the author believed and not what the
+        // code did — and that belief passing as a test is how the skipped-hit
+        // bug reached a phone.
+        return dir === 'at'
           ? page([msg('h', 5000), msg('n1', 6000), msg('n2', 7000)], newerHasMore, 'newer-c')
           : page([msg('o1', 3000), msg('o2', 4000)], true, 'older-c');
       },
@@ -669,7 +674,8 @@ describe('landing on a search hit', () => {
     const { calls } = await openAt('5000_9');
     // Not the newest page. Opening at the end is what the bug was.
     expect(calls.every((c) => c.cursor === '5000_9')).toBe(true);
-    expect(calls.map((c) => c.dir).sort()).toEqual(['newer', 'older']);
+    // `at`, not `newer` — the forward half of a landing must INCLUDE the hit.
+    expect(calls.map((c) => c.dir).sort()).toEqual(['at', 'older']);
   });
 
   it('holds the hit with context after it, not only before it', async () => {
@@ -738,7 +744,7 @@ describe('landing again without changing conversation', () => {
     const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
     let loads = 0;
     api.messages.mockImplementation((_o: unknown, _i: unknown, _c?: string, _l?: number, dir?: string) => {
-      if (dir === 'newer') loads++;
+      if (dir === 'at') loads++;
       return page([msg('h', 5000)], true, 'c');
     });
     fixture.componentRef.setInput('origin', 'irc');
@@ -787,19 +793,21 @@ describe('growing a landing forwards', () => {
     api.messages.mockImplementation(
       (_o: unknown, _i: unknown, _c?: string, _l?: number, dir?: string) => {
         dirs.push(dir);
+        // THREE directions, and the landing's is `at` — inclusive of the hit.
+        //
         // ⚠ The older half is exhausted ON PURPOSE. Every rect is zero in
         // jsdom, so `step()` reports the viewport as at BOTH edges at once and
-        // `onScroll` would take the backward path as well — the assertions
-        // below then measure `fetchOlder` instead of `fetchNewer`, and read as
-        // the forward fetch appending in the wrong place. `has_more: false`
-        // makes `fetchOlder` return at its guard, leaving one path under test.
-        if (dir !== 'newer') return page([msg('o1', 3000)], false, null);
+        // `onScroll` would take the backward path as well, leaving these
+        // assertions measuring `fetchOlder`. `has_more: false` retires it.
+        if (dir === 'older') return page([msg('o1', 3000)], false, null);
+        // `newerPages[0]` opens the landing (it contains the hit); the rest are
+        // what scrolling forward fetches. ⚠ `prev_cursor` is what `fetchNewer`
+        // continues from — left null, the helper's default, it returns at its
+        // guard and the fetch never happens, which reads as the append being
+        // wrong rather than absent.
         const batch = newerPages[n] ?? [];
         const more = n < newerPages.length - 1;
         n++;
-        // ⚠ `prev_cursor` is what `fetchNewer` continues from. Left null — the
-        // helper's default — it returns at its guard and the fetch never
-        // happens, which reads as the append being wrong rather than absent.
         return page(batch, more, null, 'newer-c');
       },
     );
@@ -879,7 +887,7 @@ describe('landing with a cursor the server could not read', () => {
     api.messages.mockImplementation(
       (_o: unknown, _i: unknown, cursor?: string, _l?: number, dir?: string) => {
         // What the server really does with an unreadable cursor.
-        if (dir === 'newer') return page([msg('oldest', 1000)], true, null, 'c');
+        if (dir === 'at') return page([msg('oldest', 1000)], true, null, 'c');
         if (dir === 'older') return page([msg('newest', 9_000_000)], true, 'c');
         return page([msg('newest', 9_000_000)], true, 'c');
       },
@@ -927,7 +935,7 @@ describe('marking the message that was landed on', () => {
     const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
     api.messages.mockImplementation(
       (_o: unknown, _i: unknown, _c?: string, _l?: number, dir?: string) =>
-        dir === 'newer'
+        dir === 'at'
           ? page([msg('h', 5000), msg('n1', 6000)], true, null, 'c')
           : page([msg('o1', 4000)], true, 'older-c'),
     );

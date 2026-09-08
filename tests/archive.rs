@@ -1434,3 +1434,72 @@ async fn a_page_addresses_both_of_its_ends() {
         "nothing follows the last message"
     );
 }
+
+/// **A landing must contain the message it landed on.**
+///
+/// ⚠ THE BUG THIS EXISTS FOR, shipped 2026-09-08 and found by looking at a real
+/// phone. `messages_page` is strict in BOTH directions — `Older` is `< cursor`
+/// and `Newer` is `> cursor` — so a landing composed of one of each skipped the
+/// row the cursor addresses. The reader was put one message PAST the hit, and
+/// the marker naming "the message you searched for" pointed at its neighbour.
+///
+/// Nothing caught it. The backend tests were right about each direction on its
+/// own; the frontend test mocked a backend whose forward half included the hit,
+/// which is what the author believed and not what the code did. A belief written
+/// into a mock cannot be contradicted by the thing it stands for — so the
+/// contract needs a test on THIS side, where both halves are real.
+#[tokio::test]
+async fn a_landing_contains_the_message_it_landed_on() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+
+    for hit in archive::search(&pool, "findme", 50).await.unwrap() {
+        let cursor = parse_cursor(&hit.cursor).expect("a parseable cursor");
+        let older = archive::messages_page(
+            &pool,
+            hit.origin,
+            &hit.conversation_id,
+            Some(cursor),
+            25,
+            PageDir::Older,
+        )
+        .await
+        .unwrap();
+        let newer = archive::messages_page(
+            &pool,
+            hit.origin,
+            &hit.conversation_id,
+            Some(cursor),
+            25,
+            PageDir::AtAndNewer,
+        )
+        .await
+        .unwrap();
+
+        // ⚠ By ID, not by ts. IRC records whole SECONDS — irssi's default format
+        // has no seconds at all — so several rows share a timestamp and a ts
+        // comparison cannot name a row: the first version of this assertion
+        // counted three "occurrences" of a hit that appeared once.
+        let want = cursor.1.to_string();
+        let landed: Vec<&str> = older
+            .messages
+            .iter()
+            .chain(newer.messages.iter())
+            .map(|m| m.id.as_str())
+            .collect();
+        assert!(
+            landed.contains(&want.as_str()),
+            "{:?}: the landing is missing the hit (row {want}) — loaded {landed:?}",
+            hit.origin
+        );
+        // And exactly once: two inclusive halves would draw the message twice,
+        // which reads as the archive repeating itself.
+        assert_eq!(
+            landed.iter().filter(|&&i| i == want).count(),
+            1,
+            "{:?}: the hit appears more than once",
+            hit.origin
+        );
+    }
+}

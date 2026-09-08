@@ -254,9 +254,17 @@ pub enum PageDir {
     /// until #1401, because the thread's window was anchored to the newest
     /// message and could only grow one way.
     Older,
-    /// Forward in time, strictly after the cursor. What landing on an old search
-    /// hit needs: without it the hit is somewhere you can only scroll away from.
+    /// Forward in time, strictly after the cursor. What SCROLLING forward needs:
+    /// the caller already holds the row the cursor names.
     Newer,
+    /// The cursor's own row, and forward from there. What LANDING needs.
+    ///
+    /// ⚠ **Both other directions are strict, so a landing built from `Older` +
+    /// `Newer` skips the row it is aimed at.** Shipped that way on 2026-09-08
+    /// and found on a phone: the reader was put one message past the hit and the
+    /// marker naming "the message you searched for" pointed at its neighbour.
+    /// The two halves must meet AND overlap by exactly the one row between them.
+    AtAndNewer,
 }
 
 #[derive(Serialize)]
@@ -514,6 +522,18 @@ async fn signal_messages(
           ORDER BY m.server_ts ASC, m.id ASC
           LIMIT ?"
         }
+        PageDir::AtAndNewer => {
+            r"SELECT m.id AS id, m.server_ts AS ts,
+                 COALESCE(ct.profile_name, m.sender_uuid) AS sender,
+                 m.is_outgoing AS is_outgoing, m.body AS body,
+                 m.deleted AS deleted, m.edited AS edited
+          FROM messages m
+          LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
+          WHERE m.thread_id = ?
+            AND (? IS NULL OR m.server_ts > ? OR (m.server_ts = ? AND m.id >= ?))
+          ORDER BY m.server_ts ASC, m.id ASC
+          LIMIT ?"
+        }
     };
     // Nothing is BUILT here. The rule guards against constructed SQL, and a
     // match over two constants keeps every property it is guarding; the reason
@@ -648,6 +668,15 @@ async fn gchat_messages(
           ORDER BY m.ts_us ASC, m.id ASC
           LIMIT ?"
         }
+        PageDir::AtAndNewer => {
+            r"SELECT m.id AS id, m.ts_us AS ts_us, m.sender_name AS sender,
+                 m.is_self AS is_self, m.text AS body
+          FROM gchat_messages m
+          WHERE m.group_id = ?
+            AND (? IS NULL OR m.ts_us > ? OR (m.ts_us = ? AND m.id >= ?))
+          ORDER BY m.ts_us ASC, m.id ASC
+          LIMIT ?"
+        }
     };
     // Nothing is BUILT here. The rule guards against constructed SQL, and a
     // match over two constants keeps every property it is guarding; the reason
@@ -761,6 +790,20 @@ async fn irc_messages(
                  OR TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) > ?
                  OR (TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) = ?
                      AND m.id > ?))
+          ORDER BY ts_s ASC, m.id ASC
+          LIMIT ?"
+        }
+        PageDir::AtAndNewer => {
+            r"SELECT m.id AS id,
+                 TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) AS ts_s,
+                 m.nick AS sender, m.is_self AS is_self, m.text AS body, m.kind AS kind
+          FROM irc_messages m
+          WHERE m.conversation_id = ?
+            AND m.kind IN ('message', 'action')
+            AND (? IS NULL
+                 OR TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) > ?
+                 OR (TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) = ?
+                     AND m.id >= ?))
           ORDER BY ts_s ASC, m.id ASC
           LIMIT ?"
         }

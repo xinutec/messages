@@ -161,7 +161,10 @@ test("scrolling to the bottom of a landing fetches forwards", async ({ page }) =
   let forwardPages = 0;
   await page.route("**/api/conversations/**/messages**", async (route) => {
     const q = new URL(route.request().url()).searchParams;
-    if (q.get("dir") === "newer") {
+    // ⚠ `at` opens the landing (inclusive of the hit) and `newer` grows it.
+    // Both are counted: the first call is the landing, so a second one is proof
+    // the scroll fetched forward.
+    if (q.get("dir") === "newer" || q.get("dir") === "at") {
       const n = forwardPages++;
       await route.fulfill({
         json: {

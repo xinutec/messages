@@ -29,16 +29,22 @@ export class MessagesApi {
 
   /** One page of a conversation.
    *
-   *  `dir` says which way the page runs from `cursor`: `older` (the default,
-   *  and what the whole app did before #1401) or `newer`. Landing on a search
-   *  hit needs both — a page fetched only backwards puts the hit at the newest
-   *  end with nothing after it, which is half a conversation. */
+   *  `dir` says which way the page runs from `cursor`:
+   *
+   *  - `older` (the default, and what the whole app did before #1401)
+   *  - `newer` — STRICTLY after the cursor, for scrolling forward, where the
+   *    caller already holds that row;
+   *  - `at` — the cursor's own row and forward, for a LANDING.
+   *
+   *  ⚠ The last distinction is not pedantry. A landing built from `older` +
+   *  `newer` skips the row it is aimed at, because both are strict; that
+   *  shipped on 2026-09-08 and put the reader one message past the hit. */
   messages(
     origin: Origin,
     id: string,
     cursor?: string,
     limit = 100,
-    dir?: 'older' | 'newer',
+    dir?: 'older' | 'newer' | 'at',
   ): Observable<MessagesPage> {
     const params: Record<string, string> = { limit: String(limit) };
     if (cursor != null) params['cursor'] = cursor;
