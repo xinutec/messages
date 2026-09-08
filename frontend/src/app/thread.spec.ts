@@ -39,8 +39,13 @@ function setup(): { thread: Thread; ref: ComponentRef<Thread>; fixture: Componen
   return { thread: fixture.componentInstance, ref: fixture.componentRef, fixture, router: TestBed.inject(Router) };
 }
 
-function page(messages: Message[], has_more = false, next_cursor: string | null = null): Observable<MessagesPage> {
-  return of({ messages, has_more, next_cursor, prev_cursor: null });
+function page(
+  messages: Message[],
+  has_more = false,
+  next_cursor: string | null = null,
+  prev_cursor: string | null = null,
+): Observable<MessagesPage> {
+  return of({ messages, has_more, next_cursor, prev_cursor });
 }
 
 /** A thread routed to an IRC conversation and settled on `held`.
@@ -747,5 +752,97 @@ describe('landing again without changing conversation', () => {
     qp.next(convertToParamMap({ at: '9000_11' }));
     for (let i = 0; i < 40 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
     expect(loads).toBe(2);
+  });
+});
+
+/** Scrolling FORWARD off a landing — the other half of #1401.
+ *
+ *  Before this the window could only grow backwards: the sole route by which
+ *  newer messages reached a thread was `pollNewer` asking for the newest page.
+ *  A reader put on a 2005 hit could scroll back for ever and not forward one
+ *  line, so the hit was a dead end. */
+describe('growing a landing forwards', () => {
+  async function landed(newerPages: Message[][]): Promise<{
+    thread: Thread;
+    dirs: (string | undefined)[];
+  }> {
+    TestBed.configureTestingModule({
+      providers: [
+        provideZonelessChangeDetection(),
+        provideRouter([]),
+        { provide: MessagesApi, useValue: makeApi() },
+        {
+          provide: ActivatedRoute,
+          useValue: {
+            snapshot: { queryParamMap: convertToParamMap({ at: '5000_9' }) },
+            queryParamMap: of(convertToParamMap({ at: '5000_9' })),
+          },
+        },
+      ],
+    });
+    const fixture = TestBed.createComponent(Thread);
+    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    const dirs: (string | undefined)[] = [];
+    let n = 0;
+    api.messages.mockImplementation(
+      (_o: unknown, _i: unknown, _c?: string, _l?: number, dir?: string) => {
+        dirs.push(dir);
+        // ⚠ The older half is exhausted ON PURPOSE. Every rect is zero in
+        // jsdom, so `step()` reports the viewport as at BOTH edges at once and
+        // `onScroll` would take the backward path as well — the assertions
+        // below then measure `fetchOlder` instead of `fetchNewer`, and read as
+        // the forward fetch appending in the wrong place. `has_more: false`
+        // makes `fetchOlder` return at its guard, leaving one path under test.
+        if (dir !== 'newer') return page([msg('o1', 3000)], false, null);
+        const batch = newerPages[n] ?? [];
+        const more = n < newerPages.length - 1;
+        n++;
+        // ⚠ `prev_cursor` is what `fetchNewer` continues from. Left null — the
+        // helper's default — it returns at its guard and the fetch never
+        // happens, which reads as the append being wrong rather than absent.
+        return page(batch, more, null, 'newer-c');
+      },
+    );
+    fixture.componentRef.setInput('origin', 'irc');
+    fixture.componentRef.setInput('id', '7');
+    fixture.detectChanges();
+    const thread = fixture.componentInstance;
+    for (let i = 0; i < 40 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    // The message block is a viewChild, and `step()` returns "nothing needed"
+    // when it has not been rendered — so without this the scroll below measures
+    // an engine that declined to look.
+    fixture.detectChanges();
+    return { thread, dirs };
+  }
+
+  it('fetches forwards and appends, keeping order', async () => {
+    const { thread } = await landed([[msg('h', 5000)], [msg('n1', 6000)]]);
+    expect(thread.floating()).toBe(true);
+    thread.fetchNewer();
+    for (let i = 0; i < 20 && thread.loadingNewer(); i++) await new Promise((r) => setTimeout(r, 0));
+    expect(thread.messages().map((m) => m.id)).toEqual(['o1', 'h', 'n1']);
+  });
+
+  /** ⚠ **Running out is how a landing rejoins the present**, and this is the
+   *  test that says so. `floating` suppresses `pollNewer`; a reader who scrolled
+   *  all the way forward would otherwise sit at the live end of the
+   *  conversation and never see another message arrive — a stranger failure
+   *  than the one #1401 is about, and one nothing on screen would explain. */
+  it('rejoins the present once the forward pages run out', async () => {
+    const { thread } = await landed([[msg('h', 5000)], [msg('n1', 6000)]]);
+    thread.fetchNewer();
+    for (let i = 0; i < 20 && thread.loadingNewer(); i++) await new Promise((r) => setTimeout(r, 0));
+    expect(thread.floating()).toBe(false);
+  });
+
+  /** A window anchored to the present has nothing to fetch forwards, and asking
+   *  would be a request per scroll that can only ever answer "nothing". */
+  it('does not fetch forwards when it is not floating', async () => {
+    const { thread, dirs } = await landed([[msg('h', 5000)]]);
+    expect(thread.floating()).toBe(false);
+    const before = dirs.filter((d) => d === 'newer').length;
+    thread.fetchNewer();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(dirs.filter((d) => d === 'newer').length).toBe(before);
   });
 });

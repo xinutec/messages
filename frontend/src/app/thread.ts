@@ -118,6 +118,7 @@ export class Thread {
 
   readonly loadingThread = signal(false);
   readonly loadingOlder = signal(false);
+  readonly loadingNewer = signal(false);
   readonly hasMore = signal(false);
   readonly threadError = signal(false);
   /** Where to continue BACKWARDS — the oldest loaded row. */
@@ -584,7 +585,9 @@ export class Thread {
    *  messages come from. */
   onScroll(): void {
     if (this.win.busy || this.loadingThread() || this.threadError() || !this.routed()) return;
-    if (this.win.step().needOlder) this.fetchOlder();
+    const { needOlder, needNewer } = this.win.step();
+    if (needOlder) this.fetchOlder();
+    if (needNewer) this.fetchNewer();
     this.scheduleFromParam();
   }
 
@@ -608,6 +611,45 @@ export class Thread {
         this.scheduleFromParam();
       },
       error: () => this.loadingOlder.set(false),
+    });
+  }
+
+  /** Grow the window FORWARDS — the other half of #1401.
+   *
+   *  ⚠ **Running out is how a landing rejoins the present.** When the forward
+   *  page reports no more, everything after the hit is loaded, so the window is
+   *  anchored to the newest message again: `floating` goes false and `pollNewer`
+   *  resumes. Without that a reader who scrolled all the way forward would sit
+   *  at the live end of the conversation and never see another message arrive,
+   *  which is a stranger failure than the one this fixes. */
+  fetchNewer(): void {
+    const o = this.origin();
+    const i = this.id();
+    // ⚠ **`floating` is checked HERE rather than at the scroll site**, and not
+    // only for tidiness: jsdom has no layout, so `step()` reports every rect as
+    // zero and a unit test driving `onScroll` measures a fake — the engine's own
+    // spec says so and keeps the measuring half in the browser suite. A guard
+    // that lives with the thing it guards can be tested without layout at all.
+    //
+    // A window anchored to the present has nothing to fetch forwards, and
+    // asking would be a request per scroll that can only ever answer "nothing".
+    if (o == null || i == null || !this.floating()) return;
+    if (this.newerCursor == null || this.loadingNewer()) return;
+    this.loadingNewer.set(true);
+    this.api.messages(o, i, this.newerCursor, PAGE, 'newer').subscribe({
+      next: (page) => {
+        // Append. The anchor holds the viewport on the same message despite the
+        // added height below it — the same reason `fetchOlder` keeps one.
+        this.win.keepingAnchor('fetchNewer', () => {
+          this.messages.update((cur) => [...cur, ...page.messages]);
+          this.newerCursor = page.prev_cursor;
+          this.floating.set(page.has_more);
+          this.loadingNewer.set(false);
+        });
+        this.win.enforceMax('top');
+        this.scheduleFromParam();
+      },
+      error: () => this.loadingNewer.set(false),
     });
   }
 

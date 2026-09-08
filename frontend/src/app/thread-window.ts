@@ -120,12 +120,12 @@ export class ThreadWindow {
    *  Returns whether the top edge is close AND nothing is left collapsed above
    *  it — which is the caller's cue to fetch an older page, the one thing here
    *  that needs to know where messages come from. */
-  step(): { needOlder: boolean } {
+  step(): { needOlder: boolean; needNewer: boolean } {
     // A genuine user scroll means "I'm looking around" — stop auto-pinning to
     // the bottom.
     this.pinToken++;
     const el = this.container();
-    if (!el) return { needOlder: false };
+    if (!el) return { needOlder: false, needNewer: false };
     if (this.dbg) this.detectJump();
 
     // Proximity to the message block's edges, measured from viewport rects (the
@@ -136,6 +136,7 @@ export class ThreadWindow {
     const nearBottom = elRect.bottom - hostRect.bottom <= EDGE;
 
     let needOlder = false;
+    let needNewer = false;
     if (nearTop) {
       if (this.above().length) {
         this.revealTop();
@@ -144,9 +145,23 @@ export class ThreadWindow {
         needOlder = true;
       }
     }
-    if (nearBottom && this.below().length) {
-      this.revealBottom();
-      this.enforceMax('top');
+    // ⚠ **THE MIRROR OF `needOlder`, and it did not exist until #1401.** The
+    // window could only ever grow backwards, because the only route by which
+    // newer messages reached the thread was `pollNewer` asking for the NEWEST
+    // page. That is fine for a window anchored to the present and useless for
+    // one that is not: a reader landed on a 2005 search hit could scroll back
+    // for ever and not forward one line.
+    //
+    // Same shape as the top: reveal what is collapsed below if there is any,
+    // and otherwise say that something has to be fetched. Who fetches it is not
+    // this engine's business — it does not know where messages come from.
+    if (nearBottom) {
+      if (this.below().length) {
+        this.revealBottom();
+        this.enforceMax('top');
+      } else {
+        needNewer = true;
+      }
     }
     // Re-baseline after any windowing so the next jump check compares like
     // frames (a windowing step legitimately re-anchors; that isn't a jump).
@@ -154,7 +169,7 @@ export class ThreadWindow {
       this.lastAnchor = this.topAnchor();
       this.lastScrollTop = this.host.scrollTop;
     }
-    return { needOlder };
+    return { needOlder, needNewer };
   }
 
   /** At the end of the conversation: nothing collapsed below, and within a few

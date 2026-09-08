@@ -122,3 +122,95 @@ test("opening a long conversation lands at the latest message", async ({ page })
     .evaluate((el) => el.getBoundingClientRect().bottom < 0);
   expect(firstAboveViewport).toBe(true);
 });
+
+/**
+ * Scrolling FORWARD off a search landing — #1401's other half, and the half
+ * jsdom cannot see.
+ *
+ * `ThreadWindow.step()` decides `needNewer` from viewport rects. In jsdom every
+ * rect is zero, so a unit test driving `onScroll` measures a fake — this file's
+ * sibling `thread-window.spec.ts` says so and keeps the measuring half here.
+ * `thread.spec.ts` covers what `fetchNewer` DOES once called; this covers the
+ * one thing only a real browser can answer: that scrolling to the bottom of a
+ * floating window calls it at all.
+ *
+ * Before #1401 the window could only grow backwards — the sole route by which
+ * newer messages reached a thread was `pollNewer` asking for the newest page —
+ * so a reader landed on an old hit could scroll back for ever and not forward
+ * one line.
+ */
+function pageAt(prefix: string, startTs: number, n: number) {
+  return Array.from({ length: n }, (_, k) => ({
+    id: `${prefix}${k}`,
+    ts: startTs + k * 60_000,
+    sender: "Alice",
+    is_outgoing: false,
+    body: k % 3 === 0 ? `${prefix}${k} — ${LOREM}` : `${prefix}${k}`,
+    deleted: false,
+    edited: false,
+    reactions: [],
+    attachments: [],
+  }));
+}
+
+test("scrolling to the bottom of a landing fetches forwards", async ({ page }) => {
+  const HIT = Date.UTC(2005, 5, 1, 12, 0, 0);
+  await page.route("**/api/**", (r) => r.fulfill({ status: 204, body: "" }));
+  await page.route("**/api/me", (r) => r.fulfill({ json: ME }));
+  await page.route("**/api/conversations", (r) => r.fulfill({ json: CONVERSATIONS }));
+  let forwardPages = 0;
+  await page.route("**/api/conversations/**/messages**", async (route) => {
+    const q = new URL(route.request().url()).searchParams;
+    if (q.get("dir") === "newer") {
+      const n = forwardPages++;
+      await route.fulfill({
+        json: {
+          messages: pageAt(`fwd${n}_`, HIT + n * 3_600_000, 50),
+          // More forward history: the window stays floating, so a second
+          // scroll to the bottom must be able to ask again.
+          has_more: true,
+          next_cursor: null,
+          prev_cursor: `c${n}`,
+        },
+      });
+    } else {
+      await route.fulfill({
+        json: { messages: pageAt("old", HIT - 3_600_000, 50), has_more: true, next_cursor: "older-c", prev_cursor: null },
+      });
+    }
+  });
+
+  await page.goto("/conversation/signal/dm:a?at=1117627200000_9");
+  await expect(page.locator('[data-id="fwd0_0"]')).toBeAttached();
+  expect(forwardPages).toBe(1);
+
+  // Drive the real thing: scroll the host to its bottom and let the engine
+  // decide. Nothing here calls fetchNewer. `.thread` IS the scroll container —
+  // the component sets it as its own host class and binds `(scroll)` there.
+  //
+  // ⚠ **UP, THEN DOWN, REPEATEDLY — and each half is load-bearing.** `step()`
+  // reveals what the window collapsed below before it asks for more, exactly as
+  // the top does, so the first arrival at the bottom spends itself on the
+  // reveal. And a second `scrollTop = scrollHeight` from a position already at
+  // the bottom assigns the same value, which fires NO scroll event at all:
+  // measured here, ten assignments produced one event. Backing off first is
+  // what makes the next arrival a real one.
+  await expect
+    .poll(
+      async () => {
+        await page.evaluate(() => {
+          const t = document.querySelector(".thread");
+          if (!t) return;
+          t.scrollTop = Math.max(0, t.scrollTop - 400);
+        });
+        await page.waitForTimeout(30);
+        await page.evaluate(() => {
+          const t = document.querySelector(".thread");
+          if (t) t.scrollTop = t.scrollHeight;
+        });
+        return forwardPages;
+      },
+      { timeout: 15_000, intervals: Array<number>(50).fill(150) },
+    )
+    .toBeGreaterThan(1);
+});
