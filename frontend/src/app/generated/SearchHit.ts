@@ -6,4 +6,16 @@ export type SearchHit = { origin: Origin, conversation_id: string, conversation_
  * The message was retracted. The snippet still carries its text; the reader
  * hides it behind a click, exactly as a thread hides a deleted body.
  */
-deleted: boolean, };
+deleted: boolean, 
+/**
+ * WHERE the hit is, in the same opaque form the pager already speaks —
+ * [`encode_cursor`] over this origin's NATIVE `(ts, id)`.
+ *
+ * ⚠ Not `ts`. A hit's `ts` is normalised to milliseconds for display, and
+ * milliseconds cannot address a Google Chat row (µs) or separate two IRC
+ * lines in one second — which is most of them, since irssi's default
+ * `timestamp_format` records no seconds at all. Nor a bare row id, which is
+ * meaningless without the ts it tie-breaks. This is the pair, and
+ * `messages_page` takes it unchanged.
+ */
+cursor: string, };

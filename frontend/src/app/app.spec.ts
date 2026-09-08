@@ -112,7 +112,7 @@ describe('App', () => {
   it('openHit routes to the conversation a search hit belongs to', () => {
     const { app, router } = setup(makeApi());
     const nav = vi.spyOn(router, 'navigate').mockResolvedValue(true);
-    app.openHit({ origin: 'gchat', conversation_id: 'gc1', conversation_name: 'Bob', ts: 1, sender: 's', snippet: 'x', deleted: false });
+    app.openHit({ origin: 'gchat', conversation_id: 'gc1', conversation_name: 'Bob', ts: 1, sender: 's', snippet: 'x', deleted: false, cursor: '1_1' });
     expect(nav).toHaveBeenCalledWith(['/conversation', 'gchat', 'gc1'], expect.objectContaining({ queryParams: { from: null } }));
   });
 
@@ -129,7 +129,7 @@ describe('App', () => {
     const { app, router } = setup(makeApi({ conversations }));
     expect(app.conversations()).toEqual([]); // the precondition, not an assumption
     const nav = vi.spyOn(router, 'navigate').mockResolvedValue(true);
-    app.openHit({ origin: 'irc', conversation_id: '7', conversation_name: '#chan', ts: 1, sender: 's', snippet: 'x', deleted: false });
+    app.openHit({ origin: 'irc', conversation_id: '7', conversation_name: '#chan', ts: 1, sender: 's', snippet: 'x', deleted: false, cursor: '1_1' });
     expect(nav).toHaveBeenCalledWith(['/conversation', 'irc', '7'], expect.objectContaining({ queryParams: { from: null } }));
   });
 
@@ -142,7 +142,7 @@ describe('App', () => {
    *  `||` passed it through, so a hit rendered as a blank title. */
   it('names a hit the way the conversation list names it', () => {
     const { app } = setup(makeApi());
-    const hit = { origin: 'signal' as const, conversation_id: 'dm:a', conversation_name: null, ts: 1, sender: 's', snippet: 'x', deleted: false };
+    const hit = { origin: 'signal' as const, conversation_id: 'dm:a', conversation_name: null, ts: 1, sender: 's', snippet: 'x', deleted: false, cursor: '1_1' };
     // The list holds `dm:a` as a named dm, so both readers say "Alice" — even
     // though the hit itself carries no name at all.
     expect(app.hitTitle(hit)).toBe('Alice');
@@ -157,7 +157,7 @@ describe('App', () => {
    *  same contact's name. */
   it('says which archive and which network a hit came from', () => {
     const { app } = setup(makeApi({ conversations: vi.fn(() => of(TWO_NETWORKS)) }));
-    const hit = { conversation_name: 's_20', ts: 1, sender: 's', snippet: 'x', deleted: false };
+    const hit = { conversation_name: 's_20', ts: 1, sender: 's', snippet: 'x', deleted: false, cursor: '1_1' };
     expect(app.hitOrigin({ ...hit, origin: 'irc', conversation_id: '8' })).toBe('IRC xinutec');
     expect(app.hitOrigin({ ...hit, origin: 'irc', conversation_id: '9' })).toBe('IRC euirc');
     // No network to add, and none invented: Signal and Google Chat have none.
@@ -167,7 +167,7 @@ describe('App', () => {
   });
 
   it('runs a search and clears it', () => {
-    const hit: SearchHit = { origin: 'signal', conversation_id: 'dm:a', conversation_name: 'Alice', ts: 1, sender: 's', snippet: 'hi', deleted: false };
+    const hit: SearchHit = { origin: 'signal', conversation_id: 'dm:a', conversation_name: 'Alice', ts: 1, sender: 's', snippet: 'hi', deleted: false, cursor: '1_1' };
     const search = vi.fn(() => of([hit]));
     const { app } = setup(makeApi({ search }));
     app.query.set('hi');
@@ -200,7 +200,7 @@ describe('App', () => {
    * thread's affordance was settled by looking at the render instead.
    */
   it('does not print what a retracted message said', async () => {
-    const hit: SearchHit = { origin: 'signal', conversation_id: 'dm:a', conversation_name: 'Alice', ts: 5, sender: 'alice', snippet: 'withdrawn text', deleted: true };
+    const hit: SearchHit = { origin: 'signal', conversation_id: 'dm:a', conversation_name: 'Alice', ts: 5, sender: 'alice', snippet: 'withdrawn text', deleted: true, cursor: '1_1' };
     const fixture = render(makeApi({ search: vi.fn(() => of([hit])) }));
     fixture.componentInstance.query.set('withdrawn');
     fixture.componentInstance.runSearch();
@@ -218,7 +218,7 @@ describe('App', () => {
   /** The other half. A gate that hid every snippet would satisfy the test above
    *  and leave search showing nothing at all. */
   it('prints an ordinary hit in full', async () => {
-    const hit: SearchHit = { origin: 'signal', conversation_id: 'dm:a', conversation_name: 'Alice', ts: 5, sender: 'alice', snippet: 'still here', deleted: false };
+    const hit: SearchHit = { origin: 'signal', conversation_id: 'dm:a', conversation_name: 'Alice', ts: 5, sender: 'alice', snippet: 'still here', deleted: false, cursor: '1_1' };
     const fixture = render(makeApi({ search: vi.fn(() => of([hit])) }));
     fixture.componentInstance.query.set('still');
     fixture.componentInstance.runSearch();
@@ -242,8 +242,8 @@ describe('App', () => {
   it('renders two hits from the same channel in the same second', async () => {
     const at = Date.UTC(2026, 0, 2, 9, 14, 0);
     const both: SearchHit[] = [
-      { origin: 'irc', conversation_id: '7', conversation_name: '#chan', ts: at, sender: 'a', snippet: 'first line', deleted: false },
-      { origin: 'irc', conversation_id: '7', conversation_name: '#chan', ts: at, sender: 'b', snippet: 'second line', deleted: false },
+      { origin: 'irc', conversation_id: '7', conversation_name: '#chan', ts: at, sender: 'a', snippet: 'first line', deleted: false, cursor: '1_1' },
+      { origin: 'irc', conversation_id: '7', conversation_name: '#chan', ts: at, sender: 'b', snippet: 'second line', deleted: false, cursor: '1_1' },
     ];
     const warnings: string[] = [];
     const spy = vi.spyOn(console, 'warn').mockImplementation((...a) => { warnings.push(a.map(String).join(' ')); });

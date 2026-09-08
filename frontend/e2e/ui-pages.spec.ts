@@ -303,17 +303,17 @@ test("Enter while the IME is composing does not send @ phone width", async ({ pa
  *  out would be testing a backend that does not exist. */
 const SEARCH = [
   { origin: "signal", conversation_id: "dm:a", conversation_name: "Alice Andersson", ts: Date.UTC(2026, 0, 2, 9, 14),
-    sender: "Alice Andersson", snippet: "the referral letter finally turned up this morning, second post", deleted: false },
+    sender: "Alice Andersson", snippet: "the referral letter finally turned up this morning, second post", deleted: false, cursor: "1000_1" },
   { origin: "signal", conversation_id: "dm:a", conversation_name: "Alice Andersson", ts: Date.UTC(2026, 0, 1, 18, 3),
-    sender: "Alice Andersson", snippet: "posted the letter on Tuesday", deleted: true },
+    sender: "Alice Andersson", snippet: "posted the letter on Tuesday", deleted: true, cursor: "2000_2" },
   { origin: "irc", conversation_id: "7", conversation_name: "#a-channel-with-a-long-name", ts: Date.UTC(2025, 11, 30, 16, 40),
-    sender: "s_20", snippet: "no letter here, wrong channel", deleted: false },
+    sender: "s_20", snippet: "no letter here, wrong channel", deleted: false, cursor: "3000_3" },
   // ⚠ The same target on two networks — two rows the list can tell apart and
   // this one could not. Both are in CONVERSATIONS, ids 8 and 9.
   { origin: "irc", conversation_id: "8", conversation_name: "s_20", ts: Date.UTC(2025, 11, 29, 12, 0),
-    sender: "s_20", snippet: "letter sent, check the pigeon", deleted: false },
+    sender: "s_20", snippet: "letter sent, check the pigeon", deleted: false, cursor: "4000_4" },
   { origin: "irc", conversation_id: "9", conversation_name: "s_20", ts: Date.UTC(2025, 11, 28, 12, 0),
-    sender: "s_20", snippet: "letter never arrived", deleted: false },
+    sender: "s_20", snippet: "letter never arrived", deleted: false, cursor: "5000_5" },
 ];
 
 /** ⚠ **A RETRACTION IS FOUND WITHOUT BEING SPELLED OUT.** Search stopped

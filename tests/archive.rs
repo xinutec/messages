@@ -1262,3 +1262,42 @@ fn a_leading_slash_means_an_action_an_escape_or_nothing() {
 
     assert_eq!(parse_slash("ordinary words"), ("ordinary words", false));
 }
+
+/// **A hit must be able to say WHERE it is, not only what it says.**
+///
+/// #1401: clicking a search result opens the conversation at its NEWEST page,
+/// and the hit may be years back. Landing on it needs a position, and the
+/// position has to be the same opaque `(native_ts, id)` the pager already
+/// speaks — a bare `ts` cannot express each origin's native precision (Signal
+/// ms, Google Chat µs, IRC whole seconds), and a bare row id cannot be compared
+/// across a page boundary.
+///
+/// The test that matters is the ROUND TRIP, one origin at a time: a cursor is
+/// only useful if `messages_page` accepts it and the page it returns is the one
+/// containing the hit. Asserting the string's shape would pass while the two
+/// halves disagreed about units, which is the failure that costs an afternoon.
+#[tokio::test]
+async fn a_search_hit_carries_a_cursor_the_pager_accepts() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+
+    for hit in archive::search(&pool, "findme", 50).await.unwrap() {
+        let cursor = archive::parse_cursor(&hit.cursor)
+            .unwrap_or_else(|| panic!("{:?} hit minted an unparseable cursor", hit.origin));
+
+        // Paging strictly OLDER than the hit must not return the hit itself: an
+        // off-by-one here is a cursor pointing one row past where it claims,
+        // which shows up as the reader landing next to the message rather than
+        // on it.
+        let older =
+            archive::messages_page(&pool, hit.origin, &hit.conversation_id, Some(cursor), 50)
+                .await
+                .unwrap();
+        assert!(
+            !older.messages.iter().any(|m| m.ts == hit.ts),
+            "{:?}: paging older than the hit returned the hit",
+            hit.origin
+        );
+    }
+}

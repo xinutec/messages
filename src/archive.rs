@@ -717,6 +717,16 @@ pub struct SearchHit {
     /// The message was retracted. The snippet still carries its text; the reader
     /// hides it behind a click, exactly as a thread hides a deleted body.
     pub deleted: bool,
+    /// WHERE the hit is, in the same opaque form the pager already speaks —
+    /// [`encode_cursor`] over this origin's NATIVE `(ts, id)`.
+    ///
+    /// ⚠ Not `ts`. A hit's `ts` is normalised to milliseconds for display, and
+    /// milliseconds cannot address a Google Chat row (µs) or separate two IRC
+    /// lines in one second — which is most of them, since irssi's default
+    /// `timestamp_format` records no seconds at all. Nor a bare row id, which is
+    /// meaningless without the ts it tie-breaks. This is the pair, and
+    /// `messages_page` takes it unchanged.
+    pub cursor: String,
 }
 
 /// Simple substring search across all three origins' message text. Newest first.
@@ -736,7 +746,7 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
     let mut hits = Vec::new();
 
     let srows = sqlx::query(
-        r"SELECT m.thread_id AS cid, c.name AS cname, m.server_ts AS ts,
+        r"SELECT m.id AS id, m.thread_id AS cid, c.name AS cname, m.server_ts AS ts,
                  COALESCE(ct.profile_name, m.sender_uuid) AS sender, m.body AS body,
                  m.deleted AS deleted
           FROM messages m
@@ -751,19 +761,25 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
     .await?;
     for r in srows {
         let deleted: i8 = r.try_get("deleted")?;
+        let id: i64 = r.try_get("id")?;
+        let ts: i64 = r.try_get("ts")?;
         hits.push(SearchHit {
             origin: Origin::Signal,
             conversation_id: r.try_get("cid")?,
             conversation_name: r.try_get("cname")?,
-            ts: r.try_get("ts")?,
+            ts,
             sender: r.try_get("sender")?,
             snippet: r.try_get::<Option<String>, _>("body")?.unwrap_or_default(),
             deleted: deleted != 0,
+            // Signal's native ts IS milliseconds, so this pair happens to equal
+            // the displayed `ts`. The other two do not, which is why the cursor
+            // is minted per-origin rather than once from `ts`.
+            cursor: encode_cursor(ts, id),
         });
     }
 
     let grows = sqlx::query(
-        r"SELECT m.group_id AS cid, g.name AS cname, m.ts_us AS ts_us,
+        r"SELECT m.id AS id, m.group_id AS cid, g.name AS cname, m.ts_us AS ts_us,
                  m.sender_name AS sender, m.text AS body
           FROM gchat_messages m
           LEFT JOIN gchat_conversations g ON g.group_id = m.group_id
@@ -776,6 +792,7 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
     .await?;
     for r in grows {
         let ts_us: i64 = r.try_get("ts_us")?;
+        let id: i64 = r.try_get("id")?;
         hits.push(SearchHit {
             origin: Origin::Gchat,
             conversation_id: r.try_get("cid")?,
@@ -786,6 +803,9 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
                 .unwrap_or_default(),
             snippet: r.try_get::<Option<String>, _>("body")?.unwrap_or_default(),
             deleted: false, // Google Chat's export records no retraction
+            // MICROSECONDS, deliberately unlike the `ts` above: two rows inside
+            // one millisecond are distinct here and identical there.
+            cursor: encode_cursor(ts_us, id),
         });
     }
 
@@ -817,7 +837,7 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
     let irows = sqlx::query(
         r"SELECT m.conversation_id AS cid, c.target AS cname,
                  TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) AS ts_s,
-                 m.nick AS sender, m.text AS body
+                 m.nick AS sender, m.text AS body, m.id AS id
           FROM (
               SELECT conversation_id, sent_at, id, nick, text
                 FROM irc_messages
@@ -838,6 +858,7 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
     for r in irows {
         let cid: i32 = r.try_get("cid")?;
         let ts_s: i64 = r.try_get("ts_s")?;
+        let id: i64 = r.try_get("id")?;
         hits.push(SearchHit {
             origin: Origin::Irc,
             conversation_id: cid.to_string(),
@@ -848,6 +869,10 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
                 .unwrap_or_default(),
             snippet: r.try_get::<Option<String>, _>("body")?.unwrap_or_default(),
             deleted: false, // IRC has no retraction
+            // WHOLE SECONDS, the coarsest of the three: irssi's default format
+            // records none, so `id` is the real ordering inside a minute and a
+            // cursor without it addresses nothing.
+            cursor: encode_cursor(ts_s, id),
         });
     }
 
