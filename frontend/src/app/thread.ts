@@ -229,12 +229,28 @@ export class Thread {
    *  the older half is everything strictly before, and the two concatenate
    *  without a gap and without a duplicate.
    */
-  private async loadAround(origin: Origin, id: string, at: string): Promise<void> {
+  private async loadAround(origin: Origin, id: string, at: string): Promise<boolean> {
     const half = Math.floor(PAGE / 2);
     const [older, newer] = await Promise.all([
       firstValueFrom(this.api.messages(origin, id, at, half, 'older')),
       firstValueFrom(this.api.messages(origin, id, at, half, 'newer')),
     ]);
+
+    // ⚠ **DO THE TWO HALVES ACTUALLY MEET?** The server treats a cursor it
+    // cannot read as ABSENT, which is right for a backward page — it means
+    // "start at the newest" — and means "everything after nothing" for a
+    // forward one, which answers with the OLDEST page. So an `?at` from a
+    // hand-edited URL, or a bookmark predating the cursor format, brings back
+    // the two ENDS of the archive and concatenates them into a thread that
+    // jumps years mid-scroll and is in order nowhere.
+    //
+    // Nothing else would notice: both halves are well-formed pages and each is
+    // individually correct. Their ORDER is the only evidence, so it is checked
+    // here and the caller falls back to a plain newest-page load.
+    const lastOld = older.messages.at(-1);
+    const firstNew = newer.messages[0];
+    if (lastOld && firstNew && lastOld.ts > firstNew.ts) return false;
+
     this.messages.set([...older.messages, ...newer.messages]);
     this.hasMore.set(older.has_more);
     this.cursor = older.next_cursor;
@@ -251,6 +267,7 @@ export class Thread {
       else this.win.scrollToBottom();
     });
     this.win.trimToWindow();
+    return true;
   }
 
   /** Load the thread. Restores the paged-back depth from ?from (the ts the user
@@ -267,10 +284,7 @@ export class Thread {
       // `?from` means "I was here", so it wins on load and the two never
       // meaningfully coexist: `commitFromParam` takes over and writes `from` as
       // soon as the reader scrolls.
-      if (at != null) {
-        await this.loadAround(origin, id, at);
-        return;
-      }
+      if (at != null && (await this.loadAround(origin, id, at))) return;
       const first = await firstValueFrom(this.api.messages(origin, id, undefined, PAGE));
       let msgs = first.messages;
       let hasMore = first.has_more;

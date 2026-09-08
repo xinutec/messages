@@ -846,3 +846,53 @@ describe('growing a landing forwards', () => {
     expect(dirs.filter((d) => d === 'newer').length).toBe(before);
   });
 });
+
+/** ⚠ **A `?at` THE SERVER CANNOT READ MUST NOT BUILD A NONSENSE THREAD.**
+ *
+ *  The backend treats a malformed cursor as absent, which is right for a
+ *  backward page — it means "start at the newest". For a FORWARD page it means
+ *  "everything after nothing", and the query answers with the OLDEST page. So
+ *  the two halves of a landing come back from opposite ends of the archive and
+ *  concatenate into a thread that jumps years mid-scroll, in order nowhere.
+ *
+ *  Reachable from a hand-edited URL or a bookmark predating the cursor format.
+ *  The halves not joining is the signal, and a plain newest-page load is the
+ *  answer — the same thing the app does with no `?at` at all. */
+describe('landing with a cursor the server could not read', () => {
+  it('falls back to the newest page rather than joining two ends', async () => {
+    TestBed.configureTestingModule({
+      providers: [
+        provideZonelessChangeDetection(),
+        provideRouter([]),
+        { provide: MessagesApi, useValue: makeApi() },
+        {
+          provide: ActivatedRoute,
+          useValue: {
+            snapshot: { queryParamMap: convertToParamMap({ at: 'not-a-cursor' }) },
+            queryParamMap: of(convertToParamMap({ at: 'not-a-cursor' })),
+          },
+        },
+      ],
+    });
+    const fixture = TestBed.createComponent(Thread);
+    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    api.messages.mockImplementation(
+      (_o: unknown, _i: unknown, cursor?: string, _l?: number, dir?: string) => {
+        // What the server really does with an unreadable cursor.
+        if (dir === 'newer') return page([msg('oldest', 1000)], true, null, 'c');
+        if (dir === 'older') return page([msg('newest', 9_000_000)], true, 'c');
+        return page([msg('newest', 9_000_000)], true, 'c');
+      },
+    );
+    fixture.componentRef.setInput('origin', 'irc');
+    fixture.componentRef.setInput('id', '7');
+    fixture.detectChanges();
+    const thread = fixture.componentInstance;
+    for (let i = 0; i < 40 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+
+    // Not ['newest', 'oldest'] — a thread that runs backwards.
+    expect(thread.messages().map((m) => m.id)).toEqual(['newest']);
+    // And not floating: this is the newest page, so the poll must keep running.
+    expect(thread.floating()).toBe(false);
+  });
+});
