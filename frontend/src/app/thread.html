@@ -24,7 +24,7 @@
         <section>
           <div class="day"><span>{{ g.ts | date: 'fullDate' }}</span></div>
           @for (m of g.items; track m.id) {
-            <div class="msg" [class.out]="m.is_outgoing" [attr.data-id]="m.id" [attr.data-ts]="m.ts">
+            <div class="msg" [class.out]="m.is_outgoing" [class.landed]="landedId() === m.id" [attr.data-id]="m.id" [attr.data-ts]="m.ts">
               <div class="meta">
                 <span>{{ m.sender }}</span>
                 <span>{{ m.ts | date: 'shortTime' }}</span>

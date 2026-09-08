@@ -896,3 +896,65 @@ describe('landing with a cursor the server could not read', () => {
     expect(thread.floating()).toBe(false);
   });
 });
+
+/** **Landing on the right message is not the same as SHOWING which one.**
+ *
+ *  `scrollToTs` puts the hit flush under the sticky header and nothing marked
+ *  it, so in a busy channel — `#netchat` at 1:07 PM has a dozen lines that look
+ *  alike — you arrive in the right place and then have to work out which line
+ *  you came for. Measured on the phone 2026-09-08 against a hit from 2013.
+ *
+ *  The marker's lifetime is the SAME as `?at`'s, deliberately: both mean "this
+ *  is where you were put", and both stop being true the moment the reader
+ *  scrolls. One rule, cleared in one place. */
+describe('marking the message that was landed on', () => {
+  async function land(): Promise<Thread> {
+    TestBed.configureTestingModule({
+      providers: [
+        provideZonelessChangeDetection(),
+        provideRouter([]),
+        { provide: MessagesApi, useValue: makeApi() },
+        {
+          provide: ActivatedRoute,
+          useValue: {
+            snapshot: { queryParamMap: convertToParamMap({ at: '5000_9' }) },
+            queryParamMap: of(convertToParamMap({ at: '5000_9' })),
+          },
+        },
+      ],
+    });
+    const fixture = TestBed.createComponent(Thread);
+    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    api.messages.mockImplementation(
+      (_o: unknown, _i: unknown, _c?: string, _l?: number, dir?: string) =>
+        dir === 'newer'
+          ? page([msg('h', 5000), msg('n1', 6000)], true, null, 'c')
+          : page([msg('o1', 4000)], true, 'older-c'),
+    );
+    fixture.componentRef.setInput('origin', 'irc');
+    fixture.componentRef.setInput('id', '7');
+    fixture.detectChanges();
+    const thread = fixture.componentInstance;
+    for (let i = 0; i < 40 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    return thread;
+  }
+
+  it('names the hit, and not the message beside it', async () => {
+    const thread = await land();
+    expect(thread.landedId()).toBe('h');
+  });
+
+  it('stops naming it once the reader has moved', async () => {
+    const thread = await land();
+    expect(thread.landedId()).toBe('h');
+    thread.commitFromParam();
+    expect(thread.landedId()).toBeNull();
+  });
+
+  /** Opening a thread normally marks nothing — there is no message the reader
+   *  was "put on", and a tint on the newest line would be noise on every open. */
+  it('marks nothing when the thread was opened without a hit', async () => {
+    const { thread } = await opened([msg('1', 100), msg('2', 200)]);
+    expect(thread.landedId()).toBeNull();
+  });
+});

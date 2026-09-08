@@ -184,6 +184,15 @@ test("scrolling to the bottom of a landing fetches forwards", async ({ page }) =
   await expect(page.locator('[data-id="fwd0_0"]')).toBeAttached();
   expect(forwardPages).toBe(1);
 
+  // ⚠ **The hit is MARKED, and only the hit.** Landing on the right message is
+  // not the same as showing which one: `scrollToTs` puts it flush under the
+  // sticky header where, unmarked, it looks exactly like its neighbours —
+  // measured on a phone against a 2013 hit in a channel where a dozen lines
+  // share the minute. Asserted here rather than in vitest because the class is
+  // only worth anything if it reaches the rendered DOM.
+  await expect(page.locator('[data-id="fwd0_0"]')).toHaveClass(/landed/);
+  await expect(page.locator('[data-id="fwd0_1"]')).not.toHaveClass(/landed/);
+
   // Drive the real thing: scroll the host to its bottom and let the engine
   // decide. Nothing here calls fetchNewer. `.thread` IS the scroll container —
   // the component sets it as its own host class and binds `(scroll)` there.

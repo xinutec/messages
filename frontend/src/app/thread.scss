@@ -108,6 +108,26 @@
   // into view — and with native scroll-anchoring disabled that resize shifts the
   // viewport (the "history jumps as you scroll up" bug).
 
+  // The message a search hit put the reader on.
+  //
+  // ⚠ **Landing on it is not the same as showing which one.** `scrollToTs`
+  // puts the hit flush under the sticky header and, unmarked, it looks exactly
+  // like its neighbours — measured against a 2013 hit in #netchat, where a
+  // dozen lines share the minute and the reader has to work out which one they
+  // came for.
+  //
+  // A left rule plus a wash, not a background swap: `.out` already owns the
+  // background to say who spoke, and overriding it here would trade one fact
+  // for another. This composes with both.
+  //
+  // It does not fade on a timer. The marker's whole meaning is "this is where
+  // you were put", which stays true until the reader moves — `commitFromParam`
+  // clears it on the first scroll, the same moment `?at` goes.
+  &.landed {
+    box-shadow: inset 0.2rem 0 0 var(--mat-sys-primary);
+    background: color-mix(in srgb, var(--mat-sys-primary) 12%, transparent);
+  }
+
   &.out {
     margin-left: auto;
     background: color-mix(in srgb, var(--mat-sys-primary) 15%, transparent);

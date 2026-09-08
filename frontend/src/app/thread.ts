@@ -207,12 +207,27 @@ export class Thread {
    *  outside that reads as the thread wandering off, not as a bug. */
   readonly floating = signal(false);
 
+  /** The message the reader was PUT on by `?at`, or null when they arrived any
+   *  other way.
+   *
+   *  ⚠ **Landing on the right message is not the same as showing which one.**
+   *  `scrollToTs` puts the hit flush under the sticky header and nothing marked
+   *  it, so in a busy channel — `#netchat` at 1:07 PM has a dozen lines that
+   *  look alike — you arrive in the right place and then have to work out which
+   *  line you came for. Measured on the phone against a hit from 2013.
+   *
+   *  Its lifetime is exactly `?at`'s, and that is one rule rather than two:
+   *  both mean "this is where you were put", both stop being true the moment
+   *  the reader scrolls, and both are cleared in `commitFromParam`. */
+  readonly landedId = signal<string | null>(null);
+
   private resetState(): void {
     this.messages.set([]);
     this.win.reset();
     this.revealedIds.set(new Set());
     this.hasMore.set(false);
     this.floating.set(false);
+    this.landedId.set(null);
     this.cursor = null;
     this.newerCursor = null;
   }
@@ -261,8 +276,11 @@ export class Thread {
     this.floating.set(newer.has_more);
     this.loadingThread.set(false);
     this.appRef.tick();
+    // `newer.messages[0]` IS the hit — the forward half is inclusive of its own
+    // cursor, which is what makes this the message and not the one after it.
+    const hit = newer.messages[0];
+    this.landedId.set(hit ? hit.id : null);
     this.win.withScrollLock(() => {
-      const hit = newer.messages[0];
       if (hit) this.win.scrollToTs(hit.ts);
       else this.win.scrollToBottom();
     });
@@ -674,7 +692,10 @@ export class Thread {
     this.fromTimer = setTimeout(() => this.commitFromParam(), 300);
   }
 
-  private commitFromParam(): void {
+  commitFromParam(): void {
+    // The reader has moved, so "this is where you were put" is no longer a true
+    // thing to say — the marker goes with `at`, below, for the same reason.
+    this.landedId.set(null);
     const o = this.origin();
     const i = this.id();
     if (o == null || i == null) return;
