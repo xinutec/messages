@@ -1,4 +1,5 @@
 import { ApplicationRef, Component, DestroyRef, ElementRef, computed, effect, inject, input, signal, viewChild } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { DatePipe } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
@@ -119,7 +120,11 @@ export class Thread {
   readonly loadingOlder = signal(false);
   readonly hasMore = signal(false);
   readonly threadError = signal(false);
+  /** Where to continue BACKWARDS — the oldest loaded row. */
   private cursor: string | null = null;
+  /** Where to continue FORWARDS — the newest loaded row. Only meaningful while
+   *  `floating`: a window anchored to the present has nothing after it. */
+  private newerCursor: string | null = null;
 
   private fromTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -159,6 +164,29 @@ export class Thread {
       else this.resetState();
     });
 
+    // ⚠ **`?at` CHANGING IS ALSO A RELOAD, and the effect above cannot see it.**
+    // That effect keys on origin+id, and Angular reuses this component across
+    // navigations — so clicking a search result for the conversation already on
+    // screen changed only the query string, the key compared equal, and nothing
+    // happened. On a wide screen search sits beside an open thread, so that is a
+    // click somebody makes, and the symptom is the one #1401 was filed for.
+    //
+    // Only a CHANGE to a non-null `at` re-lands. `commitFromParam` clears the
+    // parameter on the first scroll, and treating that clear as a navigation
+    // would reload the thread out from under the reader who caused it.
+    let landedAt: string | null = this.route.snapshot.queryParamMap.get('at');
+    this.route.queryParamMap.pipe(takeUntilDestroyed()).subscribe((pm) => {
+      const at = pm.get('at');
+      if (at == null || at === landedAt) {
+        landedAt = at;
+        return;
+      }
+      landedAt = at;
+      const o = this.origin();
+      const i = this.id();
+      if (o != null && i != null) void this.loadThread(o, i);
+    });
+
     const poll = setInterval(() => void this.pollNewer(), POLL_MS);
     // ⚠ Cleared with the component. An interval outlives its component
     // otherwise, and every visit to a thread would leave another one running —
@@ -166,12 +194,62 @@ export class Thread {
     inject(DestroyRef).onDestroy(() => clearInterval(poll));
   }
 
+  /** The loaded window is NOT anchored to the newest message — the reader was
+   *  put somewhere in the middle by `?at`, and the present is off the bottom of
+   *  what is held.
+   *
+   *  ⚠ **This is a fact `pollNewer` has to know.** Its gap guard is already
+   *  correct: when not one message of the newest page is known it treats the
+   *  hole as unfillable and reloads rather than merging one. But a floating
+   *  window is permanently in exactly that state, so the poll would reload and
+   *  land the reader back in the present within `POLL_MS` — and from the
+   *  outside that reads as the thread wandering off, not as a bug. */
+  readonly floating = signal(false);
+
   private resetState(): void {
     this.messages.set([]);
     this.win.reset();
     this.revealedIds.set(new Set());
     this.hasMore.set(false);
+    this.floating.set(false);
     this.cursor = null;
+    this.newerCursor = null;
+  }
+
+  /** Land ON a message rather than at the end of its conversation — #1401.
+   *
+   *  Two half-pages around the cursor, fetched together. The newer half is the
+   *  one that makes the landing worth anything: a page fetched only backwards
+   *  puts the hit at the newest end with nothing after it, and a message
+   *  without the reply to it is usually the half somebody was searching for.
+   *
+   *  ⚠ The newer half INCLUDES the hit, because the backend's `newer` is
+   *  strictly after its cursor and the hit's own cursor addresses the hit. So
+   *  the older half is everything strictly before, and the two concatenate
+   *  without a gap and without a duplicate.
+   */
+  private async loadAround(origin: Origin, id: string, at: string): Promise<void> {
+    const half = Math.floor(PAGE / 2);
+    const [older, newer] = await Promise.all([
+      firstValueFrom(this.api.messages(origin, id, at, half, 'older')),
+      firstValueFrom(this.api.messages(origin, id, at, half, 'newer')),
+    ]);
+    this.messages.set([...older.messages, ...newer.messages]);
+    this.hasMore.set(older.has_more);
+    this.cursor = older.next_cursor;
+    this.newerCursor = newer.prev_cursor;
+    // Floating unless the forward half reached the present. `has_more` false
+    // means the newer query ran out, so there is nothing after what is held and
+    // the window is anchored to the latest message after all.
+    this.floating.set(newer.has_more);
+    this.loadingThread.set(false);
+    this.appRef.tick();
+    this.win.withScrollLock(() => {
+      const hit = newer.messages[0];
+      if (hit) this.win.scrollToTs(hit.ts);
+      else this.win.scrollToBottom();
+    });
+    this.win.trimToWindow();
   }
 
   /** Load the thread. Restores the paged-back depth from ?from (the ts the user
@@ -181,8 +259,17 @@ export class Thread {
     this.resetState();
     this.threadError.set(false);
     this.loadingThread.set(true);
+    const at = this.route.snapshot.queryParamMap.get('at');
     const from = Number(this.route.snapshot.queryParamMap.get('from')) || null;
     try {
+      // `?at` — a search hit's opaque cursor. It means "put me here", where
+      // `?from` means "I was here", so it wins on load and the two never
+      // meaningfully coexist: `commitFromParam` takes over and writes `from` as
+      // soon as the reader scrolls.
+      if (at != null) {
+        await this.loadAround(origin, id, at);
+        return;
+      }
       const first = await firstValueFrom(this.api.messages(origin, id, undefined, PAGE));
       let msgs = first.messages;
       let hasMore = first.has_more;
@@ -358,6 +445,11 @@ export class Thread {
     // don't poll a screen nobody is looking at — a backgrounded phone app would
     // otherwise keep asking forever.
     if (this.polling || this.loadingThread() || this.loadingOlder() || this.sending()) return;
+    // ⚠ **A FLOATING WINDOW MUST NOT BE POLLED.** See `floating`: the gap guard
+    // below would fire on every tick and reload the thread, putting the reader
+    // back in the present a few seconds after they landed on a 2005 message.
+    // Following the conversation is for a reader who is AT it.
+    if (this.floating()) return;
     if (document.visibilityState !== 'visible') return;
     if (this.messages().length === 0) return;
 
@@ -534,7 +626,12 @@ export class Thread {
     const ts = from ? this.messages().find((m) => m.id === from)?.ts : null;
     void this.router.navigate([], {
       relativeTo: this.route,
-      queryParams: { from: ts != null ? String(ts) : null },
+      // ⚠ `at` is CLEARED here, and that is the whole of its lifetime: it means
+      // "put me here", so once the reader has scrolled it is a stale
+      // instruction. Left in place, a refresh would drag them back to the hit
+      // they had already read past, and `from` — which means "I was here" —
+      // would be ignored in favour of it.
+      queryParams: { from: ts != null ? String(ts) : null, at: null },
       queryParamsHandling: 'merge',
       replaceUrl: true,
     });

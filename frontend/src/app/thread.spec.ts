@@ -1,7 +1,7 @@
 import { ComponentRef, provideZonelessChangeDetection } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
-import { Observable, of } from 'rxjs';
+import { BehaviorSubject, Observable, of } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 
 import { Thread } from './thread';
@@ -555,7 +555,10 @@ describe('restoring a saved scroll depth', () => {
         { provide: MessagesApi, useValue: makeApi() },
         {
           provide: ActivatedRoute,
-          useValue: { snapshot: { queryParamMap: convertToParamMap({ from }) } },
+          useValue: {
+            snapshot: { queryParamMap: convertToParamMap({ from }) },
+            queryParamMap: of(convertToParamMap({ from })),
+          },
         },
       ],
     });
@@ -599,5 +602,150 @@ describe('restoring a saved scroll depth', () => {
     // `from` is at the first page's own timestamp, so the loop never runs.
     const { calls } = await openWithFrom('5000');
     expect(calls).toBe(1);
+  });
+});
+
+/** Landing on a search hit — #1401.
+ *
+ *  Clicking a result opened the conversation at its NEWEST page while the hit
+ *  itself might be years back, and nothing scrolled to it. That became
+ *  load-bearing on 2026-09-04, when search started returning retracted messages
+ *  with `(deleted)` in place of the snippet: the reveal lives in the thread, so
+ *  the row's whole job is to deliver you to the message.
+ *
+ *  `?at` is the hit's opaque cursor. It means "put me here"; `?from` means "I
+ *  was here". They never meaningfully coexist — `at` wins on load and
+ *  `commitFromParam` writes `from` as soon as the reader scrolls. */
+describe('landing on a search hit', () => {
+  /** `newerHasMore` is the whole difference between the two situations a
+   *  landing can be in: a hit with the conversation still running on after it,
+   *  and a hit that happens to be near the end. */
+  async function openAt(at: string, newerHasMore = true): Promise<{
+    thread: Thread;
+    calls: { cursor?: string; dir?: string }[];
+  }> {
+    TestBed.configureTestingModule({
+      providers: [
+        provideZonelessChangeDetection(),
+        provideRouter([]),
+        { provide: MessagesApi, useValue: makeApi() },
+        {
+          provide: ActivatedRoute,
+          useValue: {
+            snapshot: { queryParamMap: convertToParamMap({ at }) },
+            queryParamMap: of(convertToParamMap({ at })),
+          },
+        },
+      ],
+    });
+    const fixture = TestBed.createComponent(Thread);
+    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    const calls: { cursor?: string; dir?: string }[] = [];
+    api.messages.mockImplementation(
+      (_o: unknown, _i: unknown, cursor?: string, _limit?: number, dir?: string) => {
+        calls.push({ cursor, dir });
+        // Older-half: the two before the hit. Newer-half: the hit and the two
+        // after it, which is what makes the landing readable in both
+        // directions rather than an end with nothing past it.
+        return dir === 'newer'
+          ? page([msg('h', 5000), msg('n1', 6000), msg('n2', 7000)], newerHasMore, 'newer-c')
+          : page([msg('o1', 3000), msg('o2', 4000)], true, 'older-c');
+      },
+    );
+    fixture.componentRef.setInput('origin', 'irc');
+    fixture.componentRef.setInput('id', '7');
+    fixture.detectChanges();
+    const thread = fixture.componentInstance;
+    for (let i = 0; i < 40 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    return { thread, calls };
+  }
+
+  it('asks for the messages on BOTH sides of the hit', async () => {
+    const { calls } = await openAt('5000_9');
+    // Not the newest page. Opening at the end is what the bug was.
+    expect(calls.every((c) => c.cursor === '5000_9')).toBe(true);
+    expect(calls.map((c) => c.dir).sort()).toEqual(['newer', 'older']);
+  });
+
+  it('holds the hit with context after it, not only before it', async () => {
+    const { thread } = await openAt('5000_9');
+    const ids = thread.messages().map((m) => m.id);
+    expect(ids).toEqual(['o1', 'o2', 'h', 'n1', 'n2']);
+    // ⚠ The half that matters. A landing with only older messages loaded is
+    // half a conversation, and usually the half being searched for — a reply
+    // is what tells you whether the message you found meant anything.
+    expect(ids.indexOf('h')).toBeLessThan(ids.length - 1);
+  });
+
+  it('is not treated as being at the latest message', async () => {
+    const { thread } = await openAt('5000_9');
+    // A floating window has no overlap with the newest page, so `pollNewer`'s
+    // gap guard would call the whole thread unfillable and reload it — landing
+    // the reader back in the present within POLL_MS. Nothing about that reads
+    // as a bug from the outside; the thread just leaves.
+    expect(thread.floating()).toBe(true);
+  });
+
+  /** ⚠ The mirror, and it is not a formality. `floating` is what suppresses
+   *  `pollNewer`, so a landing that reports it unconditionally would leave a
+   *  reader who arrived at the END of a conversation never seeing another
+   *  message — the poll silenced for a window that was at the present all
+   *  along. The forward half running out is what says so. */
+  it('a hit near the end of the conversation is at the latest message', async () => {
+    const { thread } = await openAt('5000_9', false);
+    expect(thread.floating()).toBe(false);
+  });
+});
+
+/** ⚠ **A HIT IN THE CONVERSATION ALREADY ON SCREEN.** The reload effect keys on
+ *  origin+id, and Angular reuses this component across navigations — so
+ *  clicking a result from the thread you are already looking at changed only
+ *  the query string, the key was equal, and nothing reloaded. The row did
+ *  nothing at all, which is the same symptom #1401 was filed for and the one a
+ *  fix aimed only at other conversations would leave behind.
+ *
+ *  Search is reachable beside an open thread on a wide screen, so this is a
+ *  click somebody makes, not a contrived route. */
+describe('landing again without changing conversation', () => {
+  it('re-lands when only ?at changes', async () => {
+    const params: Record<string, string> = { at: '5000_9' };
+    // ⚠ The real `queryParamMap` stream, not a hand-called handler. A test that
+    // invoked the method directly would pass with nothing subscribed to it,
+    // which is the wiring this is about.
+    const qp = new BehaviorSubject(convertToParamMap(params));
+    TestBed.configureTestingModule({
+      providers: [
+        provideZonelessChangeDetection(),
+        provideRouter([]),
+        { provide: MessagesApi, useValue: makeApi() },
+        {
+          provide: ActivatedRoute,
+          useValue: {
+            queryParamMap: qp,
+            get snapshot() {
+              return { queryParamMap: qp.value };
+            },
+          },
+        },
+      ],
+    });
+    const fixture = TestBed.createComponent(Thread);
+    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    let loads = 0;
+    api.messages.mockImplementation((_o: unknown, _i: unknown, _c?: string, _l?: number, dir?: string) => {
+      if (dir === 'newer') loads++;
+      return page([msg('h', 5000)], true, 'c');
+    });
+    fixture.componentRef.setInput('origin', 'irc');
+    fixture.componentRef.setInput('id', '7');
+    fixture.detectChanges();
+    const thread = fixture.componentInstance;
+    for (let i = 0; i < 40 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    expect(loads).toBe(1);
+
+    // Same conversation, a different hit in it.
+    qp.next(convertToParamMap({ at: '9000_11' }));
+    for (let i = 0; i < 40 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    expect(loads).toBe(2);
   });
 });

@@ -27,9 +27,22 @@ export class MessagesApi {
     return this.http.get<Conversation[]>('/api/conversations');
   }
 
-  messages(origin: Origin, id: string, cursor?: string, limit = 100): Observable<MessagesPage> {
+  /** One page of a conversation.
+   *
+   *  `dir` says which way the page runs from `cursor`: `older` (the default,
+   *  and what the whole app did before #1401) or `newer`. Landing on a search
+   *  hit needs both — a page fetched only backwards puts the hit at the newest
+   *  end with nothing after it, which is half a conversation. */
+  messages(
+    origin: Origin,
+    id: string,
+    cursor?: string,
+    limit = 100,
+    dir?: 'older' | 'newer',
+  ): Observable<MessagesPage> {
     const params: Record<string, string> = { limit: String(limit) };
     if (cursor != null) params['cursor'] = cursor;
+    if (dir != null) params['dir'] = dir;
     return this.http.get<MessagesPage>(
       `/api/conversations/${origin}/${encodeURIComponent(id)}/messages`,
       { params },

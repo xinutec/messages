@@ -113,7 +113,7 @@ describe('App', () => {
     const { app, router } = setup(makeApi());
     const nav = vi.spyOn(router, 'navigate').mockResolvedValue(true);
     app.openHit({ origin: 'gchat', conversation_id: 'gc1', conversation_name: 'Bob', ts: 1, sender: 's', snippet: 'x', deleted: false, cursor: '1_1' });
-    expect(nav).toHaveBeenCalledWith(['/conversation', 'gchat', 'gc1'], expect.objectContaining({ queryParams: { from: null } }));
+    expect(nav).toHaveBeenCalledWith(['/conversation', 'gchat', 'gc1'], expect.objectContaining({ queryParams: { at: '1_1', from: null } }));
   });
 
   /** ⚠ **A DEAD TAP, AND NOTHING ON SCREEN SAID SO.** `openHit` looked the
@@ -130,7 +130,7 @@ describe('App', () => {
     expect(app.conversations()).toEqual([]); // the precondition, not an assumption
     const nav = vi.spyOn(router, 'navigate').mockResolvedValue(true);
     app.openHit({ origin: 'irc', conversation_id: '7', conversation_name: '#chan', ts: 1, sender: 's', snippet: 'x', deleted: false, cursor: '1_1' });
-    expect(nav).toHaveBeenCalledWith(['/conversation', 'irc', '7'], expect.objectContaining({ queryParams: { from: null } }));
+    expect(nav).toHaveBeenCalledWith(['/conversation', 'irc', '7'], expect.objectContaining({ queryParams: { at: '1_1', from: null } }));
   });
 
   /** ⚠ **ONE NAMER, WHERE THERE WERE THREE.** An unnamed conversation was a

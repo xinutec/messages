@@ -215,9 +215,18 @@ export class App {
    *  Nothing was gained by the lookup: a route needs an origin and an id, both
    *  of which the hit already carries, and the thread renders from a deep link
    *  without the list — that is why `headTitle` has a fallback. */
+  /** Open a search result ON the message it found, not at the end of its
+   *  conversation — #1401.
+   *
+   *  ⚠ `at` and `from` are set together, and `from: null` is the load-bearing
+   *  half. `from` is a scroll position the reader left behind in some earlier
+   *  conversation and `queryParamsHandling: 'merge'` would carry it across;
+   *  arriving with both, the thread would restore a depth that has nothing to
+   *  do with this hit. `at` means "put me here", `from` means "I was here", and
+   *  a click on a result is unambiguously the first. */
   openHit(h: SearchHit): void {
     void this.router.navigate(['/conversation', h.origin, h.conversation_id], {
-      queryParams: { from: null },
+      queryParams: { at: h.cursor, from: null },
       queryParamsHandling: 'merge',
     });
   }
