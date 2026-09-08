@@ -34,6 +34,20 @@ use crate::state::AppState;
 /// build is a new URL and the old one can never be wrong. Those are the one kind
 /// of response `immutable` is honestly available for.
 fn cache_control_for(res: &Response<ServeFileSystemResponseBody>) -> Option<HeaderValue> {
+    // ⚠ **A 404 is not an asset.** `SetResponseHeaderLayer::overriding` stamps
+    // whatever the service returned, and a missing file answered with a year of
+    // `immutable` is a client that will not ask for that name again this year.
+    // Only a response that carried something may say how long it keeps.
+    //
+    // ⚠ NOT `!is_success()`. That excludes **304 Not Modified**, which must
+    // carry the headers a 200 would so the client can refresh what it already
+    // holds. Stripping it made every revalidated image a full re-fetch, and the
+    // arriving bytes grew the thread AFTER it had scrolled to the bottom —
+    // `thread-scroll.spec.ts` caught it at 271px off, a symptom with no visible
+    // connection to a cache header.
+    if res.status().is_client_error() || res.status().is_server_error() {
+        return None;
+    }
     let is_html = res
         .headers()
         .get(header::CONTENT_TYPE)
