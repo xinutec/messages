@@ -330,6 +330,46 @@ test("the newest message stays visible when the keyboard opens @ phone width", a
   await expect(input).toHaveValue("replying to what is on screen");
 });
 
+/** ⚠ **AND IT MUST NOT DO IT TO SOMEONE READING HISTORY.** The re-pin above is
+ *  right for a reader at the end of the conversation and wrong for everyone
+ *  else: a search hit lands you in 2013, the keyboard opens, and being thrown to
+ *  the present is worse than the messages you lost.
+ *
+ *  The state that decides is recorded on every scroll rather than measured when
+ *  the resize fires, because by then the bottom has already moved — and the hole
+ *  this pins is that `onScroll` skips the windowing step whenever the window is
+ *  busy or a load is in flight, which used to skip the recording with it. Left
+ *  stale-true through exactly the stretch where the reader scrolls away, the
+ *  observer then pins them back. Measured 2026-09-10 on a variant that also
+ *  watched content growth: routing's auto-load-older test timed out at 90s in 6
+ *  runs of 20. Deterministic here, where the flake was not. */
+test("a reader back in history is left there when the keyboard opens @ phone width", async ({ page }) => {
+  await mockApi(page);
+  await page.route("**/api/conversations/**/messages**", (r) => r.fulfill({ json: LONG_THREAD }));
+  await page.goto("/conversation/irc/7");
+  const input = page.getByLabel("Message", { exact: true });
+  await input.waitFor();
+  await page.locator('.msg[data-id="60"]').waitFor();
+
+  // Scroll back into the conversation, well clear of the bottom.
+  await page.locator("app-thread").evaluate((h) => (h.scrollTop = 0));
+  await expect.poll(() => page.locator("app-thread").evaluate((h) => h.scrollTop)).toBeLessThan(50);
+  const before = await page.locator("app-thread").evaluate((h) => h.scrollTop);
+
+  const full = page.viewportSize()!;
+  await input.click();
+  await page.setViewportSize({ width: full.width, height: full.height - 350 });
+  await page.waitForTimeout(500); // a re-pin would land within a frame; this is generous
+
+  const after = await page.locator("app-thread").evaluate((h) => h.scrollTop);
+  expect(Math.abs(after - before)).toBeLessThan(50);
+  // And specifically NOT thrown to the end, which is the failure this is about.
+  const fromBottom = await page
+    .locator("app-thread")
+    .evaluate((h) => h.scrollHeight - h.scrollTop - h.clientHeight);
+  expect(fromBottom).toBeGreaterThan(500);
+});
+
 /** ⚠ ONE TOKEN, AND NOTHING ELSE KNEW ABOUT IT. `interactive-widget=
  *  resizes-content` is what makes the Android soft keyboard shrink the layout
  *  viewport instead of sliding over the page; without it the composer sits

@@ -180,17 +180,6 @@ export class ThreadWindow {
         needNewer = true;
       }
     }
-    // ⚠ **A SHRINKING CONTAINER CAN DISPATCH A SCROLL EVENT OF ITS OWN**, and it
-    // must not read as the reader leaving the end of the conversation: the bottom
-    // moved, they did not. Taken at the end of the step so it reflects the
-    // position after any windowing, and gated on the height being the same one
-    // the last scroll was seen at — which is the only way to tell the two apart
-    // from here, `scrollTop` being identical in both.
-    const h = this.host.clientHeight;
-    const resized = h !== this.hostHeight;
-    this.hostHeight = h;
-    if (!resized) this.following = this.atBottom();
-
     // Re-baseline after any windowing so the next jump check compares like
     // frames (a windowing step legitimately re-anchors; that isn't a jump).
     if (this.dbg) {
@@ -198,6 +187,34 @@ export class ThreadWindow {
       this.lastScrollTop = this.host.scrollTop;
     }
     return { needOlder, needNewer };
+  }
+
+  /** ⚠ **EVERY scroll event updates `following`, INCLUDING the ones the window
+   *  itself caused — which is why this is not part of `step`.**
+   *
+   *  `onScroll` skips `step` whenever the window is busy or a load is in flight,
+   *  and for the windowing that is right: a programmatic scroll is not the reader
+   *  looking around. But `following` is not about WHO scrolled, it is about where
+   *  the viewport ended up, and leaving it un-updated through those stretches
+   *  leaves it stale-TRUE exactly when the reader has gone back into history —
+   *  so the next resize pins them to the present instead. Measured 2026-09-10 on
+   *  a variant that observed content growth as well: `routing.spec.ts`'s
+   *  "scrolling to the top auto-loads older messages" timed out at 90s in 6 runs
+   *  of 20, each arriving page of history yanking the viewport back.
+   *
+   *  Reading the position during our own scroll is the point rather than a
+   *  hazard: after `scrollToBottom` it answers true, after `scrollToTs` or a
+   *  re-anchored prepend it answers false, and all three are the truth.
+   *
+   *  ⚠ A SHRINKING CONTAINER CAN DISPATCH A SCROLL EVENT OF ITS OWN, and that one
+   *  must not read as the reader leaving the end: the bottom moved, they did not.
+   *  `scrollTop` is identical either way, so the height it was last seen at is
+   *  what separates them. */
+  noteScroll(): void {
+    const h = this.host.clientHeight;
+    const resized = h !== this.hostHeight;
+    this.hostHeight = h;
+    if (!resized) this.following = this.atBottom();
   }
 
   /** At the end of the conversation: nothing collapsed below, and within a few

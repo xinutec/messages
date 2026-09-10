@@ -625,6 +625,10 @@ export class Thread {
    *  the one thing it cannot do is fetch, because it does not know where
    *  messages come from. */
   onScroll(): void {
+    // Before every early return below: where the viewport ended up is true
+    // whoever moved it, and the guards that follow are about who did. See
+    // `ThreadWindow.noteScroll`.
+    this.win.noteScroll();
     if (this.win.busy || this.loadingThread() || this.threadError() || !this.routed()) return;
     const { needOlder, needNewer } = this.win.step();
     if (needOlder) this.fetchOlder();
