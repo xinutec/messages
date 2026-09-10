@@ -90,6 +90,22 @@ export class ThreadWindow {
    *  re-pin from an earlier one. */
   private pinToken = 0;
 
+  /** Whether the reader is following the END of the conversation rather than
+   *  reading back inside it.
+   *
+   *  ⚠ **Maintained as state because the moment it is needed it can no longer be
+   *  measured.** `repinAfterResize` runs after the container has already shrunk,
+   *  and by then the bottom has moved away on its own — asking `atBottom()` there
+   *  answers for the new geometry, which is the question nobody asked. So every
+   *  scroll and every programmatic move records it instead.
+   *
+   *  Starts true: a conversation opens at the latest message. */
+  private following = true;
+
+  /** The container height the last scroll event was seen at, so a scroll the
+   *  RESIZE caused can be told from one the reader caused. See `step`. */
+  private hostHeight = 0;
+
   // Optional scroll-jump instrumentation (off by default). Enable at runtime
   // with `localStorage.threadScrollDebug = '1'` or a `?scrolldebug` URL param,
   // then read the `[thread-scroll]` console.debug lines: a `jump` line =
@@ -113,6 +129,7 @@ export class ThreadWindow {
   reset(): void {
     this.above.set([]);
     this.below.set([]);
+    this.following = true; // a fresh conversation opens at its latest message
   }
 
   /** Advance the window for wherever the scroll is now.
@@ -163,6 +180,17 @@ export class ThreadWindow {
         needNewer = true;
       }
     }
+    // ⚠ **A SHRINKING CONTAINER CAN DISPATCH A SCROLL EVENT OF ITS OWN**, and it
+    // must not read as the reader leaving the end of the conversation: the bottom
+    // moved, they did not. Taken at the end of the step so it reflects the
+    // position after any windowing, and gated on the height being the same one
+    // the last scroll was seen at — which is the only way to tell the two apart
+    // from here, `scrollTop` being identical in both.
+    const h = this.host.clientHeight;
+    const resized = h !== this.hostHeight;
+    this.hostHeight = h;
+    if (!resized) this.following = this.atBottom();
+
     // Re-baseline after any windowing so the next jump check compares like
     // frames (a windowing step legitimately re-anchors; that isn't a jump).
     if (this.dbg) {
@@ -270,10 +298,15 @@ export class ThreadWindow {
   }
 
   scrollToBottom(): void {
+    this.following = true;
     this.host.scrollTop = this.host.scrollHeight;
   }
 
   scrollToTs(ts: number): void {
+    // Landing mid-history is the definition of not following the end, whether or
+    // not a row for `ts` turns out to be rendered — so it is recorded before the
+    // early return below, not after it.
+    this.following = false;
     const head = this.host.querySelector<HTMLElement>('.thread-head')?.offsetHeight ?? 0;
     const hostTop = this.host.getBoundingClientRect().top;
     const target = this.msgEls().find((e) => Number(e.dataset['ts']) >= ts) ?? this.msgEls()[0];
@@ -298,6 +331,46 @@ export class ThreadWindow {
       img.addEventListener('load', onSettle, { once: true });
       img.addEventListener('error', onSettle, { once: true });
     }
+  }
+
+  /** Keep the bottom of the conversation visible when the SCROLL CONTAINER
+   *  shrinks under it — on a phone, the soft keyboard opening the moment the
+   *  reader starts typing a reply.
+   *
+   *  ⚠ **`interactive-widget=resizes-content` is only half of the job.** That
+   *  token (index.html) makes the Android keyboard shrink the layout viewport
+   *  instead of sliding over the page, and what it buys is the COMPOSER staying
+   *  above the keys. It does nothing for the conversation: a resize leaves
+   *  `scrollTop` exactly where it was, so the newest messages go below the fold
+   *  by the keyboard's full height. Measured 2026-09-10 at 412x839 with a 350px
+   *  keyboard: the thread sat 350px from the bottom, the last message rendered at
+   *  y 732 with the fold at 489, and the reader was typing a reply to messages
+   *  they could no longer see. The two browser tests that guard the keyboard both
+   *  passed — they assert where the composer is, and neither looks at a message.
+   *
+   *  Any resize, not just a shrink: the keyboard closing again, a rotation, a
+   *  desktop pane being dragged. Re-pinning when already at the bottom is a
+   *  no-op, so the cheap condition is the right one.
+   *
+   *  Returns its own teardown. */
+  observeShrink(): () => void {
+    // jsdom has neither a ResizeObserver nor the layout to feed one. The unit
+    // suite covers the decision (`repinAfterResize`), the browser suite the
+    // geometry — same split as the rest of this file.
+    if (typeof ResizeObserver === 'undefined') return () => undefined;
+    const ro = new ResizeObserver(() => this.repinAfterResize());
+    ro.observe(this.host);
+    return () => ro.disconnect();
+  }
+
+  /** The decision half of `observeShrink`: follow the end of the conversation
+   *  down to the new bottom, or leave a reader who is back in history exactly
+   *  where they are. Returns whether it moved the viewport. */
+  repinAfterResize(): boolean {
+    if (!this.following) return false;
+    this.withScrollLock(() => this.scrollToBottom());
+    this.log('repinAfterResize', { clientHeight: this.host.clientHeight });
+    return true;
   }
 
   /** Set `adjusting` for the duration of a programmatic scroll change AND the

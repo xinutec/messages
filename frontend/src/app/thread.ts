@@ -189,10 +189,17 @@ export class Thread {
     });
 
     const poll = setInterval(() => void this.pollNewer(), POLL_MS);
+    const destroyRef = inject(DestroyRef);
     // ⚠ Cleared with the component. An interval outlives its component
     // otherwise, and every visit to a thread would leave another one running —
     // the request rate climbing with no screen left to show the answers on.
-    inject(DestroyRef).onDestroy(() => clearInterval(poll));
+    destroyRef.onDestroy(() => clearInterval(poll));
+
+    // The soft keyboard opening is a resize of the scroll container, and the
+    // conversation has to follow it or the reader loses the messages they are
+    // replying to — see `ThreadWindow.observeShrink`, which hands back its own
+    // teardown because a ResizeObserver outlives its element otherwise.
+    destroyRef.onDestroy(this.win.observeShrink());
   }
 
   /** The loaded window is NOT anchored to the newest message — the reader was

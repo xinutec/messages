@@ -85,6 +85,34 @@ describe('ThreadWindow', () => {
     expect(win.renderCount()).toBe(1000);
   });
 
+  // ---- following the end of the conversation --------------------------------
+  //
+  // The half of the keyboard fix that needs no layout: WHETHER a resize should
+  // re-pin to the bottom. Whether it then lands there is geometry, and lives in
+  // `e2e/ui-pages.spec.ts` at a real phone viewport with a real 350px shrink.
+
+  it('re-pins to the end when the container resizes under a reader who was at it', () => {
+    const { win } = harness(10);
+    win.scrollToBottom();
+    expect(win.repinAfterResize()).toBe(true);
+  });
+
+  it('leaves a reader who is back in history where they are', () => {
+    const { win } = harness(10);
+    // ⚠ The case that makes the flag worth having. A search hit lands the reader
+    // in 2013; the keyboard opening must not then throw them to the present,
+    // which is what an unconditional re-pin does.
+    win.scrollToTs(1_000_005);
+    expect(win.repinAfterResize()).toBe(false);
+  });
+
+  it('follows the end again for a fresh conversation', () => {
+    const { win } = harness(10);
+    win.scrollToTs(1_000_005);
+    win.reset();
+    expect(win.repinAfterResize()).toBe(true);
+  });
+
   it('forgets what was collapsed when the conversation changes', () => {
     const { win } = harness(1000);
     win.enforceMax('bottom');

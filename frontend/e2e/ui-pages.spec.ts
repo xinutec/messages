@@ -81,6 +81,28 @@ const THREAD = {
   next_cursor: null,
 };
 
+/** A thread TALLER THAN THE PANE, which the four-message `THREAD` above is not.
+ *  The keyboard case is invisible without it: with less content than viewport
+ *  there is no scroll position to lose, `margin-top: auto` holds the composer at
+ *  the foot and every message stays on screen however far the viewport shrinks.
+ *  Sixty short lines overflow a Pixel comfortably. */
+const LONG_THREAD = {
+  messages: Array.from({ length: 60 }, (_, i) => ({
+    id: String(i + 1),
+    ts: Date.UTC(2026, 0, 2, 10, 0) + i * 60_000,
+    sender: i % 2 ? "Test User" : "Alice Andersson",
+    is_outgoing: i % 2 === 1,
+    body: `line number ${i + 1} of the conversation`,
+    deleted: false,
+    edited: false,
+    reactions: [],
+    attachments: [],
+  })),
+  has_more: false,
+  next_cursor: null,
+  prev_cursor: null,
+};
+
 /** Mock every backend call: signed in, the busy list, the busy thread.
  *  Catch-all FIRST — Playwright runs handlers last-registered-first. */
 async function mockApi(page: Page): Promise<void> {
@@ -240,8 +262,72 @@ test("the composer stays above the Android keyboard @ phone width", async ({ pag
   // What was typed is still there, and still the value being edited.
   await expect(input).toHaveValue("half a sentence, still being typed");
 
-  await expectNoTextOverlaps(page, testInfo);
+  // ⚠ **SCOPED TO THE COMPOSER, and it has to be from 2026-09-10.** Shrinking
+  // the viewport now scrolls the thread to keep the newest message visible (the
+  // test below), and a scrolled thread pins the day pill over whatever message
+  // is beneath it — by design: `.day` is a floating label, and thread.scss says
+  // so. `getClientRects` cannot see that the pill is opaque and drawn on top, so
+  // a whole-page scan counts the covered timestamp as a collision. That is the
+  // false positive the harness's own container scope exists for (see
+  // `findTextOverlaps`), and the composer is what this test is about: the draft
+  // colliding with the send glyph is the failure it was written for. Unscoped
+  // coverage of this screen stays in the two tests that own it — the busy-thread
+  // case above and smoke's scrolled multi-day case.
+  await expectNoTextOverlaps(page, testInfo, ".composer");
   await expectNoHorizontalOverflow(page, testInfo);
+});
+
+/** ⚠ **THE OTHER HALF OF THE KEYBOARD, AND IT WAS MISSING.** The test above
+ *  asserts where the composer is; for a long while that was the whole of what
+ *  this suite knew about typing on a phone, and the conversation itself went
+ *  unexamined. Measured 2026-09-10 against the shipped build: with a 350px
+ *  keyboard at 412x839 the composer was exactly where it should be and the last
+ *  message was at y 732 with the fold at 489 — the newest seven messages off the
+ *  bottom of the screen, in the act of replying to them. `interactive-widget=
+ *  resizes-content` shrinks the viewport and leaves `scrollTop` alone, so the
+ *  bottom of the thread walks off by the keyboard's full height.
+ *
+ *  `ThreadWindow.observeShrink` is what closes it, and this is the case that says
+ *  so: ablate the `destroyRef.onDestroy(this.win.observeShrink())` line in
+ *  thread.ts and this fails by ~350px while every other test here stays green. */
+test("the newest message stays visible when the keyboard opens @ phone width", async ({ page }) => {
+  await mockApi(page);
+  // Taller than the pane — see LONG_THREAD. Registered after mockApi so it wins.
+  await page.route("**/api/conversations/**/messages**", (r) => r.fulfill({ json: LONG_THREAD }));
+  await page.goto("/conversation/irc/7");
+  const input = page.getByLabel("Message", { exact: true });
+  await input.waitFor();
+  const last = page.locator('.msg[data-id="60"]');
+  const composer = page.locator(".composer");
+  await last.waitFor();
+
+  // Opening lands at the latest message, so the thread really is at the bottom
+  // before the keyboard arrives. Without this the case could "pass" from a start
+  // position it never had.
+  await expect
+    .poll(() => page.locator("app-thread").evaluate((h) => h.scrollHeight - h.scrollTop - h.clientHeight))
+    .toBeLessThan(64);
+
+  const full = page.viewportSize()!;
+  await input.click();
+  await input.fill("replying to what is on screen");
+  const KEYBOARD = 350; // a Pixel's, near enough — same figure as the test above
+  await page.setViewportSize({ width: full.width, height: full.height - KEYBOARD });
+
+  // The re-pin runs on a ResizeObserver callback, i.e. a frame after the resize.
+  await expect
+    .poll(() => page.locator("app-thread").evaluate((h) => h.scrollHeight - h.scrollTop - h.clientHeight))
+    .toBeLessThan(64);
+
+  // What the reader can actually see: the newest message, whole, above the box
+  // they are typing in and inside the shrunken viewport.
+  const box = (await last.boundingBox())!;
+  const comp = (await composer.boundingBox())!;
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.y + box.height).toBeLessThanOrEqual(comp.y + 1);
+  expect(box.y + box.height).toBeLessThanOrEqual(full.height - KEYBOARD);
+  // And the draft survived the resize, since a re-pin that loses it is no better.
+  await expect(input).toHaveValue("replying to what is on screen");
 });
 
 /** ⚠ ONE TOKEN, AND NOTHING ELSE KNEW ABOUT IT. `interactive-widget=

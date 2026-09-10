@@ -29,8 +29,8 @@ import harness from './e2e/harness.mjs';
  * "fire on a different tick under a production build". That verdict was
  * re-tested rather than inherited: all three pass here against the production
  * build, thread-scroll 5/5 on repeat and the trio 45/45. They mock every
- * `/api/**` call, so they never needed the dev server's proxy — the whole suite
- * is 31 tests in ~6s.
+ * `/api/**` call, so they never needed the dev server's proxy, and the whole suite
+ * still runs in seconds.
  *
  * The cost of the old arrangement was that the app's subtlest code — the scroll
  * windowing engine — had its only browser coverage in the config nobody runs.
