@@ -4,9 +4,7 @@
 //! consults one table, so the test hands it messages directly rather than
 //! seeding a conversation to reach the same three lines.
 
-use messages::archive::{
-    Message, MessageKind, attach_link_images, link_image_state, request_link_image,
-};
+use messages::archive::{Message, MessageKind, attach_link_images, link_image_state, offered_url};
 use messages::link_fetch::url_hash;
 use sqlx::MySqlPool;
 use sqlx::mysql::MySqlPoolOptions;
@@ -133,32 +131,78 @@ async fn offered_row(pool: &MySqlPool) -> String {
 }
 
 #[tokio::test]
-async fn asking_for_an_offered_link_queues_it() {
+async fn an_offered_link_resolves_to_the_address_the_archive_gave_it() {
     let Some(pool) = pool().await else { return };
     let hash = offered_row(&pool).await;
-    assert!(request_link_image(&pool, &hash).await.unwrap());
-    let (state, _) = link_image_state(&pool, &hash).await.unwrap().unwrap();
-    assert_eq!(state, "wanted");
+    assert_eq!(
+        offered_url(&pool, &hash).await.unwrap().as_deref(),
+        Some(OFFERED)
+    );
 }
 
 #[tokio::test]
-async fn asking_for_a_link_nobody_offered_does_nothing() {
-    // ⚠ The refusal that keeps the tap from being a fetch-anything endpoint. A
-    // hash the archive never produced has no row, so there is nothing to promote
-    // and no way for a request to introduce a URL of its own.
+async fn a_hash_nobody_offered_resolves_to_no_address() {
+    // ⚠ The refusal the whole tap rests on. A request carries a hash; the address
+    // comes from the row serving a page created. An invented hash therefore names
+    // nothing, and there is no path by which a caller can introduce a URL to
+    // fetch — which is what would turn this into an open proxy with a button.
     let Some(pool) = pool().await else { return };
-    let invented = "f".repeat(64);
-    assert!(!request_link_image(&pool, &invented).await.unwrap());
-    assert!(link_image_state(&pool, &invented).await.unwrap().is_none());
+    assert!(offered_url(&pool, &"f".repeat(64)).await.unwrap().is_none());
 }
 
 #[tokio::test]
-async fn asking_for_a_link_already_decided_does_not_re_queue_it() {
-    // A decided link needs no asking, and re-queueing one would send us back to
-    // a stranger's server for an answer we already have.
+async fn a_decided_link_is_not_offered_again() {
+    // Already decided, so there is nothing to ask for: resolving it to an address
+    // would send us back to a stranger's server for an answer we hold.
     let Some(pool) = pool().await else { return };
     let hash = url_hash(&Url::parse(REFUSED).unwrap());
-    assert!(!request_link_image(&pool, &hash).await.unwrap());
+    assert!(offered_url(&pool, &hash).await.unwrap().is_none());
     let (state, _) = link_image_state(&pool, &hash).await.unwrap().unwrap();
     assert_eq!(state, "not_image", "left exactly as it was");
+}
+
+// ---- offering ------------------------------------------------------------
+
+const FRESH: &str = "https://cloud.example.org/nc/s/FRESH";
+
+#[tokio::test]
+async fn serving_a_message_offers_its_undecided_links() {
+    // ⚠ THE PATH THAT MAKES A TAP POSSIBLE, and every other test here seeds a
+    // link that is already decided — so this one was never exercised until it
+    // was written. Serving a page must leave the link offered: a row with the
+    // URL from the archive, nothing fetched, and the message carrying the offer
+    // so the UI can draw a control.
+    let Some(pool) = pool().await else { return };
+    let hash = url_hash(&Url::parse(FRESH).unwrap());
+    sqlx::query("DELETE FROM link_images WHERE url_hash = ?")
+        .bind(&hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut msgs = [msg(&format!("look at {FRESH} then"))];
+    attach_link_images(&pool, &mut msgs).await.unwrap();
+
+    assert!(msgs[0].link_images.is_empty(), "nothing is held yet");
+    assert_eq!(msgs[0].link_offers.len(), 1, "the reader is offered it");
+    assert_eq!(msgs[0].link_offers[0].url, FRESH);
+
+    let (state, _) = link_image_state(&pool, &hash).await.unwrap().unwrap();
+    assert_eq!(state, "offered", "registered, not queued");
+}
+
+#[tokio::test]
+async fn offering_a_link_twice_leaves_a_decision_alone() {
+    // A second reading of a conversation must not undo what is known about its
+    // links — serving a page is a read with one insert, never an update.
+    let Some(pool) = pool().await else { return };
+    let hash = url_hash(&Url::parse(REFUSED).unwrap());
+    let mut msgs = [msg(&format!("and {REFUSED} here"))];
+    attach_link_images(&pool, &mut msgs).await.unwrap();
+    let (state, _) = link_image_state(&pool, &hash).await.unwrap().unwrap();
+    assert_eq!(state, "not_image");
+    assert!(
+        msgs[0].link_offers.is_empty(),
+        "a decided link is not offered"
+    );
 }

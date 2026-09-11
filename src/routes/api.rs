@@ -4,12 +4,13 @@
 use axum::Json;
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::{StatusCode, header};
+use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
 use crate::archive;
 use crate::error::AppError;
+use crate::link_fetch;
 use crate::session::AuthUser;
 use crate::state::AppState;
 
@@ -186,25 +187,32 @@ pub async fn request_link_image(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
     Path(id): Path<String>,
-) -> Result<StatusCode, AppError> {
-    if archive::request_link_image(&app.pool, &id).await? {
-        Ok(StatusCode::ACCEPTED)
-    } else {
-        Err(AppError::NotFound)
-    }
-}
-
-/// GET /api/link-images/{id}/state → what became of a link somebody asked for.
-///
-/// The UI polls this after a tap and stops on anything that is not `wanted`: a
-/// picture to show, or a decision that there is none.
-pub async fn link_image_state(
-    State(app): State<AppState>,
-    AuthUser(_user): AuthUser,
-    Path(id): Path<String>,
 ) -> Result<Json<LinkImageState>, AppError> {
-    let Some((state, content_type)) = archive::link_image_state(&app.pool, &id).await? else {
+    // The URL comes off the row the archive created, never off the request.
+    let Some(url) = archive::offered_url(&app.pool, &id).await? else {
         return Err(AppError::NotFound);
+    };
+    let url = url::Url::parse(&url).map_err(|_| AppError::NotFound)?;
+
+    // ⚠ **SYNCHRONOUS, BECAUSE SOMEBODY IS WATCHING.** This was a queue drained
+    // by a CronJob, whose floor is one minute — two minutes of "fetching…" for a
+    // tap in a chat client. The work still happens in the other pod; what changed
+    // is that we wait for it rather than leaving the reader to poll.
+    let outcome = link_fetch::resolve_one(
+        &app.pool,
+        &app.http,
+        &app.cfg.link_fetcher_url,
+        std::path::Path::new(&app.cfg.link_images_dir),
+        &url,
+    )
+    .await?;
+    let (state, content_type) = match outcome {
+        link_fetch::Outcome::Ok => {
+            let held = archive::link_image_state(&app.pool, &id).await?;
+            ("ok".to_string(), held.and_then(|(_, ct)| ct))
+        }
+        link_fetch::Outcome::NotImage => ("not_image".to_string(), None),
+        link_fetch::Outcome::Failed => ("failed".to_string(), None),
     };
     Ok(Json(LinkImageState {
         state,

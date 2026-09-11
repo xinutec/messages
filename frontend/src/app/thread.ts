@@ -23,10 +23,6 @@ import { Conversation, LinkOffer, Message, Origin } from './models';
  *  query is indexed on `(conversation_id, sent_at)` and returns one page. */
 const POLL_MS = 5000;
 
-/** How often to ask what became of a link a reader asked for. The fetcher runs
- *  on its own schedule, so this is about how soon the picture appears once it
- *  has, not about how fast it is fetched. */
-const LINK_POLL_MS = 3000;
 
 @Component({
   selector: 'app-thread',
@@ -203,7 +199,6 @@ export class Thread {
     destroyRef.onDestroy(() => clearInterval(poll));
     destroyRef.onDestroy(() => {
       if (this.recheck != null) clearTimeout(this.recheck);
-      if (this.awaitTimer != null) clearTimeout(this.awaitTimer);
       // ⚠ **AND THE `?from` DEBOUNCE, which navigates.** It was cleared only to
       // reschedule itself, never on destroy, so scrolling and leaving inside its
       // 300ms window left a timer that called `commitFromParam` on a dead
@@ -649,76 +644,53 @@ export class Thread {
    *  messages come from. */
   // ---- pictures behind links -----------------------------------------------
 
-  /** Links a reader has asked for and we are still waiting on. Polled together
-   *  rather than one timer each: a conversation can offer dozens. */
-  private readonly awaiting = new Set<string>();
-  private awaitTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Links whose request is in flight. Local, because the answer comes back on
+   *  that same request — there is no queue to poll and nothing to reconcile. */
+  private readonly asking = signal<ReadonlySet<string>>(new Set());
+
+  protected isAsking(id: string): boolean {
+    return this.asking().has(id);
+  }
 
   /** A reader tapped "show this picture".
    *
    *  ⚠ **NOTHING IS FETCHED UNTIL SOMEBODY ASKS.** Opening a conversation only
-   *  OFFERS its links; this is the ask. The picture is then fetched by a
-   *  scheduled job with its own way out of the cluster — this app has none — and
-   *  appears here when the poll below sees it land. */
+   *  OFFERS its links. This asks, and the answer — a picture, or that there is
+   *  none — comes back on the same request: the fetching happens in a pod with
+   *  its own way out of the cluster and no access to the archive, and this app
+   *  waits for it rather than leaving the reader to watch a spinner on a queue.
+   */
   protected requestLinkImage(offer: LinkOffer): void {
-    this.markRequested(offer.id);
+    this.setAsking(offer.id, true);
     this.api.requestLinkImage(offer.id).subscribe({
-      next: () => this.awaitLinkImage(offer.id),
-      // A 404 means the offer is stale: the page was served before the link was
-      // decided and it has since been. The next poll of the thread carries the
-      // picture, or the offer is gone; either way a red error here would be
-      // about our bookkeeping rather than about anything the reader did.
-      error: () => this.awaitLinkImage(offer.id),
+      next: (state) => {
+        this.setAsking(offer.id, false);
+        if (state.state === 'ok' && state.content_type) {
+          this.landLinkImage(offer.id, state.content_type);
+        } else {
+          // Reached it and it is not a picture, or it could not be reached. The
+          // control goes: leaving one that would do nothing is worse than none.
+          this.dropOffer(offer.id);
+        }
+      },
+      error: () => {
+        this.setAsking(offer.id, false);
+        this.dropOffer(offer.id);
+      },
     });
   }
 
-  private markRequested(id: string): void {
-    this.messages.update((cur) =>
-      cur.map((m) =>
-        m.link_offers.some((o) => o.id === id)
-          ? { ...m, link_offers: m.link_offers.map((o) => (o.id === id ? { ...o, requested: true } : o)) }
-          : m,
-      ),
-    );
+  private setAsking(id: string, on: boolean): void {
+    this.asking.update((cur) => {
+      const next = new Set(cur);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
   }
 
-  private awaitLinkImage(id: string): void {
-    this.awaiting.add(id);
-    this.scheduleAwait();
-  }
-
-  private scheduleAwait(): void {
-    if (this.awaitTimer != null || this.awaiting.size === 0) return;
-    this.awaitTimer = setTimeout(() => {
-      this.awaitTimer = null;
-      void this.pollAwaited();
-    }, LINK_POLL_MS);
-  }
-
-  private async pollAwaited(): Promise<void> {
-    for (const id of [...this.awaiting]) {
-      let state;
-      try {
-        state = await firstValueFrom(this.api.linkImageState(id));
-      } catch {
-        this.awaiting.delete(id); // gone; nothing more to wait for
-        continue;
-      }
-      if (state.state === 'ok' && state.content_type) {
-        this.awaiting.delete(id);
-        this.landLinkImage(id, state.content_type);
-      } else if (state.state !== 'wanted' && state.state !== 'offered') {
-        // Decided, and not a picture. The offer goes: leaving a control that
-        // would do nothing is worse than saying nothing at all.
-        this.awaiting.delete(id);
-        this.dropOffer(id);
-      }
-    }
-    this.scheduleAwait();
-  }
-
-  /** Swap the offer for the picture, in place, without reloading the thread —
-   *  the reader is looking at the message it belongs to. */
+  /** Swap the offer for the picture, in place — the reader is looking at the
+   *  message it belongs to. */
   private landLinkImage(id: string, contentType: string): void {
     this.messages.update((cur) =>
       cur.map((m) => {

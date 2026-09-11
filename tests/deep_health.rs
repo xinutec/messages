@@ -51,6 +51,7 @@ fn cfg() -> Config {
         static_dir: None,
         attachments_dir: "/nonexistent".to_string(),
         link_images_dir: "/link-images".into(),
+        link_fetcher_url: "http://link-fetch.invalid".into(),
         irc_send: None,
     }
 }

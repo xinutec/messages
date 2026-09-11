@@ -26,13 +26,11 @@ export class MessagesApi {
   /** Ask for a picture behind a link. The id is the one the page offered — the
    *  browser never names an address, which is what keeps this from being a
    *  fetch-anything endpoint. */
-  requestLinkImage(id: string): Observable<void> {
-    return this.http.post<void>(`/api/link-images/${encodeURIComponent(id)}/request`, {});
-  }
-
-  /** What became of it. Polled after a request until the state settles. */
-  linkImageState(id: string): Observable<LinkImageState> {
-    return this.http.get<LinkImageState>(`/api/link-images/${encodeURIComponent(id)}/state`);
+  requestLinkImage(id: string): Observable<LinkImageState> {
+    return this.http.post<LinkImageState>(
+      `/api/link-images/${encodeURIComponent(id)}/request`,
+      {},
+    );
   }
 
   conversations(): Observable<Conversation[]> {

@@ -40,16 +40,16 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
     // it — reading is what makes a picture worth having — and leaves `wanted`
     // when the fetcher has asked. The states are a lifecycle, not a set of flags:
     //
-    //     offered → wanted → ok          the bytes are on the volume
-    //                       → not_image   reached it; not a picture we may inline
-    //                       → failed      could not reach it, or broke the limits
+    //     offered → ok          the bytes are on the volume
+    //             → not_image   reached it; not a picture we may inline
+    //             → failed      could not reach it, or broke the limits
     //
     // ⚠ **`offered` IS WHAT MAKES THE TAP SAFE.** Serving a page registers each
     // of its links here with the URL TAKEN FROM THE ARCHIVE, and asking for one
-    // is a promotion of that row by its hash. The browser therefore never names
-    // an address to fetch — if it could, this would be an endpoint that fetches
-    // anything anyone asks for, wearing a button. Nothing is fetched at `offered`;
-    // a person has to ask.
+    // names that row by its hash. The browser therefore never names an address to
+    // fetch — if it could, this would be an endpoint that fetches anything anyone
+    // asks for, wearing a button. Nothing is fetched at `offered`; a person has
+    // to ask, and the answer comes back on that same request.
     //
     // ⚠ **THE REFUSALS ARE ROWS TOO.** A link that is not a picture must be
     // remembered as not one, or every reading of that conversation asks a
@@ -59,7 +59,7 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
         r"CREATE TABLE IF NOT EXISTS link_images (
             url_hash     CHAR(64)     NOT NULL PRIMARY KEY,
             url          TEXT         NOT NULL,
-            state        ENUM('offered','wanted','ok','not_image','failed') NOT NULL,
+            state        ENUM('offered','ok','not_image','failed') NOT NULL,
             content_type VARCHAR(128) NULL,
             size_bytes   BIGINT       NULL,
             stored_name  VARCHAR(80)  NULL,
@@ -79,6 +79,9 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
     // framework this app deliberately does not have.
     for alter in [
         "ALTER TABLE link_images MODIFY COLUMN state ENUM('offered','wanted','ok','not_image','failed') NOT NULL",
+        // `wanted` was the queue a CronJob drained. The fetch is synchronous now,
+        // so no row rests there; the value stays in the enum only long enough for
+        // any straggler to be re-offered, and is not written by anything.
         "ALTER TABLE link_images ADD COLUMN IF NOT EXISTS wanted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
         "ALTER TABLE link_images MODIFY COLUMN fetched_at DATETIME NULL",
     ] {

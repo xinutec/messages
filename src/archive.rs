@@ -243,11 +243,9 @@ pub struct Message {
 pub struct LinkOffer {
     /// The link as typed — what the control is offering to show.
     pub url: String,
-    /// Its handle: `POST /api/link-images/{id}/request`, then poll
-    /// `/api/link-images/{id}/state`.
+    /// Its handle: `POST /api/link-images/{id}/request`, which answers with what
+    /// the link turned out to be.
     pub id: String,
-    /// Somebody has already asked; the fetcher has not got to it yet.
-    pub requested: bool,
 }
 
 fn is_image(ct: Option<&str>) -> bool {
@@ -280,70 +278,68 @@ pub async fn attach_link_images(pool: &MySqlPool, msgs: &mut [Message]) -> Resul
         h
     };
     let placeholders = vec!["?"; hashes.len()].join(",");
+    // ⚠ **EVERY STATE, NOT JUST THE PICTURES.** Selecting only `ok` rows made a
+    // link we had already decided against look unseen, so the page offered a
+    // control for it — and tapping that control 404s, because a decided row is
+    // rightly not resolvable to an address. A button that cannot work is worse
+    // than no button.
     let sql = format!(
-        "SELECT url_hash, content_type FROM link_images
-         WHERE state = 'ok' AND content_type IS NOT NULL AND url_hash IN ({placeholders})",
+        "SELECT url_hash, state, content_type FROM link_images
+         WHERE url_hash IN ({placeholders})",
     );
     // Fixed template + computed placeholder count, values bound — safe.
     let mut q = sqlx::query(AssertSqlSafe(sql));
     for h in &hashes {
         q = q.bind(*h);
     }
-    let mut held: Vec<(String, String)> = Vec::new();
+    let mut known: Vec<(String, String, Option<String>)> = Vec::new();
     for row in q.fetch_all(pool).await? {
-        held.push((row.try_get("url_hash")?, row.try_get("content_type")?));
+        known.push((
+            row.try_get("url_hash")?,
+            row.try_get("state")?,
+            row.try_get("content_type")?,
+        ));
     }
 
-    // Which of this page's links nobody has asked about yet. Anything already in
-    // the table — held, refused or unreachable — has a decision and is not asked
-    // about again.
-    let mut undecided: Vec<(&str, &str)> = Vec::new();
+    // Three outcomes per link, and the middle one is the feature:
+    //   a picture we hold → render it
+    //   never seen, or offered and not yet asked for → offer it
+    //   decided against → nothing; it stays a link
+    let mut unseen: Vec<(&str, &str)> = Vec::new();
     for (hash, url, i) in &wanted {
-        if let Some((_, content_type)) = held.iter().find(|(h, _)| h == hash) {
-            msgs[*i].link_images.push(LinkImage {
-                url: url.clone(),
-                id: hash.clone(),
-                content_type: content_type.clone(),
-            });
-        } else if !undecided.iter().any(|(h, _)| h == hash) {
-            undecided.push((hash.as_str(), url.as_str()));
+        let already_offered = msgs[*i].link_offers.iter().any(|o| o.id == *hash);
+        match known.iter().find(|(h, _, _)| h == hash) {
+            Some((_, state, Some(content_type))) if state == "ok" => {
+                msgs[*i].link_images.push(LinkImage {
+                    url: url.clone(),
+                    id: hash.clone(),
+                    content_type: content_type.clone(),
+                });
+            }
+            Some((_, state, _)) if state == "offered" => {
+                if !already_offered {
+                    msgs[*i].link_offers.push(LinkOffer {
+                        id: hash.clone(),
+                        url: url.clone(),
+                    });
+                }
+            }
+            Some(_) => {} // decided: not a picture, or unreachable
+            None => {
+                if !unseen.iter().any(|(h, _)| h == hash) {
+                    unseen.push((hash.as_str(), url.as_str()));
+                }
+                if !already_offered {
+                    msgs[*i].link_offers.push(LinkOffer {
+                        id: hash.clone(),
+                        url: url.clone(),
+                    });
+                }
+            }
         }
     }
-    // Offer the rest: the reader sees a control, and nothing is fetched unless
-    // they tap it.
-    let asked: Vec<String> = already_asked(pool, &undecided).await?;
-    for (hash, url, i) in &wanted {
-        if msgs[*i].link_images.iter().any(|li| li.id == *hash) {
-            continue;
-        }
-        if msgs[*i].link_offers.iter().any(|o| o.id == *hash) {
-            continue;
-        }
-        msgs[*i].link_offers.push(LinkOffer {
-            id: hash.clone(),
-            url: url.clone(),
-            requested: asked.contains(hash),
-        });
-    }
-    offer(pool, &undecided).await?;
+    offer(pool, &unseen).await?;
     Ok(())
-}
-
-/// Which of these links somebody has already asked for — so a second reader sees
-/// "fetching" rather than a button that does nothing new.
-async fn already_asked(pool: &MySqlPool, links: &[(&str, &str)]) -> Result<Vec<String>> {
-    if links.is_empty() {
-        return Ok(Vec::new());
-    }
-    let placeholders = vec!["?"; links.len()].join(",");
-    let sql = format!(
-        "SELECT url_hash FROM link_images WHERE state = 'wanted' AND url_hash IN ({placeholders})",
-    );
-    let mut q = sqlx::query_scalar::<_, String>(AssertSqlSafe(sql));
-    for (hash, _) in links {
-        q = q.bind(*hash);
-    }
-    Ok(q.fetch_all(pool).await?)
 }
 
 /// Register this page's links so they can be asked for later, WITHOUT asking for
@@ -373,21 +369,19 @@ async fn offer(pool: &MySqlPool, links: &[(&str, &str)]) -> Result<()> {
     Ok(())
 }
 
-/// A reader asked for one. Promotes an OFFERED row to wanted; anything else is
-/// left alone, so this cannot re-queue a decided link or invent a new one.
-pub async fn request_link_image(pool: &MySqlPool, id: &str) -> Result<bool> {
-    let done = sqlx::query(
-        "UPDATE link_images SET state = 'wanted', wanted_at = NOW()
-         WHERE url_hash = ? AND state IN ('offered','wanted')",
+/// The URL of a link we offered, if we did. This is what keeps a request from
+/// naming an address: the caller hands us a hash, and the address comes back off
+/// the row that serving a page created from the message's own text.
+pub async fn offered_url(pool: &MySqlPool, id: &str) -> Result<Option<String>> {
+    Ok(
+        sqlx::query_scalar("SELECT url FROM link_images WHERE url_hash = ? AND state = 'offered'")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?,
     )
-    .bind(id)
-    .execute(pool)
-    .await
-    .context("requesting a link image")?;
-    Ok(done.rows_affected() > 0)
 }
 
-/// What the UI polls after a tap: the link's state, and the type once it is one.
+/// A link's state and, once there is a picture, its type.
 pub async fn link_image_state(
     pool: &MySqlPool,
     id: &str,

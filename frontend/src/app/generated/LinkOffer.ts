@@ -9,11 +9,7 @@ export type LinkOffer = {
  */
 url: string, 
 /**
- * Its handle: `POST /api/link-images/{id}/request`, then poll
- * `/api/link-images/{id}/state`.
+ * Its handle: `POST /api/link-images/{id}/request`, which answers with what
+ * the link turned out to be.
  */
-id: string, 
-/**
- * Somebody has already asked; the fetcher has not got to it yet.
- */
-requested: boolean, };
+id: string, };

@@ -1140,6 +1140,7 @@ async fn sending_state(pool: &MySqlPool) -> AppState {
         static_dir: None,
         attachments_dir: "/nonexistent".to_string(),
         link_images_dir: "/link-images".into(),
+        link_fetcher_url: "http://link-fetch.invalid".into(),
         // Unread by the handler, which consults `app.irc` — the prepared sender
         // above is what decides whether sending is configured.
         irc_send: None,

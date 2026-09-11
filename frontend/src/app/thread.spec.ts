@@ -293,12 +293,11 @@ describe('Thread link offers', () => {
         {
           ...msg('d', 100),
           body: 'look https://cloud.example.org/nc/s/T',
-          link_offers: [{ url: 'https://cloud.example.org/nc/s/T', id: 'h1', requested: false }],
+          link_offers: [{ url: 'https://cloud.example.org/nc/s/T', id: 'h1' }],
         },
       ]),
     );
-    api.requestLinkImage = vi.fn().mockReturnValue(of(undefined));
-    api.linkImageState = vi.fn().mockReturnValue(of({ state: 'wanted', content_type: null }));
+    api.requestLinkImage = vi.fn().mockReturnValue(of({ state: 'ok', content_type: 'image/jpeg' }));
     ref.setInput('origin', 'irc');
     ref.setInput('id', '7');
     fixture.detectChanges();
@@ -325,13 +324,26 @@ describe('Thread link offers', () => {
     expect(api.requestLinkImage).toHaveBeenCalledWith('h1');
   });
 
-  it('says it is fetching, so a second tap is not the only feedback', async () => {
+  it('shows the picture the request answered with, in place', async () => {
+    // ⚠ The answer arrives ON the request. There is no queue to poll: the web pod
+    // asks the fetch service, which holds no credentials and no storage, and
+    // hands the bytes back.
     const { f } = await withOffer();
     (f.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('.link-offer button')!.click();
     f.detectChanges();
     const el = f.nativeElement as HTMLElement;
-    expect(el.querySelector('.link-offer .waiting')).not.toBeNull();
-    expect(el.querySelector('.link-offer button')).toBeNull();
+    expect(el.querySelector('.link-offer')).toBeNull();
+    expect(el.querySelector('.msg img')?.getAttribute('src')).toBe('/api/link-images/h1');
+  });
+
+  it('takes the control away when the link turns out not to be a picture', async () => {
+    const { f, api } = await withOffer();
+    api.requestLinkImage.mockReturnValue(of({ state: 'not_image', content_type: null }));
+    (f.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('.link-offer button')!.click();
+    f.detectChanges();
+    const el = f.nativeElement as HTMLElement;
+    expect(el.querySelector('.link-offer')).toBeNull();
+    expect(el.querySelectorAll('.msg img').length).toBe(0);
   });
 });
 

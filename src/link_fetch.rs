@@ -69,83 +69,23 @@ pub fn url_hash(url: &Url) -> String {
     hex::encode(Sha256::digest(url.as_str().as_bytes()))
 }
 
-/// What a run did, for the log line that is the only thing anyone sees.
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct RunReport {
-    pub stored: u32,
-    pub not_image: u32,
-    pub failed: u32,
-    pub taken: usize,
-    pub still_wanted: i64,
-}
-
-/// The links readers have asked for, newest want first.
+/// Ask the fetch service for a picture, and write down what came back.
 ///
-/// ⚠ **NEWEST FIRST, because a want is somebody currently looking at a
-/// conversation.** Oldest-first would serve a page read last Tuesday before the
-/// one open on a phone right now, and the reader watching for a picture to
-/// appear is the entire reason this queue exists.
-pub async fn wanted(pool: &MySqlPool, batch: usize) -> Result<Vec<Url>> {
-    let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT url FROM link_images WHERE state = 'wanted' ORDER BY wanted_at DESC LIMIT ?",
-    )
-    .bind(batch as u32)
-    .fetch_all(pool)
-    .await
-    .context("reading the want queue")?;
-    Ok(rows.iter().filter_map(|(u,)| Url::parse(u).ok()).collect())
-}
-
-/// How many links are still waiting to be asked about.
-pub async fn still_wanted(pool: &MySqlPool) -> Result<i64> {
-    Ok(
-        sqlx::query_scalar("SELECT COUNT(*) FROM link_images WHERE state = 'wanted'")
-            .fetch_one(pool)
-            .await?,
-    )
-}
-
-/// One pass: take what readers have asked for, ask those servers, record what
-/// they said.
-///
-/// ⚠ **NOTHING HERE LOOKS AT THE ARCHIVE.** An earlier version walked it — every
-/// link ever posted, whether or not a person had ever opened the conversation —
-/// and the shape of that was wrong twice over: forty thousand strangers' servers
-/// asked on nobody's behalf, while the one picture somebody actually asked about
-/// sat seventy-five days down a queue. Reading a conversation is what makes its
-/// pictures worth having, so reading is what puts a link in front of this.
-pub async fn run(
-    pool: &MySqlPool,
-    client: &reqwest::Client,
-    dir: &Path,
-    limits: Limits,
-    batch: usize,
-) -> Result<RunReport> {
-    let urls = wanted(pool, batch).await?;
-    let mut report = RunReport {
-        taken: urls.len(),
-        ..RunReport::default()
-    };
-    for url in &urls {
-        match resolve_one(pool, client, dir, url, limits).await? {
-            Outcome::Ok => report.stored += 1,
-            Outcome::NotImage => report.not_image += 1,
-            Outcome::Failed => report.failed += 1,
-        }
-    }
-    report.still_wanted = still_wanted(pool).await?;
-    Ok(report)
-}
-
-/// Ask one server about one link, and write down what it said.
+/// ⚠ **THE WEB POD DOES NOT FETCH, AND THE FETCHER DOES NOT READ.** This side
+/// holds the archive's credentials and the stored pictures; the other side holds
+/// a socket to the internet and nothing else. The bytes come back over one
+/// in-cluster request, so a fetcher that has been talked into something by a
+/// hostile page has no database to read, no volume to write and no credential to
+/// steal — the worst it can do is lie about the bytes of a picture somebody
+/// asked for, which is the same thing the remote server could have done anyway.
 pub async fn resolve_one(
     pool: &MySqlPool,
     client: &reqwest::Client,
+    service: &str,
     dir: &Path,
     url: &Url,
-    limits: Limits,
 ) -> Result<Outcome> {
-    match fetch_picture(client, url, limits).await {
+    match ask_service(client, service, url).await {
         Ok(Some((bytes, content_type))) => {
             let name = store(dir, url, &content_type, &bytes)?;
             record(
@@ -165,8 +105,6 @@ pub async fn resolve_one(
             Ok(Outcome::NotImage)
         }
         Err(e) => {
-            // The reason is kept because "failed" with no reason is the kind of
-            // row that gets re-tried by hand for ever.
             let note = e.to_string();
             record(pool, url, Outcome::Failed, None, None, None, Some(&note)).await?;
             Ok(Outcome::Failed)
@@ -174,9 +112,46 @@ pub async fn resolve_one(
     }
 }
 
+/// One in-cluster request. 204 means "reached it, not a picture"; a 5xx carries
+/// the reason, which is kept because "failed" with no reason is the kind of row
+/// that gets retried by hand for ever.
+async fn ask_service(
+    client: &reqwest::Client,
+    service: &str,
+    url: &Url,
+) -> Result<Option<(Vec<u8>, String)>> {
+    let res = client
+        .post(format!("{service}/fetch"))
+        .json(&serde_json::json!({ "url": url.as_str() }))
+        .send()
+        .await
+        .context("asking the link fetcher")?;
+    if res.status() == reqwest::StatusCode::NO_CONTENT {
+        return Ok(None);
+    }
+    if !res.status().is_success() {
+        let status = res.status();
+        let why = res.text().await.unwrap_or_default();
+        anyhow::bail!(
+            "fetcher said {status}: {}",
+            why.chars().take(200).collect::<String>()
+        );
+    }
+    let content_type = res
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(';').next().unwrap_or(s).trim().to_owned())
+        .unwrap_or_default();
+    if !content_type.starts_with("image/") {
+        return Ok(None);
+    }
+    Ok(Some((res.bytes().await?.to_vec(), content_type)))
+}
+
 /// Two GETs at most: the page, then the picture the page named. Returns None when
 /// the link is simply not an inlineable picture, which is not an error.
-async fn fetch_picture(
+pub async fn fetch_picture(
     client: &reqwest::Client,
     url: &Url,
     limits: Limits,

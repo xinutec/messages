@@ -61,6 +61,10 @@ pub struct Config {
     /// only thing that writes it). Served by the name recorded in `link_images`.
     pub link_images_dir: String,
 
+    /// Where the fetch service answers, in-cluster. It holds no credentials and
+    /// no storage — see `bin/link-fetch.rs` for why that is the whole point.
+    pub link_fetcher_url: String,
+
     /// Where irssi is, for the one thing this app does that is not a read.
     /// `None` disables sending entirely — see [`IrcSend`].
     pub irc_send: Option<IrcSend>,
@@ -126,6 +130,7 @@ impl Config {
             static_dir: std::env::var("STATIC_DIR").ok(),
             attachments_dir: env_or("ATTACHMENTS_DIR", "/attachments"),
             link_images_dir: env_or("LINK_IMAGES_DIR", "/link-images"),
+            link_fetcher_url: env_or("LINK_FETCHER_URL", "http://messages-link-fetch:8080"),
             irc_send: Self::irc_send_from_env()?,
         })
     }

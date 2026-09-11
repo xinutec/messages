@@ -29,6 +29,7 @@ fn cfg(allowed: &[&str]) -> Config {
         static_dir: None,
         attachments_dir: String::new(),
         link_images_dir: "/link-images".into(),
+        link_fetcher_url: "http://link-fetch.invalid".into(),
         irc_send: None,
     }
 }
