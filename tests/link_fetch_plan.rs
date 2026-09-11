@@ -107,3 +107,22 @@ fn an_empty_chunk_claims_nothing() {
     assert!(p.urls.is_empty());
     assert_eq!(p.examined_through, None);
 }
+
+#[test]
+fn the_examined_count_is_the_prefix_that_was_finished() {
+    // The log line's number must name what it counts: a chunk is read ahead of
+    // what the budget can cover, and reporting its length claimed credit for
+    // lines the watermark never moved over.
+    let lines = [
+        line(10, "https://a.example/1"),
+        line(9, "https://a.example/2"),
+        line(8, "https://a.example/3"),
+    ];
+    let p = plan(&lines, &nothing_decided, 2);
+    assert_eq!(p.examined_through, Some(9));
+    assert_eq!(
+        messages::link_fetch::examined_count(&lines, p.examined_through),
+        2
+    );
+    assert_eq!(messages::link_fetch::examined_count(&lines, None), 0);
+}

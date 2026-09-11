@@ -230,6 +230,16 @@ async fn decided_set(
     Ok(q.fetch_all(pool).await?.into_iter().collect())
 }
 
+/// How many of a chunk were examined: the prefix up to and including the last
+/// line `plan` finished. The chunk is read ahead of what a budget can cover, so
+/// this is always ≤ its length.
+pub fn examined_count(chunk: &[Line], through: Option<i64>) -> usize {
+    match through {
+        None => 0,
+        Some(id) => chunk.iter().position(|l| l.id == id).map_or(0, |i| i + 1),
+    }
+}
+
 /// `low` once the walk has reached the beginning of the archive. Zero rather
 /// than the oldest line's id, so that "finished" is a value and not an inference
 /// from a watermark that has stopped moving.
@@ -272,7 +282,12 @@ pub async fn run(
         if let Some(through) = planned.examined_through {
             at.high = through;
         }
-        report.examined_new = above.len();
+        // ⚠ How many were EXAMINED, not how many were read. The chunk is a read
+        // ahead; `plan` stops at the last line it could finish, and the rest are
+        // left for the next run. Reporting the chunk size said "examined 5000"
+        // for a run whose watermark had moved over a few hundred — a number that
+        // names one thing and counts another.
+        report.examined_new = examined_count(&above, planned.examined_through);
         urls.extend(planned.urls);
     }
 
@@ -298,7 +313,7 @@ pub async fn run(
                     at.low = BACKFILL_DONE;
                 }
             }
-            report.examined_old = below.len();
+            report.examined_old = examined_count(&below, planned.examined_through);
             urls.extend(planned.urls);
         }
     }
