@@ -44,6 +44,11 @@ RUN groupadd --gid 65532 messages \
     && useradd --uid 65532 --gid messages --no-create-home --shell /usr/sbin/nologin messages
 WORKDIR /app
 COPY --from=backend /app/target/release/messages /usr/local/bin/messages
+# ⚠ The SECOND binary, and forgetting it is invisible until a CronJob crashloops
+# at 17 past the hour: the image builds, the web app runs, and the only symptom
+# is a scheduled pod that cannot exec `link-fetch`. It is the fetcher that talks
+# to the open internet; the server never does.
+COPY --from=backend /app/target/release/link-fetch /usr/local/bin/link-fetch
 COPY --from=frontend /fe/dist/messages-web/browser ./public
 ENV STATIC_DIR=/app/public \
     BIND_ADDR=0.0.0.0:8080
