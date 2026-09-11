@@ -72,6 +72,19 @@
                   </a>
                 </div>
               }
+              <!-- ⚠ AN OFFER, NOT A PICTURE. Opening a conversation does not
+                   fetch anything: it only says which links we could fetch. The
+                   reader asks, a scheduled job with its own way out of the
+                   cluster does the fetching, and the picture arrives here. -->
+              @for (o of m.link_offers; track o.id) {
+                <div class="link-offer">
+                  @if (o.requested) {
+                    <span class="waiting">fetching the picture…</span>
+                  } @else {
+                    <button type="button" (click)="requestLinkImage(o)">Show picture</button>
+                  }
+                </div>
+              }
               @for (a of m.attachments; track a.id) {
                 <div class="attach">
                   <!-- The name comes from `attachment.ts`, which `copy-log.ts`

@@ -11,6 +11,8 @@ export * from "./generated/Attachment";
 export * from "./generated/Conversation";
 export * from "./generated/ConversationKind";
 export * from "./generated/LinkImage";
+export * from "./generated/LinkImageState";
+export * from "./generated/LinkOffer";
 export * from "./generated/Me";
 export * from "./generated/Message";
 export * from "./generated/MessageKind";

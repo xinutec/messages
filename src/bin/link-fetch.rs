@@ -1,9 +1,9 @@
 //! The scheduled half of inlining a linked picture: reach the open internet,
 //! decide, store. Runs as a CronJob with its own egress; the web pod has none.
 //!
-//! Deliberately boring and bounded — a run asks about at most `LINK_FETCH_BATCH`
-//! links and then stops, so a first pass over years of archive is spread across
-//! runs rather than arriving at somebody's server all at once.
+//! Takes what readers have asked for, in the order they asked, up to
+//! `LINK_FETCH_BATCH` a run. Nothing here reads the archive: a link reaches this
+//! queue because somebody was served a message containing it.
 
 use std::path::PathBuf;
 
@@ -26,10 +26,6 @@ async fn main() -> Result<()> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(25);
-    let scan: u32 = std::env::var("LINK_FETCH_SCAN")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(5000);
 
     let pool = db::connect(cfg.db_options.clone()).await?;
     db::ensure_schema(&pool).await?;
@@ -42,47 +38,19 @@ async fn main() -> Result<()> {
         .redirect(reqwest::redirect::Policy::limited(3))
         .build()?;
 
-    let before = link_fetch::progress(&pool).await?;
-    let r = link_fetch::run(
-        &pool,
-        &client,
-        &dir,
-        link_fetch::Limits::default(),
-        batch,
-        scan,
-    )
-    .await?;
+    let r = link_fetch::run(&pool, &client, &dir, link_fetch::Limits::default(), batch).await?;
 
-    // ⚠ The WATERMARKS are the line worth printing. "stored 4" says a run
-    // happened; `low` moving says the backfill is getting somewhere, and `low`
-    // standing still across runs is the only symptom that the archive is not
-    // being walked — which is exactly how the first version of this went
-    // unnoticed until someone asked about a day in 2025.
+    // ⚠ `still_wanted` is the number that means something. "stored 2" says a run
+    // happened; a queue that keeps growing says readers are asking for more than
+    // this cadence delivers, and a queue at zero says everything anyone has
+    // looked at has been decided — which is the steady state this should sit in.
     tracing::info!(
-        "examined {} new + {} old line(s); stored {}, not a picture {}, unreachable {}",
-        r.examined_new,
-        r.examined_old,
+        "took {} want(s); stored {}, not a picture {}, unreachable {}; {} still wanted",
+        r.taken,
         r.stored,
         r.not_image,
-        r.failed
+        r.failed,
+        r.still_wanted
     );
-    if let Some(after) = r.progress {
-        if after.low == link_fetch::BACKFILL_DONE {
-            tracing::info!(
-                "progress: high {} -> {}; the backfill has reached the beginning of the archive",
-                before.high,
-                after.high
-            );
-        } else {
-            tracing::info!(
-                "progress: high {} -> {}, low {} -> {}; {} older line(s) still to examine",
-                before.high,
-                after.high,
-                before.low,
-                after.low,
-                (after.low - 1).max(0)
-            );
-        }
-    }
     Ok(())
 }

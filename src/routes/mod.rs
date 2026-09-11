@@ -107,6 +107,8 @@ pub fn router(state: AppState) -> Router {
         .route("/conversations/{origin}/{id}/send", post(api::send))
         .route("/attachments/{id}", get(api::attachment))
         .route("/link-images/{id}", get(api::link_image))
+        .route("/link-images/{id}/request", post(api::request_link_image))
+        .route("/link-images/{id}/state", get(api::link_image_state))
         .route("/search", get(api::search))
         // What the person did, folded into the same log as what the API saw.
         .route("/telemetry", post(telemetry::record));

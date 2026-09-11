@@ -32,42 +32,69 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
     .await
     .context("creating sessions table")?;
 
-    // What a link in a message turned out to be, keyed by the link itself: the
-    // same picture posted in three channels is fetched once.
+    // What is known about a link somebody posted, keyed by the link itself: the
+    // same picture posted in three channels is one row and one fetch.
     //
-    // ⚠ **THE REFUSALS ARE ROWS TOO, and that is the point of `state`.** A link
-    // that is not a picture must be remembered as not a picture, or every pass
-    // of the fetcher asks a stranger's server about it again — 173 links in one
-    // channel alone, most of them GitHub and YouTube. Somebody else's server
-    // should hear from us once per link, not once per run.
+    // ⚠ **`wanted` IS THE QUEUE, and that is why there is no second table.** A
+    // link enters this table the moment a READER is served a message containing
+    // it — reading is what makes a picture worth having — and leaves `wanted`
+    // when the fetcher has asked. The states are a lifecycle, not a set of flags:
+    //
+    //     offered → wanted → ok          the bytes are on the volume
+    //                       → not_image   reached it; not a picture we may inline
+    //                       → failed      could not reach it, or broke the limits
+    //
+    // ⚠ **`offered` IS WHAT MAKES THE TAP SAFE.** Serving a page registers each
+    // of its links here with the URL TAKEN FROM THE ARCHIVE, and asking for one
+    // is a promotion of that row by its hash. The browser therefore never names
+    // an address to fetch — if it could, this would be an endpoint that fetches
+    // anything anyone asks for, wearing a button. Nothing is fetched at `offered`;
+    // a person has to ask.
+    //
+    // ⚠ **THE REFUSALS ARE ROWS TOO.** A link that is not a picture must be
+    // remembered as not one, or every reading of that conversation asks a
+    // stranger's server about it again. Somebody else's server hears from us once
+    // per link, ever — and only because someone actually read the line.
     sqlx::query(
         r"CREATE TABLE IF NOT EXISTS link_images (
             url_hash     CHAR(64)     NOT NULL PRIMARY KEY,
             url          TEXT         NOT NULL,
-            state        ENUM('ok','not_image','failed') NOT NULL,
+            state        ENUM('offered','wanted','ok','not_image','failed') NOT NULL,
             content_type VARCHAR(128) NULL,
             size_bytes   BIGINT       NULL,
             stored_name  VARCHAR(80)  NULL,
             note         VARCHAR(255) NULL,
-            fetched_at   DATETIME     NOT NULL,
-            INDEX idx_link_images_state (state)
+            wanted_at    DATETIME     NOT NULL,
+            fetched_at   DATETIME     NULL,
+            INDEX idx_link_images_queue (state, wanted_at)
         ) DEFAULT CHARSET=utf8mb4",
     )
     .execute(pool)
     .await
     .context("creating link_images table")?;
 
-    // How far the fetcher has examined the archive — one row, two watermarks.
-    // See `link_fetch::Progress` for what they mean and why one would not do.
-    sqlx::query(
-        r"CREATE TABLE IF NOT EXISTS link_fetch_progress (
-            id         TINYINT NOT NULL PRIMARY KEY,
-            high_water BIGINT  NOT NULL,
-            low_water  BIGINT  NOT NULL
-        ) DEFAULT CHARSET=utf8mb4",
-    )
-    .execute(pool)
-    .await
-    .context("creating link_fetch_progress table")?;
+    // The table above predates `wanted` by a day. Both statements are idempotent
+    // and cost nothing on a table that already matches; stating them is what
+    // makes a running instance reach the shape above without a migration
+    // framework this app deliberately does not have.
+    for alter in [
+        "ALTER TABLE link_images MODIFY COLUMN state ENUM('offered','wanted','ok','not_image','failed') NOT NULL",
+        "ALTER TABLE link_images ADD COLUMN IF NOT EXISTS wanted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
+        "ALTER TABLE link_images MODIFY COLUMN fetched_at DATETIME NULL",
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(alter))
+            .execute(pool)
+            .await
+            .with_context(|| format!("bringing link_images up to date: {alter}"))?;
+    }
+
+    // The speculative backfill's watermarks. Dropped rather than left behind: the
+    // crawl it paced is gone, and a table nobody writes is a thing the next
+    // reader has to work out the meaning of.
+    sqlx::query("DROP TABLE IF EXISTS link_fetch_progress")
+        .execute(pool)
+        .await
+        .context("dropping link_fetch_progress")?;
+
     Ok(())
 }

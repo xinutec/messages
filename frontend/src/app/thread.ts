@@ -13,7 +13,7 @@ import { LogScope, chatLogHtml, formatChatLog } from './copy-log';
 import { MAX_RESTORE_PAGES, PAGE, ThreadWindow } from './thread-window';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
-import { Conversation, Message, Origin } from './models';
+import { Conversation, LinkOffer, Message, Origin } from './models';
 
 /** How often an open, visible thread asks whether anything is newer.
  *
@@ -22,6 +22,11 @@ import { Conversation, Message, Origin } from './models';
  *  Five seconds is under the cadence of everything upstream and cheap — the
  *  query is indexed on `(conversation_id, sent_at)` and returns one page. */
 const POLL_MS = 5000;
+
+/** How often to ask what became of a link a reader asked for. The fetcher runs
+ *  on its own schedule, so this is about how soon the picture appears once it
+ *  has, not about how fast it is fetched. */
+const LINK_POLL_MS = 3000;
 
 @Component({
   selector: 'app-thread',
@@ -198,6 +203,7 @@ export class Thread {
     destroyRef.onDestroy(() => clearInterval(poll));
     destroyRef.onDestroy(() => {
       if (this.recheck != null) clearTimeout(this.recheck);
+      if (this.awaitTimer != null) clearTimeout(this.awaitTimer);
       // ⚠ **AND THE `?from` DEBOUNCE, which navigates.** It was cleared only to
       // reschedule itself, never on destroy, so scrolling and leaving inside its
       // 300ms window left a timer that called `commitFromParam` on a dead
@@ -641,6 +647,102 @@ export class Thread {
   /** The scroll handler. The window engine decides what to reveal or collapse;
    *  the one thing it cannot do is fetch, because it does not know where
    *  messages come from. */
+  // ---- pictures behind links -----------------------------------------------
+
+  /** Links a reader has asked for and we are still waiting on. Polled together
+   *  rather than one timer each: a conversation can offer dozens. */
+  private readonly awaiting = new Set<string>();
+  private awaitTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** A reader tapped "show this picture".
+   *
+   *  ⚠ **NOTHING IS FETCHED UNTIL SOMEBODY ASKS.** Opening a conversation only
+   *  OFFERS its links; this is the ask. The picture is then fetched by a
+   *  scheduled job with its own way out of the cluster — this app has none — and
+   *  appears here when the poll below sees it land. */
+  protected requestLinkImage(offer: LinkOffer): void {
+    this.markRequested(offer.id);
+    this.api.requestLinkImage(offer.id).subscribe({
+      next: () => this.awaitLinkImage(offer.id),
+      // A 404 means the offer is stale: the page was served before the link was
+      // decided and it has since been. The next poll of the thread carries the
+      // picture, or the offer is gone; either way a red error here would be
+      // about our bookkeeping rather than about anything the reader did.
+      error: () => this.awaitLinkImage(offer.id),
+    });
+  }
+
+  private markRequested(id: string): void {
+    this.messages.update((cur) =>
+      cur.map((m) =>
+        m.link_offers.some((o) => o.id === id)
+          ? { ...m, link_offers: m.link_offers.map((o) => (o.id === id ? { ...o, requested: true } : o)) }
+          : m,
+      ),
+    );
+  }
+
+  private awaitLinkImage(id: string): void {
+    this.awaiting.add(id);
+    this.scheduleAwait();
+  }
+
+  private scheduleAwait(): void {
+    if (this.awaitTimer != null || this.awaiting.size === 0) return;
+    this.awaitTimer = setTimeout(() => {
+      this.awaitTimer = null;
+      void this.pollAwaited();
+    }, LINK_POLL_MS);
+  }
+
+  private async pollAwaited(): Promise<void> {
+    for (const id of [...this.awaiting]) {
+      let state;
+      try {
+        state = await firstValueFrom(this.api.linkImageState(id));
+      } catch {
+        this.awaiting.delete(id); // gone; nothing more to wait for
+        continue;
+      }
+      if (state.state === 'ok' && state.content_type) {
+        this.awaiting.delete(id);
+        this.landLinkImage(id, state.content_type);
+      } else if (state.state !== 'wanted' && state.state !== 'offered') {
+        // Decided, and not a picture. The offer goes: leaving a control that
+        // would do nothing is worse than saying nothing at all.
+        this.awaiting.delete(id);
+        this.dropOffer(id);
+      }
+    }
+    this.scheduleAwait();
+  }
+
+  /** Swap the offer for the picture, in place, without reloading the thread —
+   *  the reader is looking at the message it belongs to. */
+  private landLinkImage(id: string, contentType: string): void {
+    this.messages.update((cur) =>
+      cur.map((m) => {
+        const offer = m.link_offers.find((o) => o.id === id);
+        if (!offer) return m;
+        return {
+          ...m,
+          link_offers: m.link_offers.filter((o) => o.id !== id),
+          link_images: [...m.link_images, { url: offer.url, id, content_type: contentType }],
+        };
+      }),
+    );
+  }
+
+  private dropOffer(id: string): void {
+    this.messages.update((cur) =>
+      cur.map((m) =>
+        m.link_offers.some((o) => o.id === id)
+          ? { ...m, link_offers: m.link_offers.filter((o) => o.id !== id) }
+          : m,
+      ),
+    );
+  }
+
   onScroll(): void {
     // Before every early return below: where the viewport ended up is true
     // whoever moved it, and the guards that follow are about who did. See

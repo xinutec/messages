@@ -10,7 +10,7 @@
 //! writes one row, for a message it has just sent through irssi. It lives there
 //! because it is part of sending rather than reading.
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use sqlx::{AssertSqlSafe, MySqlPool, Row};
 
@@ -229,10 +229,25 @@ pub struct Message {
     pub edited: bool,
     pub reactions: Vec<Reaction>,
     pub attachments: Vec<Attachment>,
-    /// Pictures we hold for links in `body`. Empty until the fetch job has
-    /// decided about the link, which is why the UI must not depend on it being
-    /// there — a thread opened a second after the message arrives has none.
+    /// Pictures we hold for links in `body`.
     pub link_images: Vec<LinkImage>,
+    /// Links in `body` we could fetch a picture for but have not. Serving them
+    /// offers them; a reader has to ask.
+    pub link_offers: Vec<LinkOffer>,
+}
+
+/// A link the reader can ask us to fetch a picture for.
+#[derive(Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct LinkOffer {
+    /// The link as typed — what the control is offering to show.
+    pub url: String,
+    /// Its handle: `POST /api/link-images/{id}/request`, then poll
+    /// `/api/link-images/{id}/state`.
+    pub id: String,
+    /// Somebody has already asked; the fetcher has not got to it yet.
+    pub requested: bool,
 }
 
 fn is_image(ct: Option<&str>) -> bool {
@@ -278,16 +293,111 @@ pub async fn attach_link_images(pool: &MySqlPool, msgs: &mut [Message]) -> Resul
     for row in q.fetch_all(pool).await? {
         held.push((row.try_get("url_hash")?, row.try_get("content_type")?));
     }
-    for (hash, url, i) in wanted {
-        if let Some((_, content_type)) = held.iter().find(|(h, _)| *h == hash) {
-            msgs[i].link_images.push(LinkImage {
-                url,
-                id: hash,
+
+    // Which of this page's links nobody has asked about yet. Anything already in
+    // the table — held, refused or unreachable — has a decision and is not asked
+    // about again.
+    let mut undecided: Vec<(&str, &str)> = Vec::new();
+    for (hash, url, i) in &wanted {
+        if let Some((_, content_type)) = held.iter().find(|(h, _)| h == hash) {
+            msgs[*i].link_images.push(LinkImage {
+                url: url.clone(),
+                id: hash.clone(),
                 content_type: content_type.clone(),
             });
+        } else if !undecided.iter().any(|(h, _)| h == hash) {
+            undecided.push((hash.as_str(), url.as_str()));
         }
     }
+    // Offer the rest: the reader sees a control, and nothing is fetched unless
+    // they tap it.
+    let asked: Vec<String> = already_asked(pool, &undecided).await?;
+    for (hash, url, i) in &wanted {
+        if msgs[*i].link_images.iter().any(|li| li.id == *hash) {
+            continue;
+        }
+        if msgs[*i].link_offers.iter().any(|o| o.id == *hash) {
+            continue;
+        }
+        msgs[*i].link_offers.push(LinkOffer {
+            id: hash.clone(),
+            url: url.clone(),
+            requested: asked.contains(hash),
+        });
+    }
+    offer(pool, &undecided).await?;
     Ok(())
+}
+
+/// Which of these links somebody has already asked for — so a second reader sees
+/// "fetching" rather than a button that does nothing new.
+async fn already_asked(pool: &MySqlPool, links: &[(&str, &str)]) -> Result<Vec<String>> {
+    if links.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = vec!["?"; links.len()].join(",");
+    let sql = format!(
+        "SELECT url_hash FROM link_images WHERE state = 'wanted' AND url_hash IN ({placeholders})",
+    );
+    let mut q = sqlx::query_scalar::<_, String>(AssertSqlSafe(sql));
+    for (hash, _) in links {
+        q = q.bind(*hash);
+    }
+    Ok(q.fetch_all(pool).await?)
+}
+
+/// Register this page's links so they can be asked for later, WITHOUT asking for
+/// anything.
+///
+/// ⚠ **THIS IS THE ONLY PLACE A URL ENTERS THE TABLE**, and that is what keeps
+/// the tap from being an open proxy: the address comes off a message in the
+/// archive, never off a request. A tap can then only promote a row that already
+/// exists, by its hash.
+///
+/// `INSERT IGNORE`, so a link already offered, asked for, or decided is left
+/// exactly as it is — serving a page must never undo a decision or re-queue a
+/// fetch.
+async fn offer(pool: &MySqlPool, links: &[(&str, &str)]) -> Result<()> {
+    if links.is_empty() {
+        return Ok(());
+    }
+    let rows = vec!["(?, ?, 'offered', NOW())"; links.len()].join(",");
+    let sql =
+        format!("INSERT IGNORE INTO link_images (url_hash, url, state, wanted_at) VALUES {rows}");
+    // Fixed template + computed placeholder count, values bound — safe.
+    let mut q = sqlx::query(AssertSqlSafe(sql));
+    for (hash, url) in links {
+        q = q.bind(*hash).bind(*url);
+    }
+    q.execute(pool).await.context("offering links")?;
+    Ok(())
+}
+
+/// A reader asked for one. Promotes an OFFERED row to wanted; anything else is
+/// left alone, so this cannot re-queue a decided link or invent a new one.
+pub async fn request_link_image(pool: &MySqlPool, id: &str) -> Result<bool> {
+    let done = sqlx::query(
+        "UPDATE link_images SET state = 'wanted', wanted_at = NOW()
+         WHERE url_hash = ? AND state IN ('offered','wanted')",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .context("requesting a link image")?;
+    Ok(done.rows_affected() > 0)
+}
+
+/// What the UI polls after a tap: the link's state, and the type once it is one.
+pub async fn link_image_state(
+    pool: &MySqlPool,
+    id: &str,
+) -> Result<Option<(String, Option<String>)>> {
+    Ok(
+        sqlx::query_as("SELECT state, content_type FROM link_images WHERE url_hash = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?,
+    )
 }
 
 /// Where a link's stored bytes are, if we hold them — the serving endpoint's
@@ -660,7 +770,8 @@ async fn signal_messages(
             edited: edited != 0,
             reactions: Vec::new(),
             attachments: Vec::new(),
-            link_images: Vec::new(), // filled for the whole page in messages_page
+            link_images: Vec::new(), // both filled for the whole page in messages_page
+            link_offers: Vec::new(),
         });
     }
 
@@ -802,7 +913,8 @@ async fn gchat_messages(
             edited: false,
             reactions: Vec::new(),
             attachments: Vec::new(), // Google Chat export carries no attachments
-            link_images: Vec::new(), // filled for the whole page in messages_page
+            link_images: Vec::new(), // both filled for the whole page in messages_page
+            link_offers: Vec::new(),
         });
     }
 
@@ -939,7 +1051,8 @@ async fn irc_messages(
             deleted: false,
             edited: false,
             reactions: Vec::new(),   // IRC has none
-            link_images: Vec::new(), // filled for the whole page in messages_page
+            link_images: Vec::new(), // both filled for the whole page in messages_page
+            link_offers: Vec::new(),
             attachments: Vec::new(), // nor these
         });
     }

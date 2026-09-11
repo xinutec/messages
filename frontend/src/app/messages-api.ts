@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { Conversation, Me, MessagesPage, Origin, SearchHit, SendResult, TelemetryEvent } from './models';
+import { Conversation, LinkImageState, Me, MessagesPage, Origin, SearchHit, SendResult, TelemetryEvent } from './models';
 
 /** Thin client over the messages backend. Same-origin in prod; via the dev
  *  proxy (proxy.conf.json) in `ng serve`. Session cookie rides along. */
@@ -21,6 +21,18 @@ export class MessagesApi {
    *  observes. */
   sendTelemetry(events: readonly TelemetryEvent[]): Observable<void> {
     return this.http.post<void>('/api/telemetry', events);
+  }
+
+  /** Ask for a picture behind a link. The id is the one the page offered — the
+   *  browser never names an address, which is what keeps this from being a
+   *  fetch-anything endpoint. */
+  requestLinkImage(id: string): Observable<void> {
+    return this.http.post<void>(`/api/link-images/${encodeURIComponent(id)}/request`, {});
+  }
+
+  /** What became of it. Polled after a request until the state settles. */
+  linkImageState(id: string): Observable<LinkImageState> {
+    return this.http.get<LinkImageState>(`/api/link-images/${encodeURIComponent(id)}/state`);
   }
 
   conversations(): Observable<Conversation[]> {

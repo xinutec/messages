@@ -4,7 +4,7 @@
 use axum::Json;
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::header;
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
@@ -92,6 +92,16 @@ pub struct SearchQuery {
     limit: Option<i64>,
 }
 
+/// What became of a link: `offered`, `wanted`, `ok`, `not_image` or `failed`,
+/// and the type once there is a picture.
+#[derive(serde::Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct LinkImageState {
+    pub state: String,
+    pub content_type: Option<String>,
+}
+
 /// GET /api/attachments/{id} → stream a Signal attachment blob from the PVC.
 /// Only serves files whose bytes were downloaded; resolves by basename under
 /// the configured attachments dir, so a stored path can't escape the mount.
@@ -159,6 +169,47 @@ pub async fn link_image(
         AppError::NotFound
     })?;
     Ok(([(header::CONTENT_TYPE, content_type)], Body::from(bytes)).into_response())
+}
+
+/// POST /api/link-images/{id}/request → a reader tapped "show this picture".
+///
+/// ⚠ **THE BROWSER NAMES A HASH, NEVER AN ADDRESS.** This promotes a row that
+/// serving a page already created from the message's own text; there is no path
+/// by which a request can introduce a URL. An endpoint that took one would be a
+/// fetch-anything proxy with a button on it, reachable by anyone who can log in.
+///
+/// 404 when no such link was ever offered — including a link already decided,
+/// which needs no asking. Asking twice is harmless: the row is already `wanted`
+/// and the timestamp moves, which is what puts an impatient reader's link at the
+/// front of the queue.
+pub async fn request_link_image(
+    State(app): State<AppState>,
+    AuthUser(_user): AuthUser,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    if archive::request_link_image(&app.pool, &id).await? {
+        Ok(StatusCode::ACCEPTED)
+    } else {
+        Err(AppError::NotFound)
+    }
+}
+
+/// GET /api/link-images/{id}/state → what became of a link somebody asked for.
+///
+/// The UI polls this after a tap and stops on anything that is not `wanted`: a
+/// picture to show, or a decision that there is none.
+pub async fn link_image_state(
+    State(app): State<AppState>,
+    AuthUser(_user): AuthUser,
+    Path(id): Path<String>,
+) -> Result<Json<LinkImageState>, AppError> {
+    let Some((state, content_type)) = archive::link_image_state(&app.pool, &id).await? else {
+        return Err(AppError::NotFound);
+    };
+    Ok(Json(LinkImageState {
+        state,
+        content_type,
+    }))
 }
 
 /// GET /api/search?q= → substring search across all three origins.

@@ -191,6 +191,30 @@
   // says the thing lives somewhere else and the bubble is showing a copy. The
   // anchor around it goes to the original, so provenance is one click away
   // without a caption competing with the conversation.
+  // The control that offers to fetch a picture, and the note that one is on its
+  // way. Deliberately quiet: most links in a conversation are not pictures, so
+  // this sits under the line rather than competing with it.
+  .link-offer {
+    margin-top: 0.3rem;
+    font: var(--mat-sys-label-medium);
+
+    button {
+      background: none;
+      border: 0;
+      padding: 0;
+      color: var(--mat-sys-primary);
+      font: inherit;
+      cursor: pointer;
+      text-decoration: underline dotted;
+      text-underline-offset: 0.2em;
+    }
+
+    .waiting {
+      opacity: 0.7;
+      font-style: italic;
+    }
+  }
+
   .attach.link-image img {
     outline: 1px solid var(--mat-sys-outline-variant);
     outline-offset: 2px;

@@ -11,7 +11,7 @@ import { Message, MessagesPage } from './models';
 import { MAX_RESTORE_PAGES } from './thread-window';
 
 function msg(id: string, ts: number): Message {
-  return { id, ts, sender: 's', is_outgoing: false, kind: 'message', body: 'b', deleted: false, edited: false, reactions: [], attachments: [], link_images: [] };
+  return { id, ts, sender: 's', is_outgoing: false, kind: 'message', body: 'b', deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [] };
 }
 
 function makeApi() {
@@ -280,6 +280,61 @@ describe('Thread rendering', () => {
   });
 });
 
+describe('Thread link offers', () => {
+  async function withOffer(): Promise<{ f: ComponentFixture<Thread>; api: { requestLinkImage: ReturnType<typeof vi.fn>; linkImageState: ReturnType<typeof vi.fn> } }> {
+    const { thread, ref, fixture } = setup();
+    const api = TestBed.inject(MessagesApi) as unknown as {
+      messages: ReturnType<typeof vi.fn>;
+      requestLinkImage: ReturnType<typeof vi.fn>;
+      linkImageState: ReturnType<typeof vi.fn>;
+    };
+    api.messages.mockReturnValue(
+      page([
+        {
+          ...msg('d', 100),
+          body: 'look https://cloud.example.org/nc/s/T',
+          link_offers: [{ url: 'https://cloud.example.org/nc/s/T', id: 'h1', requested: false }],
+        },
+      ]),
+    );
+    api.requestLinkImage = vi.fn().mockReturnValue(of(undefined));
+    api.linkImageState = vi.fn().mockReturnValue(of({ state: 'wanted', content_type: null }));
+    ref.setInput('origin', 'irc');
+    ref.setInput('id', '7');
+    fixture.detectChanges();
+    for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    fixture.detectChanges();
+    return { f: fixture, api };
+  }
+
+  it('offers a control and fetches NOTHING until it is tapped', async () => {
+    // ⚠ The whole shape of the feature. Opening a conversation must not reach
+    // anybody's server: it only says which links we could fetch.
+    const { f, api } = await withOffer();
+    const el = f.nativeElement as HTMLElement;
+    expect(el.querySelector('.link-offer button')?.textContent).toContain('Show picture');
+    expect(el.querySelectorAll('.msg img').length).toBe(0);
+    expect(api.requestLinkImage).not.toHaveBeenCalled();
+  });
+
+  it('asks by the id the page offered, never by a URL', async () => {
+    // The browser naming an address would make this a fetch-anything endpoint.
+    const { f, api } = await withOffer();
+    (f.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('.link-offer button')!.click();
+    f.detectChanges();
+    expect(api.requestLinkImage).toHaveBeenCalledWith('h1');
+  });
+
+  it('says it is fetching, so a second tap is not the only feedback', async () => {
+    const { f } = await withOffer();
+    (f.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('.link-offer button')!.click();
+    f.detectChanges();
+    const el = f.nativeElement as HTMLElement;
+    expect(el.querySelector('.link-offer .waiting')).not.toBeNull();
+    expect(el.querySelector('.link-offer button')).toBeNull();
+  });
+});
+
 describe('Thread linked pictures', () => {
   it('serves a linked picture from us, never from the other server', async () => {
     // ⚠ The src is the WHOLE point of the feature. An <img> pointed at the
@@ -395,6 +450,7 @@ async function withLinkImage(deleted = false): Promise<ComponentFixture<Thread>>
     link_images: [
       { url: 'https://cloud.example.org/nc/s/TOKEN', id: 'abc123', content_type: 'image/jpeg' },
     ],
+    link_offers: [],
   };
   api.messages.mockReturnValue(page([m]));
   ref.setInput('origin', 'irc');
