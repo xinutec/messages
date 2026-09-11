@@ -128,6 +128,8 @@ export class Thread {
   private newerCursor: string | null = null;
 
   private fromTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Pending re-check for a scroll whose work was deferred — see `deferScrollCheck`. */
+  private recheck: ReturnType<typeof setTimeout> | null = null;
 
 
 
@@ -194,6 +196,9 @@ export class Thread {
     // otherwise, and every visit to a thread would leave another one running —
     // the request rate climbing with no screen left to show the answers on.
     destroyRef.onDestroy(() => clearInterval(poll));
+    destroyRef.onDestroy(() => {
+      if (this.recheck != null) clearTimeout(this.recheck);
+    });
 
     // The soft keyboard opening is a resize of the scroll container, and the
     // conversation has to follow it or the reader loses the messages they are
@@ -629,11 +634,42 @@ export class Thread {
     // whoever moved it, and the guards that follow are about who did. See
     // `ThreadWindow.noteScroll`.
     this.win.noteScroll();
-    if (this.win.busy || this.loadingThread() || this.threadError() || !this.routed()) return;
+    if (this.threadError() || !this.routed()) return;
+    // ⚠ **DEFERRED, NOT DROPPED — a scroll can be the only one there will ever
+    // be.** These two guards are right to skip the windowing: a scroll we caused
+    // ourselves, or one arriving mid-load, must not be read as the reader
+    // moving. But the work that event asks for — fetch older, fetch newer, write
+    // `?from` — still needs doing, and a PROGRAMMATIC scroll delivers exactly
+    // one event. Dropped, it strands the window wherever it landed until the
+    // reader happens to scroll again, which at rest they never do.
+    //
+    // Proved by perturbation 2026-09-10: widening the scroll lock from a frame
+    // to 250ms made "scrolling to the top auto-loads older messages" hang 4 runs
+    // out of 4, with the older page NEVER REQUESTED — cursor calls 0, viewport
+    // parked at scrollTop 0. In the suite that same race turns up about one run
+    // in twelve, as a 90-second timeout rather than a failure, which reads as a
+    // slow gate rather than a defect. A live reader is spared it because dragging
+    // emits a stream of events and the next one does the work.
+    if (this.win.busy || this.loadingThread()) {
+      this.deferScrollCheck();
+      return;
+    }
     const { needOlder, needNewer } = this.win.step();
     if (needOlder) this.fetchOlder();
     if (needNewer) this.fetchNewer();
     this.scheduleFromParam();
+  }
+
+  /** Re-run `onScroll` once the guard that skipped it has cleared. One timer at
+   *  a time: a burst of swallowed events needs one re-check between them, not
+   *  one each. Re-arms only while a guard still holds, and both clear on their
+   *  own — the scroll lock within a frame, a load when it lands. */
+  private deferScrollCheck(): void {
+    if (this.recheck != null) return;
+    this.recheck = setTimeout(() => {
+      this.recheck = null;
+      this.onScroll();
+    }, 60);
   }
 
   private fetchOlder(): void {
