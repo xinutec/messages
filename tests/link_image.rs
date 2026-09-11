@@ -17,7 +17,16 @@ use messages::link_image::{Advert, cookie_name, read_advert, urls_in};
 use url::Url;
 
 const SHARE: &str = "https://cloud.example.org/nc/s/SHARETOKEN";
-/// The four names that live install actually set, in the order it set them.
+/// The four cookies that live install actually set, in the order it set them —
+/// with the VALUES replaced, and the random per-install session cookie renamed.
+///
+/// ⚠ **The shapes are the evidence; the values were never evidence at all.** The
+/// reader only ever looks at a cookie's NAME, so a real passphrase and a real
+/// session id sat here proving nothing — they came off a live response along with
+/// the rest of the capture, and this repository is public. Caught on review.
+/// `oc_sessionPassphrase` and `nc_sameSiteCookie*` are fixed names Nextcloud and
+/// ownCloud always set, which is exactly why they can be matched on; the fourth is
+/// random per install and is here to show that one arrives and is ignored.
 const REAL_COOKIES: [&str; 4] = [
     "oc_sessionPassphrase=REDACTED; path=/nc; secure; HttpOnly; SameSite=Lax",
     "nc_sameSiteCookielax=true; path=/nc; httponly;secure; SameSite=lax",
