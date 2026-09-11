@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html class="ng-csp" data-placeholder-focus="false" lang="en" data-locale="en" translate="no" >
+<head data-requesttoken="REQUESTTOKEN">
+	<meta charset="utf-8">
+	<title>
+	picture.jpg - Nextcloud	</title>
+	<meta name="csp-nonce" nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
+		<meta name="apple-itunes-app" content="app-id=1125420102">
+		<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-status-bar-style" content="black">
+	<meta name="apple-mobile-web-app-title" content="Nextcloud">
+	<meta name="mobile-web-app-capable" content="yes">
+	<meta name="theme-color" content="#00679e">
+	<link rel="icon" href="/nc/apps/theming/favicon/files?v=d2db265f">
+	<link rel="apple-touch-icon" href="/nc/apps/theming/icon/files?v=d2db265f">
+	<link rel="apple-touch-icon-precomposed" href="/nc/apps/theming/icon/files?v=d2db265f">
+	<link rel="mask-icon" sizes="any" href="/nc/core/img/favicon-mask.svg" color="#00679e">
+	<link rel="manifest" href="/nc/apps/theming/manifest/files?v=d2db265f" crossorigin="use-credentials">
+	<link rel="stylesheet" href="/nc/core/css/server.css?v=cfcd2084-0">
+<link rel="stylesheet" href="/nc/apps/text/css/text-viewer.css?v=19897762-0">
+<link rel="stylesheet" href="/nc/apps/viewer/css/viewer-init.css?v=d6b0cd1b-0">
+<link rel="stylesheet" href="/nc/apps/viewer/css/viewer-main.css?v=d6b0cd1b-0">
+<link rel="stylesheet" href="/nc/apps/audioplayer/css/icons.css?v=342e5e1b-0">
+<link rel="stylesheet" href="/nc/dist/systemtags-init.css?v=cfcd2084-0">
+<link rel="stylesheet" href="/nc/apps/text/css/text-public.css?v=19897762-0">
+<link rel="stylesheet" href="/nc/apps/text/css/text-init.css?v=19897762-0">
+<link rel="stylesheet" href="/nc/apps/theming/css/default.css?v=52518471-0">
+	<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" type="importmap">
+{"imports":{"/nc/apps/viewer/js/viewer-init.mjs":"/nc/apps/viewer/js/viewer-init.mjs?v=2a9e9e34-0","/nc/dist/systemtags-init.mjs":"/nc/dist/systemtags-init.mjs?v=2a9e9e34-0","/nc/apps/text/js/text-init.mjs":"/nc/apps/text/js/text-init.mjs?v=2a9e9e34-0","/nc/apps/viewer/js/viewer-main.mjs":"/nc/apps/viewer/js/viewer-main.mjs?v=2a9e9e34-0","/nc/apps/text/js/text-viewer.mjs":"/nc/apps/text/js/text-viewer.mjs?v=2a9e9e34-0","/nc/apps/text/js/text-public.mjs":"/nc/apps/text/js/text-public.mjs?v=2a9e9e34-0","/nc/dist/profile-reference.mjs":"/nc/dist/profile-reference.mjs?v=2a9e9e34-0","/nc/dist/theming-theming.mjs":"/nc/dist/theming-theming.mjs?v=2a9e9e34-0"}}
+</script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" defer src="/nc/dist/core-common.js?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" defer src="/nc/dist/core-main.js?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" defer src="/nc/dist/files-init.js?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" defer src="/nc/dist/files_sharing-init.js?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" defer src="/nc/dist/files_sharing-init-public.js?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" type="module" src="/nc/apps/viewer/js/viewer-init.mjs?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" type="module" src="/nc/dist/systemtags-init.mjs?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" type="module" src="/nc/apps/text/js/text-init.mjs?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" defer src="/nc/core/js/mimetypelist.js?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" defer src="/nc/dist/core-public-page-menu.js?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" defer src="/nc/dist/core-public-page-user-menu.js?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" defer src="/nc/dist/core-public.js?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" defer src="/nc/dist/files-main.js?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" defer src="/nc/dist/files-reference-files.js?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" defer src="/nc/dist/files_sharing-public-nickname-handler.js?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" defer src="/nc/dist/files_sharing-main.js?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" type="module" src="/nc/apps/viewer/js/viewer-main.mjs?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" defer src="/nc/apps/files_pdfviewer/js/files_pdfviewer-main.js?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" type="module" src="/nc/apps/text/js/text-viewer.mjs?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" type="module" src="/nc/apps/text/js/text-public.mjs?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" defer src="/nc/apps/calendar/js/calendar-reference.js?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" type="module" src="/nc/dist/profile-reference.mjs?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" defer src="/nc/apps/audioplayer/js/viewer/viewer.js?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" defer src="/nc/apps/audioplayer/js/sharing/sharing.js?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=" type="module" src="/nc/dist/theming-theming.mjs?v=2a9e9e34-0"></script>
+<script nonce="F8xLVXNozG+/TpzH+3Jzenf2ZCbFnqO9T/i6ezL/PRg=">
+var _oc_debug=false;
+var _oc_isadmin=false;
+var backendAllowsPasswordConfirmation=true;
+var oc_dataURL=false;
+var _oc_webroot="/nc";
+var _oc_appswebroots={"activity":"/nc/apps/activity","app_api":"/nc/apps/app_api","appstore":"/nc/apps/appstore","audioplayer":"/nc/apps/audioplayer","calendar":"/nc/apps/calendar","circles":"/nc/apps/circles","cloud_federation_api":"/nc/apps/cloud_federation_api","comments":"/nc/apps/comments","contacts":"/nc/apps/contacts","contactsinteraction":"/nc/apps/contactsinteraction","dashboard":"/nc/apps/dashboard","dav":"/nc/apps/dav","federatedfilesharing":"/nc/apps/federatedfilesharing","federation":"/nc/apps/federation","files":"/nc/apps/files","files_downloadlimit":"/nc/apps/files_downloadlimit","files_lock":"/nc/apps/files_lock","files_pdfviewer":"/nc/apps/files_pdfviewer","files_reminders":"/nc/apps/files_reminders","files_sharing":"/nc/apps/files_sharing","files_trashbin":"/nc/apps/files_trashbin","files_versions":"/nc/apps/files_versions","firstrunwizard":"/nc/apps/firstrunwizard","logreader":"/nc/apps/logreader","lookup_server_connector":"/nc/apps/lookup_server_connector","mail":"/nc/apps/mail","memories":"/nc/apps/memories","nextcloud_announcements":"/nc/apps/nextcloud_announcements","notifications":"/nc/apps/notifications","oauth2":"/nc/apps/oauth2","office":"/nc/apps/office","password_policy":"/nc/apps/password_policy","photos":"/nc/apps/photos","privacy":"/nc/apps/privacy","profile":"/nc/apps/profile","provisioning_api":"/nc/apps/provisioning_api","recognize":"/nc/apps/recognize","recommendations":"/nc/apps/recommendations","related_resources":"/nc/apps/related_resources","serverinfo":"/nc/apps/serverinfo","settings":"/nc/apps/settings","sharebymail":"/nc/apps/sharebymail","support":"/nc/apps/support","survey_client":"/nc/apps/survey_client","suspicious_login":"/nc/apps/suspicious_login","systemtags":"/nc/apps/systemtags","text":"/nc/apps/text","theming":"/nc/apps/theming","twofactor_backupcodes":"/nc/apps/twofactor_backupcodes","twofactor_totp":"/nc/apps/twofactor_totp","unsplash":"/nc/apps/unsplash","updatenotification":"/nc/apps/updatenotification","user_status":"/nc/apps/user_status","viewer":"/nc/apps/viewer","weather_status":"/nc/apps/weather_status","webhook_listeners":"/nc/apps/webhook_listeners","workflowengine":"/nc/apps/workflowengine"};
+var datepickerFormatDate="M\/d\/yy";
+var nc_lastLogin=0;
+var nc_pageLoad=1789133302;
+var dayNames=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+var dayNamesShort=["Sun.","Mon.","Tue.","Wed.","Thu.","Fri.","Sat."];
+var dayNamesMin=["Su","Mo","Tu","We","Th","Fr","Sa"];
+var monthNames=["January","February","March","April","May","June","July","August","September","October","November","December"];
+var monthNamesShort=["Jan.","Feb.","Mar.","Apr.","May.","Jun.","Jul.","Aug.","Sep.","Oct.","Nov.","Dec."];
+var firstDay=0;
+var _oc_config={"blacklist_files_regex":"\\.(part|filepart)$","forbidden_filename_characters":["\\","\/"],"auto_logout":false,"loglevel":2,"lost_password_link":null,"modRewriteWorking":true,"no_unsupported_browser_warning":false,"session_keepalive":true,"session_lifetime":1440,"sharing.maxAutocompleteResults":25,"sharing.minSearchStringLength":0,"version":"34.0.3.2","versionstring":"34.0.3","enable_non-accessible_features":true};
+var oc_appconfig={"core":{"defaultExpireDateEnabled":false,"defaultExpireDate":null,"defaultExpireDateEnforced":null,"enforcePasswordForPublicLink":false,"enableLinkPasswordByDefault":false,"sharingDisabledForUser":false,"resharingAllowed":true,"remoteShareAllowed":false,"federatedCloudShareDoc":"https:\/\/docs.nextcloud.com\/server\/34\/go.php?to=user-sharing-federated","allowGroupSharing":true,"defaultInternalExpireDateEnabled":false,"defaultInternalExpireDate":null,"defaultInternalExpireDateEnforced":null,"defaultRemoteExpireDateEnabled":false,"defaultRemoteExpireDate":null,"defaultRemoteExpireDateEnforced":null},"files":{"max_chunk_size":104857600}};
+var _theme={"entity":"Nextcloud","name":"Nextcloud","productName":"Nextcloud","title":"Nextcloud","baseUrl":"https:\/\/nextcloud.com","syncClientUrl":"https:\/\/nextcloud.com\/install\/#install-clients","docBaseUrl":"https:\/\/docs.nextcloud.com","docPlaceholderUrl":"https:\/\/docs.nextcloud.com\/server\/34\/go.php?to=PLACEHOLDER","slogan":"a safe home for all your data","logoClaim":"","folder":""};
+
+</script>
+	<meta property="og:title" content="picture.jpg"/><meta property="og:description" content="Nextcloud - a safe home for all your data"/><meta property="og:site_name" content="Nextcloud"/><meta property="og:url" content="https://cloud.example.org/nc/s/SHARETOKEN"/><meta property="og:type" content="website"/><meta property="og:image" content="https://cloud.example.org/nc/s/SHARETOKEN/preview"/><meta property="og:image:type" content="image/jpeg"/><meta property="twitter:title" content="picture.jpg"/><meta property="twitter:description" content="Nextcloud - a safe home for all your data"/><meta property="twitter:card" content="summary_large_image"/><meta property="twitter:image" content="https://cloud.example.org/nc/s/SHARETOKEN/preview"/><link rel="stylesheet" media="" href="/nc/apps/theming/theme/default.css?plain=1&amp;v=d2db265f" class="theme"/><link rel="stylesheet" media="(prefers-color-scheme: light)" href="/nc/apps/theming/theme/light.css?plain=1&amp;v=d2db265f" class="theme"/><link rel="stylesheet" media="(prefers-color-scheme: dark)" href="/nc/apps/theming/theme/dark.css?plain=1&amp;v=d2db265f" class="theme"/><link rel="stylesheet" media="(prefers-contrast: more)" href="/nc/apps/theming/theme/light-highcontrast.css?plain=1&amp;v=d2db265f" class="theme"/><link rel="stylesheet" media="(prefers-color-scheme: dark) and (prefers-contrast: more)" href="/nc/apps/theming/theme/dark-highcontrast.css?plain=1&amp;v=d2db265f" class="theme"/><link rel="stylesheet" media="" href="/nc/apps/theming/theme/light.css?plain=0&amp;v=d2db265f" class="theme"/><link rel="stylesheet" media="" href="/nc/apps/theming/theme/dark.css?plain=0&amp;v=d2db265f" class="theme"/><link rel="stylesheet" media="" href="/nc/apps/theming/theme/light-highcontrast.css?plain=0&amp;v=d2db265f" class="theme"/><link rel="stylesheet" media="" href="/nc/apps/theming/theme/dark-highcontrast.css?plain=0&amp;v=d2db265f" class="theme"/><link rel="stylesheet" media="" href="/nc/apps/theming/theme/opendyslexic.css?plain=0&amp;v=d2db265f" class="theme"/><meta name="color-scheme" content="light dark"/></head>
+<body id="body-public"  data-themes="">
+	<noscript>
+	<div id="nojavascript">
+		<div>
+			This application requires JavaScript for correct operation. Please <a href="https://www.enable-javascript.com/" target="_blank" rel="noreferrer noopener">enable JavaScript</a> and reload the page.		</div>
+	</div>
+</noscript>
+	<div id="initial-state-container" style="display: none;">
+			<input type="hidden" id="initial-state-files_sharing-fileId" value="MzUzNTA=">
+			<input type="hidden" id="initial-state-files_sharing-isPublic" value="dHJ1ZQ==">
+			<input type="hidden" id="initial-state-files_sharing-sharingToken" value="Ik9nY0RMQ1cwYUY2NFU0aCI=">
+			<input type="hidden" id="initial-state-files_sharing-sharePermissions" value="MQ==">
+			<input type="hidden" id="initial-state-files_sharing-filename" value="ImNyZWNoZS5qcGci">
+			<input type="hidden" id="initial-state-files_sharing-view" value="InB1YmxpYy1maWxlLXNoYXJlIg==">
+			<input type="hidden" id="initial-state-files_sharing-isFileRequest" value="ZmFsc2U=">
+			<input type="hidden" id="initial-state-files_sharing-templates" value="W3siYXBwIjoidGV4dCIsImxhYmVsIjoiVGV4dCBkb2N1bWVudCIsImV4dGVuc2lvbiI6Ii5tZCIsImljb25DbGFzcyI6bnVsbCwiaWNvblN2Z0lubGluZSI6IjxzdmcgeG1sbnM9XCJodHRwOlwvXC93d3cudzMub3JnXC8yMDAwXC9zdmdcIiB3aWR0aD1cIjI0XCIgaGVpZ2h0PVwiMjRcIiB2aWV3Qm94PVwiMCAwIDI0IDI0XCIgZmlsbD1cIiMwMDAwMDBcIj5cblx0PHBhdGggZD1cIk0wIDBoMjR2MjRIMHpcIiBmaWxsPVwibm9uZVwiIFwvPlxuXHQ8cGF0aCBmaWxsPVwiIzk2OTY5NlwiXG5cdFx0ZD1cIk0xOSAzSDVjLTEuMSAwLTIgLjktMiAydjE0YzAgMS4xLjkgMiAyIDJoMTRjMS4xIDAgMi0uOSAyLTJWNWMwLTEuMS0uOS0yLTItMnptLTUgMTRIN3YtMmg3djJ6bTMtNEg3di0yaDEwdjJ6bTAtNEg3VjdoMTB2MnpcIiBcLz5cbjxcL3N2Zz5cbiIsIm1pbWV0eXBlcyI6WyJ0ZXh0XC9tYXJrZG93biIsInRleHRcL3BsYWluIl0sInJhdGlvIjoxLCJhY3Rpb25MYWJlbCI6IkNyZWF0ZSBuZXcgdGV4dCBmaWxlIn1d">
+			<input type="hidden" id="initial-state-files_pdfviewer-allowViewWithoutDownload" value="dHJ1ZQ==">
+			<input type="hidden" id="initial-state-calendar-app_version" value="IjYuNS40Ig==">
+			<input type="hidden" id="initial-state-calendar-event_limit" value="dHJ1ZQ==">
+			<input type="hidden" id="initial-state-calendar-first_run" value="dHJ1ZQ==">
+			<input type="hidden" id="initial-state-calendar-initial_view" value="ImRheUdyaWRNb250aCI=">
+			<input type="hidden" id="initial-state-calendar-show_weekends" value="dHJ1ZQ==">
+			<input type="hidden" id="initial-state-calendar-show_week_numbers" value="ZmFsc2U=">
+			<input type="hidden" id="initial-state-calendar-skip_popover" value="ZmFsc2U=">
+			<input type="hidden" id="initial-state-calendar-talk_enabled" value="ZmFsc2U=">
+			<input type="hidden" id="initial-state-calendar-talk_api_version" value="InY0Ig==">
+			<input type="hidden" id="initial-state-calendar-timezone" value="ImF1dG9tYXRpYyI=">
+			<input type="hidden" id="initial-state-calendar-attachments_folder" value="IlwvQ2FsZW5kYXIi">
+			<input type="hidden" id="initial-state-calendar-slot_duration" value="IjAwOjMwOjAwIg==">
+			<input type="hidden" id="initial-state-calendar-default_reminder" value="Im5vbmUi">
+			<input type="hidden" id="initial-state-calendar-default_reminder_part_day" value="Im5vbmUi">
+			<input type="hidden" id="initial-state-calendar-default_reminder_full_day" value="Im5vbmUi">
+			<input type="hidden" id="initial-state-calendar-show_tasks" value="dHJ1ZQ==">
+			<input type="hidden" id="initial-state-calendar-tasks_sidebar" value="dHJ1ZQ==">
+			<input type="hidden" id="initial-state-calendar-tasks_enabled" value="ZmFsc2U=">
+			<input type="hidden" id="initial-state-calendar-hide_event_export" value="ZmFsc2U=">
+			<input type="hidden" id="initial-state-calendar-force_event_alarm_type" value="ZmFsc2U=">
+			<input type="hidden" id="initial-state-calendar-disable_appointments" value="ZmFsc2U=">
+			<input type="hidden" id="initial-state-calendar-can_subscribe_link" value="dHJ1ZQ==">
+			<input type="hidden" id="initial-state-calendar-show_resources" value="dHJ1ZQ==">
+			<input type="hidden" id="initial-state-calendar-isCirclesEnabled" value="dHJ1ZQ==">
+			<input type="hidden" id="initial-state-calendar-publicCalendars" value="IiI=">
+			<input type="hidden" id="initial-state-calendar-calendar_federation_enabled" value="ZmFsc2U=">
+			<input type="hidden" id="initial-state-calendar-resource_booking_enabled" value="ZmFsc2U=">
+			<input type="hidden" id="initial-state-calendar-has_notify_push" value="ZmFsc2U=">
+			<input type="hidden" id="initial-state-core-reference-provider-list" value="W3siaWQiOiJjYWxlbmRhciIsInRpdGxlIjoiQ2FsZW5kYXIiLCJpY29uX3VybCI6Imh0dHBzOlwvXC9henR3YW50aWUuZGVcL293bmNsb3VkXC9hcHBzXC9jYWxlbmRhclwvaW1nXC9jYWxlbmRhci1kYXJrLnN2ZyIsIm9yZGVyIjoyMH0seyJpZCI6InByb2ZpbGVfcGlja2VyIiwidGl0bGUiOiJQcm9maWxlIHBpY2tlciIsImljb25fdXJsIjoiXC9vd25jbG91ZFwvYXBwc1wvcHJvZmlsZVwvaW1nXC9hcHAtZGFyay5zdmciLCJvcmRlciI6MTB9LHsiaWQiOiJmaWxlcyIsInRpdGxlIjoiRmlsZXMiLCJpY29uX3VybCI6Ilwvb3duY2xvdWRcL2FwcHNcL2ZpbGVzXC9pbWdcL2ZvbGRlci5zdmciLCJvcmRlciI6MH1d">
+			<input type="hidden" id="initial-state-core-reference-provider-timestamps" value="W10=">
+			<input type="hidden" id="initial-state-core-apps" value="W3siaWQiOiJmaWxlcyIsIm9yZGVyIjowLCJocmVmIjoiXC9vd25jbG91ZFwvYXBwc1wvZmlsZXNcLyIsImljb24iOiJcL293bmNsb3VkXC9hcHBzXC9maWxlc1wvaW1nXC9hcHAuc3ZnIiwidHlwZSI6ImxpbmsiLCJuYW1lIjoiRmlsZXMiLCJhcHAiOiJmaWxlcyIsImFjdGl2ZSI6ZmFsc2UsInVucmVhZCI6MCwiY2xhc3NlcyI6IiIsImRlZmF1bHQiOmZhbHNlfV0=">
+			<input type="hidden" id="initial-state-core-projects_enabled" value="ZmFsc2U=">
+			<input type="hidden" id="initial-state-core-config" value="eyJibGFja2xpc3RfZmlsZXNfcmVnZXgiOiJcXC4ocGFydHxmaWxlcGFydCkkIiwiZm9yYmlkZGVuX2ZpbGVuYW1lX2NoYXJhY3RlcnMiOlsiXFwiLCJcLyJdLCJhdXRvX2xvZ291dCI6ZmFsc2UsImxvZ2xldmVsIjoyLCJsb3N0X3Bhc3N3b3JkX2xpbmsiOm51bGwsIm1vZFJld3JpdGVXb3JraW5nIjp0cnVlLCJub191bnN1cHBvcnRlZF9icm93c2VyX3dhcm5pbmciOmZhbHNlLCJzZXNzaW9uX2tlZXBhbGl2ZSI6dHJ1ZSwic2Vzc2lvbl9saWZldGltZSI6MTQ0MCwic2hhcmluZy5tYXhBdXRvY29tcGxldGVSZXN1bHRzIjoyNSwic2hhcmluZy5taW5TZWFyY2hTdHJpbmdMZW5ndGgiOjAsInZlcnNpb24iOiIzNC4wLjMuMiIsInZlcnNpb25zdHJpbmciOiIzNC4wLjMiLCJlbmFibGVfbm9uLWFjY2Vzc2libGVfZmVhdHVyZXMiOnRydWV9">
+			<input type="hidden" id="initial-state-core-capabilities" value="eyJjb3JlIjp7InBvbGxpbnRlcnZhbCI6NjAsIndlYmRhdi1yb290IjoicmVtb3RlLnBocFwvd2ViZGF2IiwicmVmZXJlbmNlLWFwaSI6dHJ1ZSwicmVmZXJlbmNlLXJlZ2V4IjoiKFxcc3xcXG58XikoaHR0cHM/OlxcXC9cXFwvKShbLUEtWjAtOStfLl0rKD86OlswLTldKyk/KD86XFxcL1stQS1aMC05KyZAIyU/PX5ffCE6LC47KCldKikqKShcXHN8XFxufCQpIiwibW9kLXJld3JpdGUtd29ya2luZyI6dHJ1ZX0sImFjdGl2aXR5Ijp7ImFwaXYyIjpbImZpbHRlcnMiLCJmaWx0ZXJzLWFwaSIsInByZXZpZXdzIiwicmljaC1zdHJpbmdzIl19LCJhcHBfYXBpIjp7ImxvZ2xldmVsIjoyLCJ2ZXJzaW9uIjoiMzQuMC4wIn0sImNhbGVuZGFyIjp7IndlYnVpIjp0cnVlfSwiY2lyY2xlcyI6eyJ2ZXJzaW9uIjoiMzQuMC4wIiwic3RhdHVzIjp7Imdsb2JhbFNjYWxlIjpmYWxzZX0sInNldHRpbmdzIjp7ImZyb250ZW5kRW5hYmxlZCI6dHJ1ZSwiYWxsb3dlZ

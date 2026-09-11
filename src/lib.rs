@@ -12,6 +12,8 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod irc_send;
+pub mod link_fetch;
+pub mod link_image;
 pub mod nextcloud;
 pub mod pending_login;
 pub mod routes;
