@@ -86,10 +86,6 @@ export class ThreadWindow {
     return this.adjusting;
   }
 
-  /** Bumped by any real user scroll and by each new open, cancelling a pending
-   *  re-pin from an earlier one. */
-  private pinToken = 0;
-
   /** Whether the reader is following the END of the conversation rather than
    *  reading back inside it.
    *
@@ -147,9 +143,6 @@ export class ThreadWindow {
    *  it — which is the caller's cue to fetch an older page, the one thing here
    *  that needs to know where messages come from. */
   step(): { needOlder: boolean; needNewer: boolean } {
-    // A genuine user scroll means "I'm looking around" — stop auto-pinning to
-    // the bottom.
-    this.pinToken++;
     const el = this.container();
     if (!el) return { needOlder: false, needNewer: false };
     if (this.dbg) this.detectJump();

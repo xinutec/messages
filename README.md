@@ -178,7 +178,8 @@ no `dhall`; one of the checks re-renders and diffs the two.
   `e2e/thread-scroll.spec.ts`, in a real browser. Then Playwright, split by whether jsdom could have answered:
   - `pnpm run ui-check` — **the whole browser suite, in the gate**: phone-width
     layout, the copy specs, the Android-keyboard and IME specs, and the
-    scroll/routing/smoke behaviour specs. 31 tests, ~6s.
+    scroll/routing/smoke behaviour specs. Seconds; `pnpm run ui-check` prints
+    the count, which is why one is not written here.
   - ⚠ There was a second config for scroll/routing/smoke until 2026-09-03,
     because they were written against `ng serve` and one was believed to need
     it. Re-tested rather than inherited: they pass against the production build,
