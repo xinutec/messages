@@ -114,6 +114,44 @@ test("scroll position is reflected in ?from", async ({ page }) => {
   await page.waitForURL(/[?&]from=1000\b/);
 });
 
+/** ⚠ **A DEBOUNCED NAVIGATION OUTLIVES THE SCREEN THAT ARMED IT.** `?from` is
+ *  written 300ms after a scroll; leave inside that window and the timer fired on
+ *  a destroyed component, navigating relative to a route the reader had already
+ *  left — with `replaceUrl: true`, so Back appeared to work and then put them
+ *  back in the conversation, the list entry gone from history. Silent: no page
+ *  error, nothing logged.
+ *
+ *  ⚠ **THE 150ms IS THE TEST.** Scrolling and leaving immediately is a race —
+ *  whether the timer is still pending when Back lands — and two drafts died on
+ *  it. One asserted the URL mid-flight to prove the debounce was pending; that
+ *  assertion costs a round trip, the timer fired inside it, and the case passed
+ *  against the defect 3 times in 3. A second retried in a loop and still only
+ *  caught it 1 time in 4. Waiting a fixed 150ms instead — past the 60ms
+ *  re-check, short of the 300ms debounce — puts the timer reliably ARMED AND
+ *  UNFIRED at the moment of leaving: ablate the teardown and this fails 4 of 4,
+ *  restore it and it passes 4 of 4. */
+test("leaving during the ?from debounce does not navigate back into the thread", async ({ page }) => {
+  await mockApi(page);
+  await page.route("**/api/conversations/**/messages**", (r) =>
+    r.fulfill({ json: { messages: bulk("only", 1000, 40), has_more: false, next_cursor: null, prev_cursor: null } }),
+  );
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /Alice/ }).click();
+  await page.getByText("only39", { exact: true }).waitFor();
+  await scrollThreadTop(page);
+  // ⚠ 150ms: ARMED BUT NOT YET FIRED, which is what makes this deterministic
+  // rather than a race. The debounce is 300ms and a scroll skipped while the
+  // window is busy re-checks after 60, so by 150 the timer exists and has not
+  // run. Leaving now is the case under test.
+  await page.waitForTimeout(150);
+  await page.goBack();
+  await expect(page).not.toHaveURL(/\/conversation\//);
+  // Its moment passes without moving us.
+  await page.waitForTimeout(600);
+  await expect(page).not.toHaveURL(/\/conversation\//);
+});
+
 test("reloading restores the older messages that were paged in", async ({ page }) => {
   await mockApiPaged(page);
   await page.goto("/conversation/signal/dm:a?from=1000"); // as if reloaded after scrolling back

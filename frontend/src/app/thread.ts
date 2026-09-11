@@ -198,6 +198,14 @@ export class Thread {
     destroyRef.onDestroy(() => clearInterval(poll));
     destroyRef.onDestroy(() => {
       if (this.recheck != null) clearTimeout(this.recheck);
+      // ⚠ **AND THE `?from` DEBOUNCE, which navigates.** It was cleared only to
+      // reschedule itself, never on destroy, so scrolling and leaving inside its
+      // 300ms window left a timer that called `commitFromParam` on a dead
+      // component — `router.navigate` relative to a route the reader had already
+      // left, with `replaceUrl: true`. Measured 2026-09-11: press Back within
+      // the window and 2 runs in 3 landed back INSIDE the conversation, the list
+      // entry replaced in history. Silent: no page error, nothing in the log.
+      if (this.fromTimer != null) clearTimeout(this.fromTimer);
     });
 
     // The soft keyboard opening is a resize of the scroll container, and the
