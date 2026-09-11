@@ -57,6 +57,10 @@ pub struct Config {
     /// `attachments.stored_path` are served from here by basename.
     pub attachments_dir: String,
 
+    /// Mount of the link-images volume (read-only here; the fetch job is the
+    /// only thing that writes it). Served by the name recorded in `link_images`.
+    pub link_images_dir: String,
+
     /// Where irssi is, for the one thing this app does that is not a read.
     /// `None` disables sending entirely — see [`IrcSend`].
     pub irc_send: Option<IrcSend>,
@@ -121,6 +125,7 @@ impl Config {
             allowed_users,
             static_dir: std::env::var("STATIC_DIR").ok(),
             attachments_dir: env_or("ATTACHMENTS_DIR", "/attachments"),
+            link_images_dir: env_or("LINK_IMAGES_DIR", "/link-images"),
             irc_send: Self::irc_send_from_env()?,
         })
     }

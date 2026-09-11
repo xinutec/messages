@@ -28,6 +28,7 @@ fn cfg(allowed: &[&str]) -> Config {
         allowed_users: allowed.iter().map(|s| (*s).to_string()).collect(),
         static_dir: None,
         attachments_dir: String::new(),
+        link_images_dir: "/link-images".into(),
         irc_send: None,
     }
 }

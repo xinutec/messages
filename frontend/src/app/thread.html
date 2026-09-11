@@ -59,6 +59,19 @@
                        would otherwise render the template indent as a leading space -->
                   <div class="body" [class.deleted]="m.deleted">{{ m.kind === 'action' ? '* ' + m.body : m.body }}</div>
                 }
+              <!-- A picture somebody linked, fetched by us and served from our
+                   side — never an <img> pointed at the other server, which would
+                   announce every reader to it on every render. The link stays
+                   underneath: the reader can still go and see whose it is.
+                   Absent until the fetch job has decided about the link, so a
+                   message that arrived a moment ago simply shows its link. -->
+              @for (li of m.link_images; track li.id) {
+                <div class="attach link-image">
+                  <a [href]="li.url" target="_blank" rel="noopener noreferrer">
+                    <img [src]="'/api/link-images/' + li.id" [alt]="li.url" loading="lazy" />
+                  </a>
+                </div>
+              }
               @for (a of m.attachments; track a.id) {
                 <div class="attach">
                   <!-- The name comes from `attachment.ts`, which `copy-log.ts`

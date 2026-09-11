@@ -50,6 +50,7 @@ fn cfg() -> Config {
         allowed_users: vec!["pippijn".to_string()],
         static_dir: None,
         attachments_dir: "/nonexistent".to_string(),
+        link_images_dir: "/link-images".into(),
         irc_send: None,
     }
 }

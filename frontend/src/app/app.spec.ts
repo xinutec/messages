@@ -19,7 +19,7 @@ function msg(id: string, ts: number, extra: Partial<Message> = {}): Message {
     deleted: false,
     edited: false,
     reactions: [],
-    attachments: [],
+    attachments: [], link_images: [],
     ...extra,
   };
 }

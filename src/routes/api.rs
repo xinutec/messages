@@ -127,6 +127,40 @@ pub async fn attachment(
     Ok(([(header::CONTENT_TYPE, ct)], Body::from(bytes)).into_response())
 }
 
+/// GET /api/link-images/{id} → the picture we hold for a link in a message.
+///
+/// ⚠ **THE READER NEVER TOUCHES THE OTHER SERVER, and that is the reason this
+/// endpoint exists at all.** An `<img>` pointed straight at the link would
+/// announce every reader of the conversation to whoever hosts it, on every
+/// render, years after the line was typed. The bytes come from us or not at all.
+///
+/// `id` is the SHA-256 of the URL, which is also the file's name, so nothing
+/// from a link reaches the filesystem and the id cannot name a path.
+pub async fn link_image(
+    State(app): State<AppState>,
+    AuthUser(_user): AuthUser,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    let Some((content_type, stored_name)) = archive::link_image_blob(&app.pool, &id).await? else {
+        return Err(AppError::NotFound);
+    };
+    // Same disagreement as `attachment`: the row says the bytes are there, so a
+    // read failure is a mount or a deletion, not a link we never fetched.
+    let Some(name) = std::path::Path::new(&stored_name).file_name() else {
+        tracing::warn!("link image {id}: stored_name names no file: {stored_name:?}");
+        return Err(AppError::NotFound);
+    };
+    let path = std::path::Path::new(&app.cfg.link_images_dir).join(name);
+    let bytes = tokio::fs::read(&path).await.map_err(|e| {
+        tracing::warn!(
+            "link image {id}: recorded as stored, but reading {} failed: {e}",
+            path.display()
+        );
+        AppError::NotFound
+    })?;
+    Ok(([(header::CONTENT_TYPE, content_type)], Body::from(bytes)).into_response())
+}
+
 /// GET /api/search?q= → substring search across all three origins.
 pub async fn search(
     State(app): State<AppState>,

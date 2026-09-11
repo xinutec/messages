@@ -186,6 +186,16 @@
     opacity: 0.7;
     margin-top: 0.3rem;
   }
+  // A picture we hold for a LINK somebody posted, as opposed to a file that came
+  // with the message. It reads as a quotation rather than as content: a hairline
+  // says the thing lives somewhere else and the bubble is showing a copy. The
+  // anchor around it goes to the original, so provenance is one click away
+  // without a caption competing with the conversation.
+  .attach.link-image img {
+    outline: 1px solid var(--mat-sys-outline-variant);
+    outline-offset: 2px;
+  }
+
   .attach {
     margin-top: 0.3rem;
     img {

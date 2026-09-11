@@ -11,7 +11,7 @@ import { Message, MessagesPage } from './models';
 import { MAX_RESTORE_PAGES } from './thread-window';
 
 function msg(id: string, ts: number): Message {
-  return { id, ts, sender: 's', is_outgoing: false, kind: 'message', body: 'b', deleted: false, edited: false, reactions: [], attachments: [] };
+  return { id, ts, sender: 's', is_outgoing: false, kind: 'message', body: 'b', deleted: false, edited: false, reactions: [], attachments: [], link_images: [] };
 }
 
 function makeApi() {
@@ -280,6 +280,25 @@ describe('Thread rendering', () => {
   });
 });
 
+describe('Thread linked pictures', () => {
+  it('serves a linked picture from us, never from the other server', async () => {
+    // ⚠ The src is the WHOLE point of the feature. An <img> pointed at the
+    // original link would announce every reader of the conversation to whoever
+    // hosts it, on every render, years after the line was typed.
+    const f = await withLinkImage();
+    const img = (f.nativeElement as HTMLElement).querySelector('.msg[data-id="d"] img')!;
+    expect(img.getAttribute('src')).toBe('/api/link-images/abc123');
+  });
+
+  it('still links out to where the picture came from', async () => {
+    const f = await withLinkImage();
+    const a = (f.nativeElement as HTMLElement).querySelector('.msg[data-id="d"] .link-image a')!;
+    expect(a.getAttribute('href')).toBe('https://cloud.example.org/nc/s/TOKEN');
+    // noopener/noreferrer: following it must not hand the other server this app.
+    expect(a.getAttribute('rel')).toContain('noreferrer');
+  });
+});
+
 describe('Thread copy', () => {
   it('copies a multi-message selection as an irssi log', async () => {
     const fixture = await threeRendered();
@@ -364,6 +383,28 @@ describe('Thread copy', () => {
 /** A thread holding one ordinary message and one deleted one, rendered.
  *  `withImage` gives the deleted message an available image instead of a body —
  *  the attachment-only shape, which renders no `.body` div at all. */
+/** A message whose text carries a link we hold a picture for. `deleted` puts the
+ *  same message behind the reveal, which is what the gating case needs. */
+async function withLinkImage(deleted = false): Promise<ComponentFixture<Thread>> {
+  const { thread, ref, fixture } = setup();
+  const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+  const m: Message = {
+    ...msg('d', new Date(2026, 7, 13, 14, 33).getTime()),
+    body: deleted ? null : 'look at https://cloud.example.org/nc/s/TOKEN',
+    deleted,
+    link_images: [
+      { url: 'https://cloud.example.org/nc/s/TOKEN', id: 'abc123', content_type: 'image/jpeg' },
+    ],
+  };
+  api.messages.mockReturnValue(page([m]));
+  ref.setInput('origin', 'irc');
+  ref.setInput('id', '7');
+  fixture.detectChanges();
+  for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+  fixture.detectChanges();
+  return fixture;
+}
+
 async function withDeleted(withImage = false): Promise<ComponentFixture<Thread>> {
   const { thread, ref, fixture } = setup();
   const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
@@ -413,6 +454,22 @@ describe('Thread deleted messages', () => {
    *  `.body.deleted` reports zero of exactly these. Key on the bubble. */
   it('does not render a deleted message\'s images until it is revealed', async () => {
     const f = await withDeleted(true);
+    const bubble = (f.nativeElement as HTMLElement).querySelector('.msg[data-id="d"]')!;
+    expect(bubble.querySelectorAll('img').length).toBe(0);
+
+    revealBtn(f)!.click();
+    f.detectChanges();
+    expect(bubble.querySelectorAll('img').length).toBe(1);
+  });
+
+  /** ⚠ **THE SAME HALF, FOR A LINKED PICTURE.** A deletion hides the pictures
+   *  too — that was learned once already, when the attachment loop was not gated
+   *  on `m.deleted` and 17 stored images stayed on screen under the word
+   *  `(deleted)`. A picture fetched from a LINK is the same fact arriving by a
+   *  different route, and it would have been just as easy to render outside the
+   *  gate. Keyed on the bubble, because a deleted message has no `.body` div. */
+  it('does not render a deleted message\'s LINKED pictures until it is revealed', async () => {
+    const f = await withLinkImage(true);
     const bubble = (f.nativeElement as HTMLElement).querySelector('.msg[data-id="d"]')!;
     expect(bubble.querySelectorAll('img').length).toBe(0);
 

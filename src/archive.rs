@@ -198,6 +198,20 @@ pub struct Attachment {
     pub is_image: bool,
 }
 
+/// A picture we hold for a link somebody posted — see `link_image.rs`. The UI
+/// renders it under the message and links out to where it came from, so the
+/// reader can still see whose it is.
+#[derive(Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct LinkImage {
+    /// The link as it appears in the message — what the picture links out to.
+    pub url: String,
+    /// Our handle for the bytes: `/api/link-images/{id}`.
+    pub id: String,
+    pub content_type: String,
+}
+
 #[derive(Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -215,10 +229,80 @@ pub struct Message {
     pub edited: bool,
     pub reactions: Vec<Reaction>,
     pub attachments: Vec<Attachment>,
+    /// Pictures we hold for links in `body`. Empty until the fetch job has
+    /// decided about the link, which is why the UI must not depend on it being
+    /// there — a thread opened a second after the message arrives has none.
+    pub link_images: Vec<LinkImage>,
 }
 
 fn is_image(ct: Option<&str>) -> bool {
     ct.is_some_and(|c| c.starts_with("image/"))
+}
+
+/// Hang any pictures we hold onto the messages whose text linked them.
+///
+/// One query for the page, like reactions: the links are read out of the bodies
+/// we already have, so this costs a single round trip however many links a page
+/// carries. Only `ok` rows are joined — a link we decided was not a picture, or
+/// could not reach, is simply a link.
+pub async fn attach_link_images(pool: &MySqlPool, msgs: &mut [Message]) -> Result<()> {
+    let mut wanted: Vec<(String, String, usize)> = Vec::new(); // (hash, url, message index)
+    for (i, m) in msgs.iter().enumerate() {
+        let Some(body) = m.body.as_deref() else {
+            continue;
+        };
+        for url in crate::link_image::urls_in(body) {
+            wanted.push((crate::link_fetch::url_hash(&url), url.to_string(), i));
+        }
+    }
+    if wanted.is_empty() {
+        return Ok(());
+    }
+    let hashes: Vec<&str> = {
+        let mut h: Vec<&str> = wanted.iter().map(|(h, _, _)| h.as_str()).collect();
+        h.sort_unstable();
+        h.dedup();
+        h
+    };
+    let placeholders = vec!["?"; hashes.len()].join(",");
+    let sql = format!(
+        "SELECT url_hash, content_type FROM link_images
+         WHERE state = 'ok' AND content_type IS NOT NULL AND url_hash IN ({placeholders})",
+    );
+    // Fixed template + computed placeholder count, values bound — safe.
+    let mut q = sqlx::query(AssertSqlSafe(sql));
+    for h in &hashes {
+        q = q.bind(*h);
+    }
+    let mut held: Vec<(String, String)> = Vec::new();
+    for row in q.fetch_all(pool).await? {
+        held.push((row.try_get("url_hash")?, row.try_get("content_type")?));
+    }
+    for (hash, url, i) in wanted {
+        if let Some((_, content_type)) = held.iter().find(|(h, _)| *h == hash) {
+            msgs[i].link_images.push(LinkImage {
+                url,
+                id: hash,
+                content_type: content_type.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Where a link's stored bytes are, if we hold them — the serving endpoint's
+/// half of `attach_link_images`.
+pub async fn link_image_blob(pool: &MySqlPool, id: &str) -> Result<Option<(String, String)>> {
+    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT content_type, stored_name FROM link_images WHERE url_hash = ? AND state = 'ok'",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(match row {
+        Some((Some(ct), Some(name))) => Some((ct, name)),
+        _ => None,
+    })
 }
 
 /// Stored location + content-type for an attachment blob, if its bytes exist.
@@ -451,6 +535,9 @@ pub async fn messages_page(
         Origin::Gchat => gchat_messages(pool, id, cursor, limit, dir).await?,
         Origin::Irc => irc_messages(pool, id, cursor, limit, dir).await?,
     };
+    let mut page = page;
+    attach_link_images(pool, &mut page.msgs).await?;
+    let page = page;
     let has_more = page.msgs.len() as i64 == limit;
     Ok(MessagesPage {
         messages: page.msgs,
@@ -573,6 +660,7 @@ async fn signal_messages(
             edited: edited != 0,
             reactions: Vec::new(),
             attachments: Vec::new(),
+            link_images: Vec::new(), // filled for the whole page in messages_page
         });
     }
 
@@ -714,6 +802,7 @@ async fn gchat_messages(
             edited: false,
             reactions: Vec::new(),
             attachments: Vec::new(), // Google Chat export carries no attachments
+            link_images: Vec::new(), // filled for the whole page in messages_page
         });
     }
 
@@ -850,6 +939,7 @@ async fn irc_messages(
             deleted: false,
             edited: false,
             reactions: Vec::new(),   // IRC has none
+            link_images: Vec::new(), // filled for the whole page in messages_page
             attachments: Vec::new(), // nor these
         });
     }

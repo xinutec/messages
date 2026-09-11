@@ -64,6 +64,7 @@ async fn get(path: &str) -> (StatusCode, String) {
         allowed_users: Vec::new(),
         static_dir: Some(dir.0.to_string_lossy().into_owned()),
         attachments_dir: String::new(),
+        link_images_dir: "/link-images".into(),
         irc_send: None,
     };
     let res = routes::router(AppState::new(pool, cfg, reqwest::Client::new(), None))

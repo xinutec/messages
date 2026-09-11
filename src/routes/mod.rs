@@ -106,6 +106,7 @@ pub fn router(state: AppState) -> Router {
         // the effect of. IRC only; see `api::send`.
         .route("/conversations/{origin}/{id}/send", post(api::send))
         .route("/attachments/{id}", get(api::attachment))
+        .route("/link-images/{id}", get(api::link_image))
         .route("/search", get(api::search))
         // What the person did, folded into the same log as what the API saw.
         .route("/telemetry", post(telemetry::record));

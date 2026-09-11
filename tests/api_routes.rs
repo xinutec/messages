@@ -52,6 +52,7 @@ fn cfg() -> Config {
         allowed_users: vec!["pippijn".to_string()],
         static_dir: None,
         attachments_dir: "/nonexistent".to_string(),
+        link_images_dir: "/link-images".into(),
         // No send key: the archive still serves and every send is refused. The
         // send cases below are all decided before this is consulted.
         irc_send: None,
