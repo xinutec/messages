@@ -56,5 +56,18 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
     .execute(pool)
     .await
     .context("creating link_images table")?;
+
+    // How far the fetcher has examined the archive — one row, two watermarks.
+    // See `link_fetch::Progress` for what they mean and why one would not do.
+    sqlx::query(
+        r"CREATE TABLE IF NOT EXISTS link_fetch_progress (
+            id         TINYINT NOT NULL PRIMARY KEY,
+            high_water BIGINT  NOT NULL,
+            low_water  BIGINT  NOT NULL
+        ) DEFAULT CHARSET=utf8mb4",
+    )
+    .execute(pool)
+    .await
+    .context("creating link_fetch_progress table")?;
     Ok(())
 }

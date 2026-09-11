@@ -69,43 +69,254 @@ pub fn url_hash(url: &Url) -> String {
     hex::encode(Sha256::digest(url.as_str().as_bytes()))
 }
 
-/// Links in IRC lines that we have not yet decided about, newest first.
-///
-/// IRC only for now — that is where the links in question are, and the other two
-/// origins carry their pictures as attachments already. Adding an origin is one
-/// more query and the same extraction.
-pub async fn undecided_urls(pool: &MySqlPool, scan_rows: u32, want: usize) -> Result<Vec<Url>> {
-    let rows: Vec<(Option<String>,)> = sqlx::query_as(
-        r"SELECT text FROM irc_messages
-          WHERE kind IN ('message','action') AND text LIKE '%http%'
-          ORDER BY id DESC LIMIT ?",
-    )
-    .bind(scan_rows)
-    .fetch_all(pool)
-    .await
-    .context("scanning irc_messages for links")?;
+/// A line of the archive to examine for links.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Line {
+    pub id: i64,
+    pub text: String,
+}
 
-    let mut out: Vec<Url> = Vec::new();
-    for (text,) in rows {
-        let Some(text) = text else { continue };
-        for url in urls_in(&text) {
-            if out.len() >= want {
-                return Ok(out);
-            }
-            if !out.contains(&url) && !is_decided(pool, &url).await? {
-                out.push(url);
+/// How far the fetcher has examined the archive.
+///
+/// ⚠ **TWO WATERMARKS, AND ONE IS NOT ENOUGH.** The archive grows at the top and
+/// is inexhaustible at the bottom, so "where have we got to" has two answers:
+///
+///   * `high` — the newest line examined. Above it are arrivals since the last
+///     run, which should be decided promptly; a picture posted this morning
+///     should not wait for a walk through 2014.
+///   * `low` — the oldest line examined. Below it is history nobody has looked
+///     at, walked backwards a chunk per run until it reaches the beginning.
+///
+/// **The invariant is that every line between `low` and `high` has been
+/// examined.** Everything else follows from keeping that true — in particular a
+/// watermark may only move over lines whose links were all attempted, which is
+/// what `plan` computes and why it refuses to stop in the middle of a line.
+///
+/// The first run starts them both above the newest id, so the forward pass finds
+/// nothing and the backfill begins at the top and walks down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Progress {
+    pub high: i64,
+    pub low: i64,
+}
+
+/// What one pass decided to do: the links to attempt, and how far it may claim
+/// to have examined.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Plan {
+    pub urls: Vec<Url>,
+    /// The id of the last line examined IN FULL, or None if the budget ran out
+    /// before a single line was finished. The watermark moves to exactly here.
+    pub examined_through: Option<i64>,
+}
+
+/// Decide what to attempt from a chunk of lines, in the order given.
+///
+/// ⚠ **STOPS BEFORE A LINE IT CANNOT FINISH, and that is the whole reason this
+/// is a function rather than a loop in `run`.** A line carrying three links when
+/// only one fits in the batch must be left for the next run entirely: taking one
+/// link and moving the watermark past the line would drop the other two
+/// silently, for ever, and nothing downstream would ever notice — the line is
+/// behind the watermark, so it is never read again.
+///
+/// Lines whose links are all decided already cost nothing and are examined, which
+/// is what lets the backfill cross years of link-free conversation in one run.
+pub fn plan(lines: &[Line], decided: &dyn Fn(&Url) -> bool, budget: usize) -> Plan {
+    let mut out = Plan::default();
+    for line in lines {
+        let fresh: Vec<Url> = urls_in(&line.text)
+            .into_iter()
+            .filter(|u| !decided(u) && !out.urls.contains(u))
+            .collect();
+        if out.urls.len() + fresh.len() > budget {
+            return out;
+        }
+        out.urls.extend(fresh);
+        out.examined_through = Some(line.id);
+    }
+    out
+}
+
+/// Read the watermarks, starting them above the newest line on first run.
+pub async fn progress(pool: &MySqlPool) -> Result<Progress> {
+    let row: Option<(i64, i64)> =
+        sqlx::query_as("SELECT high_water, low_water FROM link_fetch_progress WHERE id = 1")
+            .fetch_optional(pool)
+            .await?;
+    if let Some((high, low)) = row {
+        return Ok(Progress { high, low });
+    }
+    let newest: Option<i64> = sqlx::query_scalar("SELECT MAX(id) FROM irc_messages")
+        .fetch_one(pool)
+        .await?;
+    // One past the newest: nothing examined yet, and the backfill starts at the top.
+    let start = newest.unwrap_or(0) + 1;
+    Ok(Progress {
+        high: start,
+        low: start,
+    })
+}
+
+async fn save_progress(pool: &MySqlPool, p: Progress) -> Result<()> {
+    sqlx::query(
+        r"INSERT INTO link_fetch_progress (id, high_water, low_water) VALUES (1, ?, ?)
+          ON DUPLICATE KEY UPDATE high_water = VALUES(high_water), low_water = VALUES(low_water)",
+    )
+    .bind(p.high)
+    .bind(p.low)
+    .execute(pool)
+    .await
+    .context("saving link-fetch progress")?;
+    Ok(())
+}
+
+/// Lines newer than the watermark, oldest first — arrivals since the last run.
+async fn lines_above(pool: &MySqlPool, high: i64, chunk: u32) -> Result<Vec<Line>> {
+    fetch_lines(pool, "id > ? ORDER BY id ASC", high, chunk).await
+}
+
+/// Lines older than the watermark, newest first — the backfill, walking down.
+async fn lines_below(pool: &MySqlPool, low: i64, chunk: u32) -> Result<Vec<Line>> {
+    fetch_lines(pool, "id < ? ORDER BY id DESC", low, chunk).await
+}
+
+async fn fetch_lines(
+    pool: &MySqlPool,
+    where_order: &str,
+    bound: i64,
+    chunk: u32,
+) -> Result<Vec<Line>> {
+    // Fixed template, one bound value — the direction is chosen from the two
+    // literals above, never from input. `ORDER BY` cannot be a bound parameter.
+    let sql = format!(
+        "SELECT id, text FROM irc_messages
+         WHERE kind IN ('message','action') AND text LIKE '%http%' AND {where_order} LIMIT ?"
+    );
+    let rows: Vec<(i64, Option<String>)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(bound)
+        .bind(chunk)
+        .fetch_all(pool)
+        .await
+        .context("reading lines to examine")?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(id, text)| text.map(|text| Line { id, text }))
+        .collect())
+}
+
+/// Which of these links already have a decision — one query for the chunk.
+async fn decided_set(
+    pool: &MySqlPool,
+    lines: &[Line],
+) -> Result<std::collections::HashSet<String>> {
+    let mut hashes: Vec<String> = Vec::new();
+    for line in lines {
+        for url in urls_in(&line.text) {
+            let h = url_hash(&url);
+            if !hashes.contains(&h) {
+                hashes.push(h);
             }
         }
     }
-    Ok(out)
+    if hashes.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+    let placeholders = vec!["?"; hashes.len()].join(",");
+    let sql = format!("SELECT url_hash FROM link_images WHERE url_hash IN ({placeholders})");
+    let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql));
+    for h in &hashes {
+        q = q.bind(h);
+    }
+    Ok(q.fetch_all(pool).await?.into_iter().collect())
 }
 
-async fn is_decided(pool: &MySqlPool, url: &Url) -> Result<bool> {
-    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM link_images WHERE url_hash = ?")
-        .bind(url_hash(url))
-        .fetch_one(pool)
-        .await?;
-    Ok(n > 0)
+/// `low` once the walk has reached the beginning of the archive. Zero rather
+/// than the oldest line's id, so that "finished" is a value and not an inference
+/// from a watermark that has stopped moving.
+pub const BACKFILL_DONE: i64 = 0;
+
+/// What a run did, for the log line that is the only thing anyone sees.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct RunReport {
+    pub stored: u32,
+    pub not_image: u32,
+    pub failed: u32,
+    pub examined_new: usize,
+    pub examined_old: usize,
+    pub progress: Option<Progress>,
+}
+
+/// One pass of the fetcher: new arrivals first, then a chunk of backfill.
+///
+/// ⚠ **NEW ARRIVALS TAKE THE BUDGET FIRST.** A picture posted this morning
+/// should appear in the conversation today; history has waited years and can
+/// wait another hour. If the forward pass uses the whole budget the backfill
+/// simply does not run, and its watermark does not move — which is the honest
+/// outcome, not a skipped step.
+pub async fn run(
+    pool: &MySqlPool,
+    client: &reqwest::Client,
+    dir: &Path,
+    limits: Limits,
+    budget: usize,
+    chunk: u32,
+) -> Result<RunReport> {
+    let mut at = progress(pool).await?;
+    let mut report = RunReport::default();
+    let mut urls: Vec<Url> = Vec::new();
+
+    let above = lines_above(pool, at.high, chunk).await?;
+    if !above.is_empty() {
+        let decided = decided_set(pool, &above).await?;
+        let planned = plan(&above, &|u| decided.contains(&url_hash(u)), budget);
+        if let Some(through) = planned.examined_through {
+            at.high = through;
+        }
+        report.examined_new = above.len();
+        urls.extend(planned.urls);
+    }
+
+    let remaining = budget.saturating_sub(urls.len());
+    if remaining > 0 {
+        let below = lines_below(pool, at.low, chunk).await?;
+        let short_chunk = below.len() < chunk as usize;
+        let last_id = below.last().map(|l| l.id);
+        if below.is_empty() {
+            // Nothing older carries a link at all: the walk is finished, and
+            // saying so is what distinguishes "done" from "stuck". Without a
+            // terminal value `low` would rest on the oldest link-bearing line for
+            // ever and read exactly like a backfill that had stalled.
+            at.low = BACKFILL_DONE;
+        } else {
+            let decided = decided_set(pool, &below).await?;
+            let planned = plan(&below, &|u| decided.contains(&url_hash(u)), remaining);
+            if let Some(through) = planned.examined_through {
+                at.low = through;
+                // Reached the end of the archive AND got through the chunk: there
+                // is nothing older to come back for.
+                if short_chunk && Some(through) == last_id {
+                    at.low = BACKFILL_DONE;
+                }
+            }
+            report.examined_old = below.len();
+            urls.extend(planned.urls);
+        }
+    }
+
+    for url in &urls {
+        match resolve_one(pool, client, dir, url, limits).await? {
+            Outcome::Ok => report.stored += 1,
+            Outcome::NotImage => report.not_image += 1,
+            Outcome::Failed => report.failed += 1,
+        }
+    }
+
+    // ⚠ Written AFTER the fetches, so a run that dies half way re-examines those
+    // lines next time rather than skipping them. Re-examining is free: every link
+    // it meets again already has a decision.
+    save_progress(pool, at).await?;
+    report.progress = Some(at);
+    Ok(report)
 }
 
 /// Ask one server about one link, and write down what it said.

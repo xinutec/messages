@@ -42,21 +42,47 @@ async fn main() -> Result<()> {
         .redirect(reqwest::redirect::Policy::limited(3))
         .build()?;
 
-    let urls = link_fetch::undecided_urls(&pool, scan, batch).await?;
-    tracing::info!(
-        "{} undecided link(s) in the newest {scan} lines",
-        urls.len()
-    );
+    let before = link_fetch::progress(&pool).await?;
+    let r = link_fetch::run(
+        &pool,
+        &client,
+        &dir,
+        link_fetch::Limits::default(),
+        batch,
+        scan,
+    )
+    .await?;
 
-    let limits = link_fetch::Limits::default();
-    let (mut ok, mut not_image, mut failed) = (0u32, 0u32, 0u32);
-    for url in &urls {
-        match link_fetch::resolve_one(&pool, &client, &dir, url, limits).await? {
-            link_fetch::Outcome::Ok => ok += 1,
-            link_fetch::Outcome::NotImage => not_image += 1,
-            link_fetch::Outcome::Failed => failed += 1,
+    // ⚠ The WATERMARKS are the line worth printing. "stored 4" says a run
+    // happened; `low` moving says the backfill is getting somewhere, and `low`
+    // standing still across runs is the only symptom that the archive is not
+    // being walked — which is exactly how the first version of this went
+    // unnoticed until someone asked about a day in 2025.
+    tracing::info!(
+        "examined {} new + {} old line(s); stored {}, not a picture {}, unreachable {}",
+        r.examined_new,
+        r.examined_old,
+        r.stored,
+        r.not_image,
+        r.failed
+    );
+    if let Some(after) = r.progress {
+        if after.low == link_fetch::BACKFILL_DONE {
+            tracing::info!(
+                "progress: high {} -> {}; the backfill has reached the beginning of the archive",
+                before.high,
+                after.high
+            );
+        } else {
+            tracing::info!(
+                "progress: high {} -> {}, low {} -> {}; {} older line(s) still to examine",
+                before.high,
+                after.high,
+                before.low,
+                after.low,
+                (after.low - 1).max(0)
+            );
         }
     }
-    tracing::info!("stored {ok}, not a picture {not_image}, unreachable {failed}");
     Ok(())
 }
