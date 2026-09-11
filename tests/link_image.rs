@@ -145,3 +145,90 @@ fn what_is_not_a_link_is_left_alone() {
 fn an_empty_advert_is_not_inlineable() {
     assert!(!Advert::default().is_inlineable_image());
 }
+
+// ---- what a refusal says, and what an attribute carries --------------------
+
+#[test]
+fn an_entity_encoded_query_string_is_decoded() {
+    // ⚠ THE BUG THIS READER SHIPPED WITH. An og:image with a query string arrives
+    // as `?x=1024&amp;y=1024&amp;token=…`, because that is how an attribute
+    // spells an ampersand. Fetched raw, the server reads a parameter called
+    // `amp;token`, never sees the token, and answers 404 — so the link was
+    // recorded "not a picture" about a URL this reader had mangled itself.
+    // Measured against the live install: raw → 404 application/json, decoded →
+    // 200 image/jpeg.
+    let page = Url::parse(SHARE).unwrap();
+    let html = fixture().replace(
+        r#"content="https://cloud.example.org/nc/s/SHARETOKEN/preview""#,
+        r#"content="https://cloud.example.org/nc/s/SHARETOKEN/preview?x=1024&amp;y=1024&amp;token=abc""#,
+    );
+    let a = read_advert(&page, REAL_COOKIES.into_iter(), &html);
+    assert_eq!(
+        a.image.as_ref().map(Url::as_str),
+        Some("https://cloud.example.org/nc/s/SHARETOKEN/preview?x=1024&y=1024&token=abc"),
+        "the ampersands are ampersands, so the token arrives"
+    );
+}
+
+#[test]
+fn a_refusal_says_which_signal_was_missing() {
+    // A refusal with no reason becomes permanent and unexplainable: when the
+    // verdict was wrong, the control vanished and nothing could say why.
+    let page = Url::parse(SHARE).unwrap();
+    let not_a_cloud = read_advert(&page, ["session=abc"].into_iter(), &fixture());
+    assert_eq!(
+        not_a_cloud.refusal(),
+        Some("the server does not name itself as a file cloud")
+    );
+
+    let no_picture = read_advert(
+        &page,
+        REAL_COOKIES.into_iter(),
+        &fixture().replace("og:image", "og:nothing"),
+    );
+    assert_eq!(
+        no_picture.refusal(),
+        Some("no og:image on the page, or it named another server")
+    );
+
+    let wrong_type = read_advert(
+        &page,
+        REAL_COOKIES.into_iter(),
+        &fixture().replace(r#"content="image/jpeg""#, r#"content="application/pdf""#),
+    );
+    assert_eq!(
+        wrong_type.refusal(),
+        Some("og:image:type is not an image type")
+    );
+
+    assert_eq!(
+        read_advert(&page, REAL_COOKIES.into_iter(), &fixture()).refusal(),
+        None
+    );
+}
+
+#[test]
+fn a_verdict_from_an_older_reader_may_be_asked_again() {
+    use messages::link_image::{LinkState, READER_VERSION, askable};
+
+    // A picture we hold needs no asking; everything else may be asked again if
+    // the reader that decided it has since been fixed.
+    assert!(!askable(LinkState::Ok, Some(READER_VERSION)));
+    assert!(askable(LinkState::Offered, None));
+    assert!(
+        askable(LinkState::Failed, Some(READER_VERSION)),
+        "a server that was down is not a server that is"
+    );
+    assert!(
+        !askable(LinkState::NotImage, Some(READER_VERSION)),
+        "this reader looked and said no"
+    );
+    assert!(
+        askable(LinkState::NotImage, Some(READER_VERSION - 1)),
+        "an older reader said no, and readers get fixed"
+    );
+    assert!(
+        askable(LinkState::NotImage, None),
+        "decided before we recorded which reader decided"
+    );
+}

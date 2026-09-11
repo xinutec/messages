@@ -12,6 +12,8 @@
 
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
+
+use crate::link_image::{LinkState, askable};
 use sqlx::{AssertSqlSafe, MySqlPool, Row};
 
 /// Which archive a conversation came from.
@@ -284,7 +286,7 @@ pub async fn attach_link_images(pool: &MySqlPool, msgs: &mut [Message]) -> Resul
     // rightly not resolvable to an address. A button that cannot work is worse
     // than no button.
     let sql = format!(
-        "SELECT url_hash, state, content_type FROM link_images
+        "SELECT url_hash, state, content_type, decided_by FROM link_images
          WHERE url_hash IN ({placeholders})",
     );
     // Fixed template + computed placeholder count, values bound — safe.
@@ -292,12 +294,19 @@ pub async fn attach_link_images(pool: &MySqlPool, msgs: &mut [Message]) -> Resul
     for h in &hashes {
         q = q.bind(*h);
     }
-    let mut known: Vec<(String, String, Option<String>)> = Vec::new();
+    // Parsed once, here at the boundary: everything below reasons about the
+    // closed set rather than about strings.
+    let mut known: Vec<(String, LinkState, Option<String>, Option<i32>)> = Vec::new();
     for row in q.fetch_all(pool).await? {
+        let raw: String = row.try_get("state")?;
+        let Some(state) = LinkState::parse(&raw) else {
+            bail!("link_images.state holds {raw:?}, which is not a state this app writes");
+        };
         known.push((
             row.try_get("url_hash")?,
-            row.try_get("state")?,
+            state,
             row.try_get("content_type")?,
+            row.try_get("decided_by")?,
         ));
     }
 
@@ -308,15 +317,18 @@ pub async fn attach_link_images(pool: &MySqlPool, msgs: &mut [Message]) -> Resul
     let mut unseen: Vec<(&str, &str)> = Vec::new();
     for (hash, url, i) in &wanted {
         let already_offered = msgs[*i].link_offers.iter().any(|o| o.id == *hash);
-        match known.iter().find(|(h, _, _)| h == hash) {
-            Some((_, state, Some(content_type))) if state == "ok" => {
+        match known.iter().find(|(h, _, _, _)| h == hash) {
+            Some((_, LinkState::Ok, Some(content_type), _)) => {
                 msgs[*i].link_images.push(LinkImage {
                     url: url.clone(),
                     id: hash.clone(),
                     content_type: content_type.clone(),
                 });
             }
-            Some((_, state, _)) if state == "offered" => {
+            // Offered, unreachable last time, or decided by an older reader —
+            // `link_image::askable` is the one place that says which, and the
+            // request endpoint asks it too.
+            Some((_, state, _, by)) if askable(*state, *by) => {
                 if !already_offered {
                     msgs[*i].link_offers.push(LinkOffer {
                         id: hash.clone(),
@@ -324,7 +336,7 @@ pub async fn attach_link_images(pool: &MySqlPool, msgs: &mut [Message]) -> Resul
                     });
                 }
             }
-            Some(_) => {} // decided: not a picture, or unreachable
+            Some(_) => {} // decided by this reader: not a picture
             None => {
                 if !unseen.iter().any(|(h, _)| h == hash) {
                     unseen.push((hash.as_str(), url.as_str()));
@@ -373,12 +385,14 @@ async fn offer(pool: &MySqlPool, links: &[(&str, &str)]) -> Result<()> {
 /// naming an address: the caller hands us a hash, and the address comes back off
 /// the row that serving a page created from the message's own text.
 pub async fn offered_url(pool: &MySqlPool, id: &str) -> Result<Option<String>> {
-    Ok(
-        sqlx::query_scalar("SELECT url FROM link_images WHERE url_hash = ? AND state = 'offered'")
+    let row: Option<(String, String, Option<i32>)> =
+        sqlx::query_as("SELECT url, state, decided_by FROM link_images WHERE url_hash = ?")
             .bind(id)
             .fetch_optional(pool)
-            .await?,
-    )
+            .await?;
+    Ok(row
+        .filter(|(_, state, by)| LinkState::parse(state).is_some_and(|s| askable(s, *by)))
+        .map(|(url, _, _)| url))
 }
 
 /// A link's state and, once there is a picture, its type.

@@ -84,6 +84,9 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
         // any straggler to be re-offered, and is not written by anything.
         "ALTER TABLE link_images ADD COLUMN IF NOT EXISTS wanted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
         "ALTER TABLE link_images MODIFY COLUMN fetched_at DATETIME NULL",
+        // Which reader decided. NULL means "before this column existed", which is
+        // older than any reader and so re-offered — see `link_image::READER_VERSION`.
+        "ALTER TABLE link_images ADD COLUMN IF NOT EXISTS decided_by INT NULL",
     ] {
         sqlx::query(sqlx::AssertSqlSafe(alter))
             .execute(pool)

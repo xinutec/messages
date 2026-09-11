@@ -31,10 +31,10 @@ async fn pool() -> Option<MySqlPool> {
         // died on the primary key — the rows are identical every time, so saying
         // so is both the fix and the truth.
         sqlx::query(
-            "INSERT INTO link_images (url_hash, url, state, content_type, size_bytes, stored_name, wanted_at, fetched_at)
-             VALUES (?, ?, ?, ?, 10, ?, NOW(), NOW())
+            "INSERT INTO link_images (url_hash, url, state, content_type, size_bytes, stored_name, wanted_at, fetched_at, decided_by)
+             VALUES (?, ?, ?, ?, 10, ?, NOW(), NOW(), 2)
              ON DUPLICATE KEY UPDATE state = VALUES(state), content_type = VALUES(content_type),
-                                     stored_name = VALUES(stored_name)",
+                                     stored_name = VALUES(stored_name), decided_by = VALUES(decided_by)",
         )
         .bind(url_hash(&Url::parse(url).unwrap()))
         .bind(url)
@@ -152,8 +152,8 @@ async fn a_hash_nobody_offered_resolves_to_no_address() {
 
 #[tokio::test]
 async fn a_decided_link_is_not_offered_again() {
-    // Already decided, so there is nothing to ask for: resolving it to an address
-    // would send us back to a stranger's server for an answer we hold.
+    // Decided BY THIS READER, so there is nothing to ask for. A verdict from an
+    // older reader is a different matter and has its own test in link_image.rs.
     let Some(pool) = pool().await else { return };
     let hash = url_hash(&Url::parse(REFUSED).unwrap());
     assert!(offered_url(&pool, &hash).await.unwrap().is_none());

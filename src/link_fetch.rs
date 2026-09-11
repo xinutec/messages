@@ -188,7 +188,8 @@ pub async fn fetch_picture(
     let html = String::from_utf8_lossy(&read_capped(res, limits).await?).into_owned();
 
     let advert = read_advert(&final_url, cookies.iter().map(String::as_str), &html);
-    if !advert.is_inlineable_image() {
+    if let Some(why) = advert.refusal() {
+        tracing::info!("not a picture: {why}");
         return Ok(None);
     }
     let Some(image_url) = advert.image else {
@@ -201,6 +202,11 @@ pub async fn fetch_picture(
     // A share whose file was replaced since it was posted answers with whatever
     // is there now, and that is the byte stream we would be storing.
     if !ct.starts_with("image/") {
+        // ⚠ The page named a picture and the server sent something else. This is
+        // where a URL we mangled shows up — a 404 page carries a content type
+        // too — so it is worth saying out loud rather than folding into a bare
+        // "not a picture".
+        tracing::info!("the advertised picture answered {ct}, not an image");
         return Ok(None);
     }
     Ok(Some((read_capped(res, limits).await?, ct)))
@@ -258,12 +264,12 @@ async fn record(
     sqlx::query(
         r"INSERT INTO link_images
               (url_hash, url, state, content_type, size_bytes, stored_name, note,
-               wanted_at, fetched_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+               wanted_at, fetched_at, decided_by)
+          VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?)
           ON DUPLICATE KEY UPDATE
               state = VALUES(state), content_type = VALUES(content_type),
               size_bytes = VALUES(size_bytes), stored_name = VALUES(stored_name),
-              note = VALUES(note), fetched_at = NOW()",
+              note = VALUES(note), fetched_at = NOW(), decided_by = VALUES(decided_by)",
     )
     .bind(url_hash(url))
     .bind(url.as_str())
@@ -272,6 +278,7 @@ async fn record(
     .bind(size.map(|s| s as i64))
     .bind(stored_name)
     .bind(note.map(|n| n.chars().take(240).collect::<String>()))
+    .bind(crate::link_image::READER_VERSION)
     .execute(pool)
     .await
     .context("recording a link's outcome")?;
