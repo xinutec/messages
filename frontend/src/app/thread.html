@@ -28,8 +28,20 @@
               <div class="meta">
                 <span>{{ m.sender }}</span>
                 <span>{{ m.ts | date: 'shortTime' }}</span>
+                <!-- ⚠ The tag is the WAY IN, not decoration. An edit is a
+                     separate row in the archive, so every version is held; what
+                     the reader sees is the current text, and this is how they
+                     ask what it said before. A plain tag would say a change
+                     happened and then refuse to show it. -->
                 @if (m.edited) {
-                  <span class="tag">edited</span>
+                  @if (m.edits.length) {
+                    <button type="button" class="tag history-toggle" (click)="toggleHistory(m.id)"
+                            [attr.aria-expanded]="isHistoryOpen(m.id)">
+                      edited
+                    </button>
+                  } @else {
+                    <span class="tag">edited</span>
+                  }
                 }
                 <!-- Only once revealed. While hidden the body already says
                      `(deleted)` and a tag beside it is the same word twice; once
@@ -49,6 +61,19 @@
                 <button type="button" class="body deleted reveal" (click)="toggleReveal(m.id)"
                         aria-label="Show this deleted message">(deleted)</button>
               } @else {
+                <!-- Oldest first, above the current text, because that is the
+                     order they were written in and the last thing the eye should
+                     land on is what the message says NOW. -->
+                @if (isHistoryOpen(m.id)) {
+                  <div class="edit-history">
+                    @for (e of m.edits; track e.ts) {
+                      <div class="version">
+                        <span class="when">{{ e.ts | date: 'shortTime' }}</span>
+                        <span class="said">{{ e.body }}</span>
+                      </div>
+                    }
+                  </div>
+                }
                 @if (m.body) {
                   <!-- An action is written in the third person about its sender,
                        so every IRC client draws it `* nick waves`. The star is

@@ -22,7 +22,7 @@ const conversations = (total = 4) => [
   { origin: "irc", id: "7", name: "#chan", kind: "group", network: "xinutec", message_count: total, last_ts: Date.UTC(2026, 7, 14, 9, 5) },
 ];
 const line = (id: string, ts: number, sender: string, body: string, kind = "message") => ({
-  id, ts, sender, body, kind, is_outgoing: false, deleted: false, edited: false, reactions: [], attachments: [],
+  id, ts, sender, body, kind, is_outgoing: false, deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [],
 });
 
 const MESSAGES = [

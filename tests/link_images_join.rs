@@ -60,6 +60,7 @@ fn msg(body: &str) -> Message {
         edited: false,
         reactions: Vec::new(),
         attachments: Vec::new(),
+        edits: Vec::new(),
         link_images: Vec::new(),
         link_offers: Vec::new(),
     }

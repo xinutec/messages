@@ -52,6 +52,7 @@ function newestPage(n: number) {
     edited: false,
     reactions: [],
     attachments: k >= n - 4 ? [imageAttachment(k)] : [],
+    link_images: [], link_offers: [], edits: [],
   }));
 }
 
@@ -149,7 +150,7 @@ function pageAt(prefix: string, startTs: number, n: number) {
     deleted: false,
     edited: false,
     reactions: [],
-    attachments: [],
+    attachments: [], link_images: [], link_offers: [], edits: [],
   }));
 }
 

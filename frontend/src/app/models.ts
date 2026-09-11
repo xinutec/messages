@@ -15,6 +15,7 @@ export * from "./generated/LinkImageState";
 export * from "./generated/LinkOffer";
 export * from "./generated/Me";
 export * from "./generated/Message";
+export * from "./generated/MessageEdit";
 export * from "./generated/MessageKind";
 export * from "./generated/MessagesPage";
 export * from "./generated/Origin";

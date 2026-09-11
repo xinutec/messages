@@ -65,6 +65,23 @@ export class Thread {
     return this.revealedIds().has(id);
   }
 
+  /** Which messages are showing what they said before. Ids, like `revealedIds`,
+   *  and for the same reason: `pollNewer` replaces the array wholesale, so a flag
+   *  on the message would be lost on the next tick. */
+  private readonly openHistories = signal<ReadonlySet<string>>(new Set());
+
+  protected isHistoryOpen(id: string): boolean {
+    return this.openHistories().has(id);
+  }
+
+  protected toggleHistory(id: string): void {
+    this.openHistories.update((cur) => {
+      const next = new Set(cur);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }
+
   protected toggleReveal(id: string): void {
     this.revealedIds.update((cur) => {
       const next = new Set(cur);

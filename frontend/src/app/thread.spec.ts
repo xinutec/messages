@@ -11,7 +11,7 @@ import { Message, MessagesPage } from './models';
 import { MAX_RESTORE_PAGES } from './thread-window';
 
 function msg(id: string, ts: number): Message {
-  return { id, ts, sender: 's', is_outgoing: false, kind: 'message', body: 'b', deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [] };
+  return { id, ts, sender: 's', is_outgoing: false, kind: 'message', body: 'b', deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [] };
 }
 
 function makeApi() {
@@ -277,6 +277,78 @@ describe('Thread rendering', () => {
       (e) => e.textContent,
     );
     expect(bodies).toEqual(['hello', '* waves']);
+  });
+});
+
+describe('Thread edit history', () => {
+  async function withEdited(): Promise<ComponentFixture<Thread>> {
+    const { thread, ref, fixture } = setup();
+    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    api.messages.mockReturnValue(
+      page([
+        {
+          ...msg('e', new Date(2026, 7, 13, 14, 30).getTime()),
+          body: 'what it says now',
+          edited: true,
+          edits: [
+            { ts: new Date(2026, 7, 13, 14, 30).getTime(), body: 'first thought' },
+            { ts: new Date(2026, 7, 13, 14, 32).getTime(), body: 'second thought' },
+          ],
+        },
+      ]),
+    );
+    ref.setInput('origin', 'signal');
+    ref.setInput('id', 'dm:a');
+    fixture.detectChanges();
+    for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    fixture.detectChanges();
+    return fixture;
+  }
+
+  it('shows only what the message says now', async () => {
+    // ⚠ The archive holds a row per version, and both were drawn — the old text
+    // where it was said, the new text minutes later, nothing joining them.
+    const el = (await withEdited()).nativeElement as HTMLElement;
+    expect(el.querySelector('.msg .body')?.textContent).toContain('what it says now');
+    expect(el.textContent).not.toContain('first thought');
+    expect(el.textContent).not.toContain('second thought');
+  });
+
+  it('opens what it said before, oldest first', async () => {
+    const f = await withEdited();
+    const el = f.nativeElement as HTMLElement;
+    el.querySelector<HTMLButtonElement>('.tag.history-toggle')!.click();
+    f.detectChanges();
+    const said = [...el.querySelectorAll('.edit-history .said')].map((e) => e.textContent?.trim());
+    expect(said).toEqual(['first thought', 'second thought']);
+    // And the current text is still the last thing in the bubble.
+    expect(el.querySelector('.msg .body')?.textContent).toContain('what it says now');
+  });
+
+  it('closes again, so a history is something you ask for', async () => {
+    const f = await withEdited();
+    const el = f.nativeElement as HTMLElement;
+    el.querySelector<HTMLButtonElement>('.tag.history-toggle')!.click();
+    f.detectChanges();
+    el.querySelector<HTMLButtonElement>('.tag.history-toggle')!.click();
+    f.detectChanges();
+    expect(el.querySelector('.edit-history')).toBeNull();
+  });
+
+  it('an edited message with no stored history is still marked, without a control', async () => {
+    // Google Chat and IRC carry no versions; the tag must not become a button
+    // that opens nothing.
+    const { thread, ref, fixture } = setup();
+    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    api.messages.mockReturnValue(page([{ ...msg('e', 100), edited: true, edits: [] }]));
+    ref.setInput('origin', 'gchat');
+    ref.setInput('id', 'gc1');
+    fixture.detectChanges();
+    for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('.tag')?.textContent).toContain('edited');
+    expect(el.querySelector('.tag.history-toggle')).toBeNull();
   });
 });
 

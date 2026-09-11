@@ -1505,3 +1505,112 @@ async fn a_landing_contains_the_message_it_landed_on() {
         );
     }
 }
+
+// ---- an edited message is one message --------------------------------------
+
+/// ⚠ **A THREAD PER TEST, because these run in PARALLEL.** One shared thread id
+/// had three tests deleting and re-inserting each other's rows, and the page came
+/// back with three messages where two were expected — a failure that reads
+/// exactly like the collapsing being wrong.
+///
+/// Each is its own thread, so the fixture's counts and conversation list are
+/// untouched too: there is no `conversations` row for these, and every existing
+/// assertion is about threads that have one.
+async fn seed_edits(pool: &MySqlPool, thread: &str) {
+    // The archive's own shape: an original, two revisions of it, and an
+    // untouched message after — because a page must keep its order and its
+    // neighbours while one of its messages collapses three rows into one.
+    sqlx::query("DELETE FROM messages WHERE thread_id = ?")
+        .bind(thread)
+        .execute(pool)
+        .await
+        .unwrap();
+    for (ts, body, edit_of, edited) in [
+        (1_000i64, "first thought", None::<i64>, 1i8),
+        (2_000, "second thought", Some(1_000), 0),
+        (3_000, "what it says now", Some(1_000), 0),
+        (4_000, "a later message", None, 0),
+    ] {
+        sqlx::query(
+            "INSERT INTO messages (thread_id, sender_uuid, server_ts, body, is_outgoing, deleted, edited, edit_of_ts)
+             VALUES (?, 'u1', ?, ?, 0, 0, ?, ?)",
+        )
+        .bind(thread)
+        .bind(ts)
+        .bind(body)
+        .bind(edited)
+        .bind(edit_of)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+}
+
+/// ⚠ **AN EDIT IS A SEPARATE ROW, AND BOTH WERE DRAWN.** Signal sends a revision
+/// carrying `edit_of_ts`, so a thread showed the same message twice — the old
+/// text where it was said, the new text minutes later, nothing saying they were
+/// one thing. 254 messages in the live archive are in that state.
+#[tokio::test]
+async fn an_edited_message_is_one_message_saying_what_it_says_now() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let thread = "dm:edits-one";
+    seed_edits(&pool, thread).await;
+    let page = archive::messages_page(&pool, Origin::Signal, thread, None, 50, PageDir::Older)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        page.messages.len(),
+        2,
+        "revisions are versions, not things said"
+    );
+    let edited = &page.messages[0];
+    assert_eq!(edited.ts, 1_000, "it stays where it was said");
+    assert_eq!(
+        edited.body.as_deref(),
+        Some("what it says now"),
+        "and reads as it reads now"
+    );
+    assert!(edited.edited);
+    assert_eq!(page.messages[1].body.as_deref(), Some("a later message"));
+}
+
+/// ⚠ Each version is stamped with when IT was sent, which is the row BEFORE it:
+/// a version was current until the next one arrived. Stamping each with the row
+/// carrying its text is the obvious way to write this and dates every version
+/// wrong — it was the first thing this code got wrong.
+#[tokio::test]
+async fn the_history_is_every_earlier_version_in_order() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let thread = "dm:edits-history";
+    seed_edits(&pool, thread).await;
+    let page = archive::messages_page(&pool, Origin::Signal, thread, None, 50, PageDir::Older)
+        .await
+        .unwrap();
+    let history: Vec<(i64, &str)> = page.messages[0]
+        .edits
+        .iter()
+        .map(|e| (e.ts, e.body.as_deref().unwrap_or("")))
+        .collect();
+    assert_eq!(
+        history,
+        [(1_000, "first thought"), (2_000, "second thought")]
+    );
+}
+
+#[tokio::test]
+async fn a_message_nobody_edited_has_no_history() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let thread = "dm:edits-none";
+    seed_edits(&pool, thread).await;
+    let page = archive::messages_page(&pool, Origin::Signal, thread, None, 50, PageDir::Older)
+        .await
+        .unwrap();
+    assert!(page.messages[1].edits.is_empty());
+}

@@ -2,6 +2,7 @@
 import type { Attachment } from "./Attachment";
 import type { LinkImage } from "./LinkImage";
 import type { LinkOffer } from "./LinkOffer";
+import type { MessageEdit } from "./MessageEdit";
 import type { MessageKind } from "./MessageKind";
 import type { Reaction } from "./Reaction";
 
@@ -18,6 +19,11 @@ kind: MessageKind, body: string | null, deleted: boolean, edited: boolean, react
  * Pictures we hold for links in `body`.
  */
 link_images: Array<LinkImage>, 
+/**
+ * What this message said BEFORE it was edited, oldest first — empty unless
+ * it was. `body` is always the current text.
+ */
+edits: Array<MessageEdit>, 
 /**
  * Links in `body` we could fetch a picture for but have not. Serving them
  * offers them; a reader has to ask.

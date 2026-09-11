@@ -200,6 +200,18 @@ pub struct Attachment {
     pub is_image: bool,
 }
 
+/// One version of a message that was edited, oldest first. The CURRENT text is
+/// the message's own `body`; these are what it said before.
+#[derive(Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct MessageEdit {
+    /// When this version was sent. Epoch milliseconds.
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub ts: i64,
+    pub body: Option<String>,
+}
+
 /// A picture we hold for a link somebody posted — see `link_image.rs`. The UI
 /// renders it under the message and links out to where it came from, so the
 /// reader can still see whose it is.
@@ -233,6 +245,9 @@ pub struct Message {
     pub attachments: Vec<Attachment>,
     /// Pictures we hold for links in `body`.
     pub link_images: Vec<LinkImage>,
+    /// What this message said BEFORE it was edited, oldest first — empty unless
+    /// it was. `body` is always the current text.
+    pub edits: Vec<MessageEdit>,
     /// Links in `body` we could fetch a picture for but have not. Serving them
     /// offers them; a reader has to ask.
     pub link_offers: Vec<LinkOffer>,
@@ -252,6 +267,86 @@ pub struct LinkOffer {
 
 fn is_image(ct: Option<&str>) -> bool {
     ct.is_some_and(|c| c.starts_with("image/"))
+}
+
+/// One stored version of a message: when it was sent, and what it said.
+type Version = (i64, Option<String>);
+
+/// Put an edited message's history on it, and its CURRENT text in its body.
+///
+/// ⚠ **AN EDIT IS A SEPARATE ROW, AND UNTIL NOW BOTH WERE DRAWN.** Signal sends a
+/// revision as a new message carrying `edit_of_ts`, so a thread showed the same
+/// message twice — the old text where it was said, the new text minutes later,
+/// with nothing saying they were one thing. 254 messages in the archive are in
+/// that state. The revisions are excluded from the page above; this hangs them on
+/// the message they revise.
+///
+/// ⚠ **The BODY becomes the newest version, and the position stays the original's.**
+/// That is what an edit means: the thing was said then, and now reads this way.
+/// Keeping the original's text as the body would show a message the sender has
+/// already corrected, which is the failure this whole change is about.
+///
+/// One query for the page, like reactions.
+async fn attach_edits(pool: &MySqlPool, thread_id: &str, msgs: &mut [Message]) -> Result<()> {
+    let originals: Vec<i64> = msgs.iter().filter(|m| m.edited).map(|m| m.ts).collect();
+    if originals.is_empty() {
+        return Ok(());
+    }
+    let placeholders = vec!["?"; originals.len()].join(",");
+    // ⚠ **SCOPED TO THE THREAD, and matching on the timestamp alone was a real
+    // defect.** `edit_of_ts` is a SERVER TIMESTAMP, not a message id: two
+    // conversations can hold messages sharing a millisecond, and a revision
+    // matched across threads would show one conversation's text inside another's
+    // history. Found by three parallel tests seeding the same timestamp in
+    // different threads — a message came back carrying six versions of which
+    // four were somebody else's.
+    let sql = format!(
+        "SELECT edit_of_ts, server_ts, body FROM messages
+         WHERE thread_id = ? AND edit_of_ts IN ({placeholders})
+         ORDER BY server_ts ASC",
+    );
+    // Fixed template + computed placeholder count, values bound — safe.
+    let mut q = sqlx::query(AssertSqlSafe(sql)).bind(thread_id);
+    for ts in &originals {
+        q = q.bind(ts);
+    }
+
+    // Group first, assign after. Doing both in one pass looks shorter and gets
+    // the timestamps wrong: each version was sent when the NEXT one had not
+    // arrived yet, so a version's stamp comes from the row before it, not from
+    // the row carrying its text.
+    let mut revisions: Vec<(i64, Vec<Version>)> = Vec::new();
+    for row in q.fetch_all(pool).await? {
+        let of: i64 = row.try_get("edit_of_ts")?;
+        let ts: i64 = row.try_get("server_ts")?;
+        let body: Option<String> = row.try_get("body")?;
+        match revisions.iter_mut().find(|(k, _)| *k == of) {
+            Some((_, list)) => list.push((ts, body)),
+            None => revisions.push((of, vec![(ts, body)])),
+        }
+    }
+
+    for (of, list) in revisions {
+        let Some(m) = msgs.iter_mut().find(|m| m.ts == of) else {
+            continue;
+        };
+        let Some((_, newest)) = list.last().cloned() else {
+            continue;
+        };
+        // What it said before, in order: the original's text, then every
+        // revision but the newest. Each is stamped with when IT was sent — the
+        // original at the message's own time, a revision at its own.
+        let older_bodies = std::iter::once(m.body.clone())
+            .chain(list.iter().rev().skip(1).rev().map(|(_, b)| b.clone()));
+        let stamps = std::iter::once(m.ts).chain(list.iter().rev().skip(1).rev().map(|(t, _)| *t));
+        m.edits = stamps
+            .zip(older_bodies)
+            .map(|(ts, body)| MessageEdit { ts, body })
+            .collect();
+        // The body is what it says NOW.
+        m.body = newest;
+    }
+    Ok(())
 }
 
 /// Hang any pictures we hold onto the messages whose text linked them.
@@ -654,6 +749,7 @@ pub async fn messages_page(
         Origin::Irc => irc_messages(pool, id, cursor, limit, dir).await?,
     };
     let mut page = page;
+    attach_edits(pool, id, &mut page.msgs).await?;
     attach_link_images(pool, &mut page.msgs).await?;
     let page = page;
     let has_more = page.msgs.len() as i64 == limit;
@@ -711,6 +807,7 @@ async fn signal_messages(
           FROM messages m
           LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
           WHERE m.thread_id = ?
+            AND m.edit_of_ts IS NULL
             AND (? IS NULL OR m.server_ts < ? OR (m.server_ts = ? AND m.id < ?))
           ORDER BY m.server_ts DESC, m.id DESC
           LIMIT ?"
@@ -723,6 +820,7 @@ async fn signal_messages(
           FROM messages m
           LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
           WHERE m.thread_id = ?
+            AND m.edit_of_ts IS NULL
             AND (? IS NULL OR m.server_ts > ? OR (m.server_ts = ? AND m.id > ?))
           ORDER BY m.server_ts ASC, m.id ASC
           LIMIT ?"
@@ -735,6 +833,7 @@ async fn signal_messages(
           FROM messages m
           LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
           WHERE m.thread_id = ?
+            AND m.edit_of_ts IS NULL
             AND (? IS NULL OR m.server_ts > ? OR (m.server_ts = ? AND m.id >= ?))
           ORDER BY m.server_ts ASC, m.id ASC
           LIMIT ?"
@@ -778,6 +877,7 @@ async fn signal_messages(
             edited: edited != 0,
             reactions: Vec::new(),
             attachments: Vec::new(),
+            edits: Vec::new(),
             link_images: Vec::new(), // both filled for the whole page in messages_page
             link_offers: Vec::new(),
         });
@@ -921,6 +1021,7 @@ async fn gchat_messages(
             edited: false,
             reactions: Vec::new(),
             attachments: Vec::new(), // Google Chat export carries no attachments
+            edits: Vec::new(),
             link_images: Vec::new(), // both filled for the whole page in messages_page
             link_offers: Vec::new(),
         });
@@ -1058,7 +1159,8 @@ async fn irc_messages(
             body,
             deleted: false,
             edited: false,
-            reactions: Vec::new(),   // IRC has none
+            reactions: Vec::new(), // IRC has none
+            edits: Vec::new(),
             link_images: Vec::new(), // both filled for the whole page in messages_page
             link_offers: Vec::new(),
             attachments: Vec::new(), // nor these

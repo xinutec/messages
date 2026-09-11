@@ -16,7 +16,7 @@ const CONVERSATIONS = [
 ];
 const MESSAGES_PAGE = {
   messages: [
-    { id: "1", ts: 1_717_000_000_000, sender: "Alice", is_outgoing: false, body: "hi", deleted: false, edited: false, reactions: [], attachments: [] },
+    { id: "1", ts: 1_717_000_000_000, sender: "Alice", is_outgoing: false, body: "hi", deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [] },
   ],
   has_more: false,
   next_cursor: null,
@@ -54,7 +54,7 @@ test("deep-linking an origin filter restores it on load", async ({ page }) => {
 });
 
 function m(ts: number, body: string) {
-  return { id: String(ts), ts, sender: "s", is_outgoing: false, body, deleted: false, edited: false, reactions: [], attachments: [] };
+  return { id: String(ts), ts, sender: "s", is_outgoing: false, body, deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [] };
 }
 
 function bulk(prefix: string, startTs: number, n: number) {

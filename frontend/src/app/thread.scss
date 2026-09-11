@@ -158,6 +158,44 @@
   .tag {
     font-style: italic;
   }
+  // The `edited` tag when there is a history behind it. Styled as the tag it
+  // replaces rather than as a button, because it sits in the meta line among the
+  // nick and the clock — the dotted underline is the whole affordance, the same
+  // one a revealed deletion uses.
+  button.tag.history-toggle {
+    background: none;
+    border: 0;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    font-style: italic;
+    cursor: pointer;
+    text-decoration: underline dotted;
+    text-underline-offset: 0.2em;
+  }
+  // What it said before: indented under the meta line, quieter than the current
+  // text, and above it — see the template for why that order.
+  .edit-history {
+    margin: 0.15rem 0 0.25rem;
+    padding-left: 0.5rem;
+    border-left: 2px solid color-mix(in srgb, var(--mat-sys-on-surface) 15%, transparent);
+    .version {
+      display: flex;
+      gap: 0.4rem;
+      font: var(--mat-sys-body-medium);
+      opacity: 0.6;
+    }
+    .when {
+      font: var(--mat-sys-label-small);
+      opacity: 0.8;
+      white-space: nowrap;
+      padding-top: 0.15rem;
+    }
+    .said {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  }
   // Real <button>s, so revealing a retraction is keyboard-reachable and
   // announced rather than a click target that only a mouse can find. Styled to
   // sit exactly where the text would: the message keeps its place in the thread

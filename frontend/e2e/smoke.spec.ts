@@ -42,7 +42,7 @@ function multiDayThread() {
   for (let d = 0; d < 2; d++) {
     for (let k = 0; k < 25; k++) {
       const ts = base + d * 86_400_000 + k * 60_000;
-      out.push({ id: `${d}-${k}`, ts, sender: "Alice", is_outgoing: false, body: `msg ${d}-${k}`, deleted: false, edited: false, reactions: [], attachments: [] });
+      out.push({ id: `${d}-${k}`, ts, sender: "Alice", is_outgoing: false, body: `msg ${d}-${k}`, deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [] });
     }
   }
   return out;
@@ -53,7 +53,7 @@ test("message body has no spurious leading/trailing whitespace", async ({ page }
   await page.route("**/api/conversations/**/messages**", (r) =>
     r.fulfill({
       json: {
-        messages: [{ id: "1", ts: Date.UTC(2026, 0, 1, 12), sender: "Alice", is_outgoing: false, body: "Hello world", deleted: false, edited: false, reactions: [], attachments: [] }],
+        messages: [{ id: "1", ts: Date.UTC(2026, 0, 1, 12), sender: "Alice", is_outgoing: false, body: "Hello world", deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [] }],
         has_more: false,
         next_cursor: null,
       },
