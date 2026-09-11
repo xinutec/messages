@@ -205,6 +205,9 @@ export class Thread {
     // replying to — see `ThreadWindow.observeShrink`, which hands back its own
     // teardown because a ResizeObserver outlives its element otherwise.
     destroyRef.onDestroy(this.win.observeShrink());
+    // The message block is a new element after every render that recreates it,
+    // so the observer is re-pointed at the current one rather than the first.
+    effect(() => this.win.watchContent(this.messagesEl()?.nativeElement));
   }
 
   /** The loaded window is NOT anchored to the newest message — the reader was
@@ -367,7 +370,8 @@ export class Thread {
       });
       this.win.trimToWindow();
       // Opened at the latest message: hold the bottom as lazy images load in.
-      if (from == null) this.win.keepPinnedToBottom();
+      // Holding the bottom as images load in is `watchContent`'s job — the loop
+      // that used to do it here is what made the gate flaky (#1479).
     } catch {
       this.threadError.set(true);
       this.loadingThread.set(false);

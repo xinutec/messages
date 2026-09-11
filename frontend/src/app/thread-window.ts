@@ -105,6 +105,15 @@ export class ThreadWindow {
   /** The container height the last scroll event was seen at, so a scroll the
    *  RESIZE caused can be told from one the reader caused. See `step`. */
   private hostHeight = 0;
+  /** And the content height, for the same reason in the other direction — see
+   *  `noteScroll`: growth BELOW a reader who is at the end moves the bottom away
+   *  from them without their having moved. */
+  private hostScrollHeight = 0;
+
+  /** The observer behind `observeShrink`, and the message block it is currently
+   *  pointed at — the host never changes, that element does. */
+  private ro: ResizeObserver | null = null;
+  private watched: HTMLElement | null = null;
 
   // Optional scroll-jump instrumentation (off by default). Enable at runtime
   // with `localStorage.threadScrollDebug = '1'` or a `?scrolldebug` URL param,
@@ -212,9 +221,25 @@ export class ThreadWindow {
    *  what separates them. */
   noteScroll(): void {
     const h = this.host.clientHeight;
+    const sh = this.host.scrollHeight;
+    const grew = Math.max(0, sh - this.hostScrollHeight);
     const resized = h !== this.hostHeight;
     this.hostHeight = h;
-    if (!resized) this.following = this.atBottom();
+    this.hostScrollHeight = sh;
+    if (resized) return;
+    // ⚠ **GROWTH BELOW A READER AT THE END IS NOT THE READER LEAVING IT.** An
+    // image loading under the newest message pushes the bottom away, `atBottom`
+    // answers false for a moment, and a scroll event landing in that moment used
+    // to record them as having wandered off — after which the observer politely
+    // declined to re-pin. Measured 2026-09-11 against the deterministic harness:
+    // 1 run in 4 still landed 585px short with the observer in place, and this
+    // is why.
+    //
+    // The test is whether the whole gap is explained by what just grew. A reader
+    // who actually scrolled away is further off than the growth accounts for; one
+    // standing still is exactly that far and no further.
+    if (this.following && grew > 0 && sh - this.host.scrollTop - h <= grew + BOTTOM_EPS) return;
+    this.following = this.atBottom();
   }
 
   /** At the end of the conversation: nothing collapsed below, and within a few
@@ -331,25 +356,6 @@ export class ThreadWindow {
     this.host.scrollTop += target.getBoundingClientRect().top - hostTop - head;
   }
 
-  /** Keep the viewport pinned to the bottom as not-yet-loaded images in the
-   *  rendered window finish and grow the layout. One-shot per open; each pending
-   *  image re-pins on load, and the whole session is superseded when the user
-   *  scrolls (`step` bumps pinToken) or the thread reloads. */
-  keepPinnedToBottom(): void {
-    const token = ++this.pinToken;
-    const el = this.container();
-    if (!el) return;
-    for (const img of Array.from(el.querySelectorAll('img'))) {
-      if (img.complete) continue;
-      const onSettle = (): void => {
-        if (token !== this.pinToken) return; // user scrolled away, or a newer open won
-        this.withScrollLock(() => this.scrollToBottom());
-      };
-      img.addEventListener('load', onSettle, { once: true });
-      img.addEventListener('error', onSettle, { once: true });
-    }
-  }
-
   /** Keep the bottom of the conversation visible when the SCROLL CONTAINER
    *  shrinks under it — on a phone, the soft keyboard opening the moment the
    *  reader starts typing a reply.
@@ -376,8 +382,39 @@ export class ThreadWindow {
     // geometry — same split as the rest of this file.
     if (typeof ResizeObserver === 'undefined') return () => undefined;
     const ro = new ResizeObserver(() => this.repinAfterResize());
+    this.ro = ro;
     ro.observe(this.host);
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      this.ro = null;
+      this.watched = null;
+    };
+  }
+
+  /** Also watch the MESSAGE BLOCK, whose growth is the other way the bottom moves
+   *  away from a reader who was at it: a lazily-loaded image finishing after the
+   *  open has already scrolled, with no reserved height standing in for it.
+   *
+   *  ⚠ **This is what the listener loop it replaces could not do.** That loop
+   *  (deleted with this change) attached `load` only to images not yet
+   *  `complete`, so one finishing
+   *  between the scroll and the loop gets no listener and its growth is never
+   *  compensated. Proved by perturbation 2026-09-11: delay the loop by 150ms, so
+   *  every image is complete before it runs, and the open lands **780px** short,
+   *  4 runs of 4 — all four images. The gate's own flake is the same bug with
+   *  whichever subset happened to win the race, which is why it measured 271px
+   *  and only about one run in five.
+   *
+   *  A box either changed size or it did not, so there is no window to fall into.
+   *
+   *  The element is new after every render that recreates it, so the caller
+   *  re-offers the current one and this re-points the observer. */
+  watchContent(el: HTMLElement | undefined): void {
+    const next = el ?? null;
+    if (!this.ro || next === this.watched) return;
+    if (this.watched) this.ro.unobserve(this.watched);
+    this.watched = next;
+    if (next) this.ro.observe(next);
   }
 
   /** The decision half of `observeShrink`: follow the end of the conversation
