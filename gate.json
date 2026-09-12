@@ -11,6 +11,7 @@
         "--all",
         "--check"
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {},
       "name": "formatting",
@@ -29,6 +30,7 @@
         "-D",
         "warnings"
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {
         "CARGO_TARGET_DIR": "target/clippy"
@@ -47,6 +49,7 @@
         "--no-deps",
         "--workspace"
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {
         "RUSTDOCFLAGS": "-D rustdoc::broken_intra_doc_links"
@@ -63,6 +66,7 @@
         "scripts/gen-types.sh",
         "--check"
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {},
       "name": "generated types are current",
@@ -92,6 +96,7 @@
         "cargo",
         "test"
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {},
       "name": "tests (against a real MariaDB)",
@@ -107,6 +112,7 @@
         "install",
         "--frozen-lockfile"
       ],
+      "artifacts": [],
       "cwd": "frontend",
       "env": {
         "CI": "true"
@@ -124,6 +130,7 @@
         "run",
         "lint"
       ],
+      "artifacts": [],
       "cwd": "frontend",
       "env": {
         "CI": "true"
@@ -141,6 +148,7 @@
         "run",
         "typecheck:e2e"
       ],
+      "artifacts": [],
       "cwd": "frontend",
       "env": {
         "CI": "true"
@@ -166,6 +174,7 @@
         "ng",
         "build"
       ],
+      "artifacts": [],
       "cwd": "frontend",
       "env": {
         "CI": "true"
@@ -182,6 +191,7 @@
         "pnpm",
         "test"
       ],
+      "artifacts": [],
       "cwd": "frontend",
       "env": {
         "CI": "true",
@@ -200,6 +210,9 @@
         "run",
         "ui-check"
       ],
+      "artifacts": [
+        "test-results"
+      ],
       "cwd": "frontend",
       "env": {
         "CI": "true"
@@ -217,6 +230,7 @@
         "gate.dhall",
         "gate.json"
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {},
       "name": "the table matches its Dhall",
@@ -230,6 +244,7 @@
         "--",
         "."
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {},
       "name": "dev-lint",

@@ -185,6 +185,12 @@ in  { name = "messages"
         , name = "frontend browser suite (layout, copy, scroll, routing, smoke)"
         , cwd = "frontend"
         , argv = G.inDevShell [ "pnpm", "run", "ui-check" ]
+        , {-  Playwright DELETES this at the start of every run, so the run made
+              to investigate a failure is the run that erases it — and no option
+              turns that off (`preserveOutput` is about PASSING tests). Declaring
+              it here makes the gate copy it aside when this check fails. #1545
+          -}
+          artifacts = [ "test-results" ]
         , env = G.nonInteractive
         , timeout_s = 1800
         }
