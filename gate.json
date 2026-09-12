@@ -80,7 +80,7 @@
         "--command",
         "nix",
         "run",
-        "../dev-lint#with-test-db",
+        "git+file:../dev-lint?ref=HEAD#with-test-db",
         "--",
         "--database",
         "messages_test",

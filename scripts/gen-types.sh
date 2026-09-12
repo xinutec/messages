@@ -22,6 +22,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-exec nix run ../dev-lint#gen-types -- "$@" \
+# Pinned to dev-lint's committed HEAD, like every gate row that reaches for a
+# dev-lint tool: a path flake builds the NEIGHBOUR'S WORKING TREE, so a session
+# mid-edit next door fails this row, and the row names this repository. The
+# reasoning is written out once, at `withTestDb` in dev-lint/gate/schema.dhall.
+exec nix run "git+file:../dev-lint?ref=HEAD#gen-types" -- "$@" \
   --out frontend/src/app/generated \
   -- cargo test --features ts export_bindings
