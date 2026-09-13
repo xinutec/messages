@@ -1309,7 +1309,8 @@ async fn telegram_messages(
         PageDir::Older => {
             r"SELECT m.id AS id, m.msg_id AS msg_id, m.sent_at AS sent_at,
                      m.sender_name AS sender, m.is_outgoing AS is_outgoing,
-                     m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at
+                     m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at,
+                     m.edit_hidden AS edit_hidden
               FROM telegram_messages m
               WHERE m.conversation_id = ? AND m.kind = 'message'
                 AND (? IS NULL OR m.sent_at < ? OR (m.sent_at = ? AND m.id < ?))
@@ -1319,7 +1320,8 @@ async fn telegram_messages(
         PageDir::Newer => {
             r"SELECT m.id AS id, m.msg_id AS msg_id, m.sent_at AS sent_at,
                      m.sender_name AS sender, m.is_outgoing AS is_outgoing,
-                     m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at
+                     m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at,
+                     m.edit_hidden AS edit_hidden
               FROM telegram_messages m
               WHERE m.conversation_id = ? AND m.kind = 'message'
                 AND (? IS NULL OR m.sent_at > ? OR (m.sent_at = ? AND m.id > ?))
@@ -1329,7 +1331,8 @@ async fn telegram_messages(
         PageDir::AtAndNewer => {
             r"SELECT m.id AS id, m.msg_id AS msg_id, m.sent_at AS sent_at,
                      m.sender_name AS sender, m.is_outgoing AS is_outgoing,
-                     m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at
+                     m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at,
+                     m.edit_hidden AS edit_hidden
               FROM telegram_messages m
               WHERE m.conversation_id = ? AND m.kind = 'message'
                 AND (? IS NULL OR m.sent_at > ? OR (m.sent_at = ? AND m.id >= ?))
@@ -1358,6 +1361,17 @@ async fn telegram_messages(
         let deleted: i8 = r.try_get("deleted")?;
         let is_outgoing: i8 = r.try_get("is_outgoing")?;
         let edited_at: Option<i64> = r.try_get("edited_at")?;
+        // ⚠ **AN EDIT DATE IS NOT AN EDIT TO SHOW.** Telegram's `edit_hide` says
+        // "the message should be shown as not modified to the user, even if an edit
+        // date is present" — it sets a date for its own reasons and asks clients not
+        // to surface it, which its own apps honour. This reader did not, and printed
+        // `edited` on a photo Telegram showed as untouched.
+        //
+        // NULL means the archive has not learned the flag for that row yet (it
+        // predates the column), and is read as "not hidden" — the behaviour from
+        // before, which is the honest default for a row that was never asked.
+        let edit_hidden: Option<i8> = r.try_get("edit_hidden")?;
+        let edited = edited_at.is_some() && edit_hidden.unwrap_or(0) == 0;
         keys.push((sent_at, id));
         msg_ids.push(r.try_get::<i32, _>("msg_id")?);
         msgs.push(Message {
@@ -1376,7 +1390,7 @@ async fn telegram_messages(
             kind: MessageKind::Message,
             body: r.try_get("body")?,
             deleted: deleted != 0,
-            edited: edited_at.is_some(),
+            edited,
             reactions: Vec::new(),
             // No bytes are stored for Telegram media, so there is nothing to serve
             // — see the v16 migration in the `signal` repo.
@@ -1433,6 +1447,10 @@ async fn telegram_messages(
 /// none. `was_edited_at IS NULL` is therefore the oldest version rather than an
 /// unknown one, and sorting it as NULL-last would put the original at the end of
 /// its own history.
+/// ⚠ Driven by `m.edited`, which already accounts for `edit_hide` — so a message
+/// Telegram asks us to show as unmodified gets no history panel either. That is one
+/// statement rather than two decisions: the prior text stays in the archive, and the
+/// reader simply does not offer it.
 async fn attach_telegram_edits(
     pool: &MySqlPool,
     conversation_id: &str,

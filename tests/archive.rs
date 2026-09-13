@@ -228,7 +228,7 @@ async fn seed(pool: &MySqlPool) {
         // `kind` carries `service` because the queries EXCLUDE it, and a fixture
         // with no excludable rows cannot show that the exclusion works.
         "CREATE TABLE telegram_conversations (id BIGINT PRIMARY KEY, kind ENUM('dm','group','channel') NOT NULL, name VARCHAR(255) NULL, username VARCHAR(255) NULL) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE telegram_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, sent_at BIGINT NOT NULL, sender_id BIGINT NULL, sender_name VARCHAR(255) NULL, is_outgoing TINYINT(1) NOT NULL DEFAULT 0, kind ENUM('message','service') NOT NULL DEFAULT 'message', text TEXT NULL, media_kind VARCHAR(32) NULL, edited_at BIGINT NULL, reply_to_msg_id INT NULL, fwd_from_name VARCHAR(255) NULL, deleted TINYINT(1) NOT NULL DEFAULT 0, deleted_at TIMESTAMP NULL, UNIQUE KEY uniq_tg_msg (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE telegram_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, sent_at BIGINT NOT NULL, sender_id BIGINT NULL, sender_name VARCHAR(255) NULL, is_outgoing TINYINT(1) NOT NULL DEFAULT 0, kind ENUM('message','service') NOT NULL DEFAULT 'message', text TEXT NULL, media_kind VARCHAR(32) NULL, edited_at BIGINT NULL, reply_to_msg_id INT NULL, fwd_from_name VARCHAR(255) NULL, edit_hidden TINYINT(1) NULL, deleted TINYINT(1) NOT NULL DEFAULT 0, deleted_at TIMESTAMP NULL, UNIQUE KEY uniq_tg_msg (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_message_edits (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, was_edited_at BIGINT NULL, text TEXT NULL, UNIQUE KEY uniq_tg_edit (conversation_id, msg_id, was_edited_at)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, emoji VARCHAR(32) NULL, custom_emoji_id BIGINT NULL, cnt INT NOT NULL DEFAULT 0, chosen TINYINT(1) NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
     ];
@@ -442,11 +442,22 @@ async fn seed(pool: &MySqlPool) {
             (4242, 13, 1700000120, 4242, 'Tessa', 0, 'message', 'third go', 1700000500, 0),
             (4242, 14, 1700000180, 4242, 'Tessa', 0, 'message', 'forget it', NULL, 1),
             (4242, 15, 1700000240, 4242, 'Tessa', 0, 'service', 'changed the photo', NULL, 0),
+            (4242, 16, 1700000260, 4242, 'Tessa', 0, 'message', 'telegram touched this', 1700000600, 0),
             (-1000000000055, 3, 1700000300, NULL, NULL, 0, 'message', 'an announcement', NULL, 0)",
     )
     .execute(pool)
     .await
     .unwrap();
+    // ⚠ msg 16 carries an edit date AND Telegram's instruction to show it as
+    // unmodified, which is the case that printed "Edited" on a message Telegram
+    // itself shows as untouched.
+    sqlx::query(
+        "UPDATE telegram_messages SET edit_hidden = 1 WHERE conversation_id = 4242 AND msg_id = 16",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
     // Two superseded versions of msg 13. The ORIGINAL carries no edit date — that
     // is what makes it the oldest, and sorting it as an unknown would put it last.
     sqlx::query(
@@ -1731,10 +1742,12 @@ async fn telegram_conversations_keep_their_kind_and_count_only_speech() {
     let dm = tg("4242");
     assert_eq!(dm.kind, ConversationKind::Dm);
     assert_eq!(dm.name.as_deref(), Some("Tessa"));
-    // Six rows in the fixture; the service event is not one of them.
-    assert_eq!(dm.message_count, 5, "the service event must not be counted");
-    // The newest SPEECH, in milliseconds — not the service event at 1700000240.
-    assert_eq!(dm.last_ts, Some(1_700_000_180_000));
+    // Seven rows in the fixture; the service event is not one of them.
+    assert_eq!(dm.message_count, 6, "the service event must not be counted");
+    // The newest SPEECH, in milliseconds. Still not the service event at
+    // 1700000240 — msg 16 sits after it, which is what makes that assertion mean
+    // something rather than passing because nothing followed the event.
+    assert_eq!(dm.last_ts, Some(1_700_000_260_000));
 
     assert_eq!(tg("-1000000000055").kind, ConversationKind::Channel);
     assert_eq!(tg("-77").kind, ConversationKind::Group);
@@ -1759,12 +1772,15 @@ async fn a_telegram_page_is_speech_in_order_including_a_shared_second() {
     let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 3, PageDir::Older)
         .await
         .unwrap();
-    // The newest three, ascending, with the service event excluded: that leaves
-    // 'same second', 'third go', 'forget it'.
+    // The newest three, ascending, with the service event excluded.
     let bodies: Vec<Option<&str>> = page.messages.iter().map(|m| m.body.as_deref()).collect();
     assert_eq!(
         bodies,
-        vec![Some("same second"), Some("third go"), Some("forget it")]
+        vec![
+            Some("third go"),
+            Some("forget it"),
+            Some("telegram touched this")
+        ]
     );
     assert!(page.has_more);
 
@@ -1783,7 +1799,7 @@ async fn a_telegram_page_is_speech_in_order_including_a_shared_second() {
     let bodies: Vec<Option<&str>> = older.messages.iter().map(|m| m.body.as_deref()).collect();
     assert_eq!(
         bodies,
-        vec![Some("hoi"), Some("ook hoi")],
+        vec![Some("hoi"), Some("ook hoi"), Some("same second")],
         "the other message of the shared second must appear exactly once"
     );
 }
@@ -1927,4 +1943,43 @@ async fn a_non_numeric_telegram_id_is_an_empty_page() {
     .unwrap();
     assert!(page.messages.is_empty());
     assert!(!page.has_more);
+}
+
+/// ⚠ **An edit date is not an edit to SHOW.** Telegram's `edit_hide` means "the
+/// message should be shown as not modified to the user, even if an edit date is
+/// present"; it sets a date for its own reasons and its own apps honour the flag.
+/// This reader did not, and printed `edited` on a photo Telegram showed as
+/// untouched — found by Pippijn reading a live conversation, not by any test.
+///
+/// The date is still in the archive. What this pins is that the READER honours the
+/// instruction, and that an ordinary edit is unaffected.
+#[tokio::test]
+async fn a_hidden_telegram_edit_is_not_shown_as_edited() {
+    let Some(pool) = seeded_pool().await else {
+        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
+        return;
+    };
+    let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 50, PageDir::Older)
+        .await
+        .unwrap();
+    let by = |body: &str| {
+        page.messages
+            .iter()
+            .find(|m| m.body.as_deref() == Some(body))
+            .unwrap_or_else(|| panic!("no message {body:?}"))
+    };
+
+    let hidden = by("telegram touched this");
+    assert!(
+        !hidden.edited,
+        "Telegram asked for this one to read as unmodified"
+    );
+    assert!(
+        hidden.edits.is_empty(),
+        "and no history panel is offered for it either"
+    );
+
+    // The ordinary edit is untouched by the change — the flag governs one message,
+    // not the feature.
+    assert!(by("third go").edited);
 }
