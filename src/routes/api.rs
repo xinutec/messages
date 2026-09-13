@@ -138,6 +138,43 @@ pub async fn attachment(
     Ok(([(header::CONTENT_TYPE, ct)], Body::from(bytes)).into_response())
 }
 
+/// GET /api/telegram-media/{id} → bytes the archive holds for a Telegram message.
+///
+/// `{id}` is the MESSAGE's api id, which is the only id a client has. The lookup
+/// joins through to `(conversation, msg_id)` so a request cannot reach a file in
+/// another conversation that happens to share a message number.
+///
+/// ⚠ The same 404-means-disagreement note as `attachment` above applies: reaching
+/// the read means the archive said `stored`, so a failure is a mount that did not
+/// come up or a file removed underneath us, and the cause is logged rather than
+/// collapsed into the status.
+pub async fn telegram_media(
+    State(app): State<AppState>,
+    AuthUser(_user): AuthUser,
+    Path(id): Path<i64>,
+) -> Result<Response, AppError> {
+    let Some((content_type, stored_name)) = archive::telegram_media_blob(&app.pool, id).await?
+    else {
+        return Err(AppError::NotFound);
+    };
+    // A NAME is stored, and only its file component is used, so nothing in the
+    // database can address a path outside the mount.
+    let Some(name) = std::path::Path::new(&stored_name).file_name() else {
+        tracing::warn!("telegram media {id}: stored_name names no file: {stored_name:?}");
+        return Err(AppError::NotFound);
+    };
+    let path = std::path::Path::new(&app.cfg.telegram_media_dir).join(name);
+    let bytes = tokio::fs::read(&path).await.map_err(|e| {
+        tracing::warn!(
+            "telegram media {id}: archive says stored, but reading {} failed: {e}",
+            path.display()
+        );
+        AppError::NotFound
+    })?;
+    let ct = content_type.unwrap_or_else(|| "application/octet-stream".to_string());
+    Ok(([(header::CONTENT_TYPE, ct)], Body::from(bytes)).into_response())
+}
+
 /// GET /api/link-images/{id} → the picture we hold for a link in a message.
 ///
 /// ⚠ **THE READER NEVER TOUCHES THE OTHER SERVER, and that is the reason this

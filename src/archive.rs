@@ -539,6 +539,32 @@ pub async fn link_image_blob(pool: &MySqlPool, id: &str) -> Result<Option<(Strin
 
 /// Stored location + content-type for an attachment blob, if its bytes exist.
 /// Used by the serving endpoint; returns None when unknown or metadata-only.
+/// The bytes the archive holds for a Telegram message, by the message's api id.
+///
+/// ⚠ Resolved through `telegram_messages` rather than taken from the client,
+/// because the client holds a MESSAGE id and the file is keyed by
+/// `(conversation, msg_id)` — and doing the join here is what stops a request for
+/// one conversation reaching a file in another that happens to share a number.
+pub async fn telegram_media_blob(
+    pool: &MySqlPool,
+    row_id: i64,
+) -> Result<Option<(Option<String>, String)>> {
+    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT d.content_type, d.stored_name
+           FROM telegram_messages m
+           JOIN telegram_media d
+             ON d.conversation_id = m.conversation_id AND d.msg_id = m.msg_id
+          WHERE m.id = ? AND d.state = 'stored'",
+    )
+    .bind(row_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(match row {
+        Some((ct, Some(name))) => Some((ct, name)),
+        _ => None,
+    })
+}
+
 pub async fn attachment_blob(
     pool: &MySqlPool,
     id: i64,
@@ -1399,6 +1425,55 @@ async fn telegram_messages(
             edits: Vec::new(),
             link_offers: Vec::new(),
         });
+    }
+
+    // Media this archive holds bytes for, as `attachments`.
+    //
+    // ⚠ **`attachments` WAS "SIGNAL ONLY", AND THAT WAS NEVER WHAT IT MEANT.** It
+    // means "bytes this archive holds for this message", and Signal was simply the
+    // only origin that had any. Giving Telegram a parallel field would have made one
+    // concept two, with the copied-log namer, the is-image test and the not-stored
+    // marker each needing a second implementation — the exact shape this repository's
+    // README keeps a table about.
+    //
+    // `available = false` is the normal case for anything large: the file is at
+    // Telegram and has not been fetched. The reader draws it as not stored, which is
+    // true, and is the hook a request button will later hang from.
+    if !msg_ids.is_empty() {
+        let placeholders = vec!["?"; msg_ids.len()].join(",");
+        let sql = format!(
+            "SELECT msg_id, state, size_bytes, content_type FROM telegram_media
+             WHERE conversation_id = ? AND msg_id IN ({placeholders})",
+        );
+        // Fixed template, computed placeholder count, every value bound.
+        let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
+        for id in &msg_ids {
+            q = q.bind(id);
+        }
+        for mr in q.fetch_all(pool).await? {
+            let msg_id: i32 = mr.try_get("msg_id")?;
+            let state: String = mr.try_get("state")?;
+            let content_type: Option<String> = mr.try_get("content_type")?;
+            let Some(i) = msg_ids.iter().position(|m| *m == msg_id) else {
+                continue;
+            };
+            // The api id is read out before the mutable borrow, not through it.
+            let api_id = msgs[i].id.clone();
+            msgs[i].attachments.push(Attachment {
+                // ⚠ The MESSAGE's api id, not the media row's: the route resolves a
+                // Telegram file by the message it belongs to, because that is the
+                // only id the client has in hand.
+                id: api_id,
+                is_image: is_image(content_type.as_deref()),
+                content_type,
+                // Telegram photos carry no filename. `attachment.ts` already names an
+                // unnamed attachment from its type, on both the screen and the
+                // clipboard, so `None` is the honest value rather than a synthesised one.
+                file_name: None,
+                size: mr.try_get("size_bytes")?,
+                available: state == "stored",
+            });
+        }
     }
 
     // Reactions, already aggregated per emoji by the writer — the same shape

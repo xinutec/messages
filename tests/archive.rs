@@ -185,6 +185,7 @@ async fn seed(pool: &MySqlPool) {
         "irc_conversation_stats",
         "irc_messages",
         "irc_conversations",
+        "telegram_media",
         "telegram_reactions",
         "telegram_message_edits",
         "telegram_messages",
@@ -230,6 +231,7 @@ async fn seed(pool: &MySqlPool) {
         "CREATE TABLE telegram_conversations (id BIGINT PRIMARY KEY, kind ENUM('dm','group','channel') NOT NULL, name VARCHAR(255) NULL, username VARCHAR(255) NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, sent_at BIGINT NOT NULL, sender_id BIGINT NULL, sender_name VARCHAR(255) NULL, is_outgoing TINYINT(1) NOT NULL DEFAULT 0, kind ENUM('message','service') NOT NULL DEFAULT 'message', text TEXT NULL, media_kind VARCHAR(32) NULL, edited_at BIGINT NULL, reply_to_msg_id INT NULL, fwd_from_name VARCHAR(255) NULL, edit_hidden TINYINT(1) NULL, deleted TINYINT(1) NOT NULL DEFAULT 0, deleted_at TIMESTAMP NULL, UNIQUE KEY uniq_tg_msg (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_message_edits (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, was_edited_at BIGINT NULL, text TEXT NULL, UNIQUE KEY uniq_tg_edit (conversation_id, msg_id, was_edited_at)) DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE telegram_media (conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, state ENUM('offered','stored','failed') NOT NULL, stored_name VARCHAR(255) NULL, size_bytes BIGINT NULL, content_type VARCHAR(128) NULL, note VARCHAR(255) NULL, PRIMARY KEY (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, emoji VARCHAR(32) NULL, custom_emoji_id BIGINT NULL, cnt INT NOT NULL DEFAULT 0, chosen TINYINT(1) NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
     ];
     for stmt in ddl {
@@ -448,6 +450,18 @@ async fn seed(pool: &MySqlPool) {
     .execute(pool)
     .await
     .unwrap();
+    // Media: one photo whose bytes are held, one video that is only offered — the
+    // two states a reader has to tell apart, since `available` is what decides
+    // whether a picture is drawn or a "not stored" marker is.
+    sqlx::query(
+        "INSERT INTO telegram_media (conversation_id, msg_id, state, stored_name, size_bytes, content_type) VALUES
+            (4242, 14, 'stored', '4242_14', 204800, 'image/jpeg'),
+            (4242, 13, 'offered', NULL, 1610612736, 'video/mp4')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
     // ⚠ msg 16 carries an edit date AND Telegram's instruction to show it as
     // unmodified, which is the case that printed "Edited" on a message Telegram
     // itself shows as untouched.
@@ -1243,6 +1257,7 @@ async fn sending_state(pool: &MySqlPool) -> AppState {
         static_dir: None,
         attachments_dir: "/nonexistent".to_string(),
         link_images_dir: "/link-images".into(),
+        telegram_media_dir: "/telegram-media".into(),
         link_fetcher_url: "http://link-fetch.invalid".into(),
         // Unread by the handler, which consults `app.irc` — the prepared sender
         // above is what decides whether sending is configured.
@@ -1982,4 +1997,53 @@ async fn a_hidden_telegram_edit_is_not_shown_as_edited() {
     // The ordinary edit is untouched by the change — the flag governs one message,
     // not the feature.
     assert!(by("third go").edited);
+}
+
+/// ⚠ **`attachments` means "bytes this archive holds for this message", and Telegram
+/// is now a second origin that has some.** It was Signal-only because Signal was the
+/// only origin with files, not because the field was Signal's — so Telegram's media
+/// arrives in the same field rather than a parallel one, and the copied-log namer,
+/// the is-image test and the not-stored marker all keep working without a second
+/// implementation.
+///
+/// The two states are what matter: a file on the volume is `available` and gets
+/// drawn, and one still at Telegram is not and gets a marker. Conflating them would
+/// draw a broken image for 3.8 GB of video nobody has fetched.
+#[tokio::test]
+async fn telegram_media_arrives_as_attachments_with_availability() {
+    let Some(pool) = seeded_pool().await else {
+        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
+        return;
+    };
+    let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 50, PageDir::Older)
+        .await
+        .unwrap();
+    let by = |body: &str| {
+        page.messages
+            .iter()
+            .find(|m| m.body.as_deref() == Some(body))
+            .unwrap_or_else(|| panic!("no message {body:?}"))
+    };
+
+    // msg 14 — held.
+    let held = by("forget it");
+    assert_eq!(held.attachments.len(), 1);
+    assert!(held.attachments[0].available);
+    assert!(held.attachments[0].is_image);
+    assert_eq!(held.attachments[0].size, Some(204_800));
+    // ⚠ The MESSAGE's api id, because that is the only id the client has and the
+    // route resolves a file by it.
+    assert_eq!(held.attachments[0].id, held.id);
+
+    // msg 13 — offered, not held. A video, so not an image either.
+    let offered = by("third go");
+    assert_eq!(offered.attachments.len(), 1);
+    assert!(
+        !offered.attachments[0].available,
+        "1.5GB still at Telegram must not be drawn as a picture"
+    );
+    assert!(!offered.attachments[0].is_image);
+
+    // A message with no media has no attachments, rather than an empty placeholder.
+    assert!(by("hoi").attachments.is_empty());
 }

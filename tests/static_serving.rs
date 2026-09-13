@@ -64,6 +64,7 @@ async fn get(path: &str) -> (StatusCode, String) {
         allowed_users: Vec::new(),
         static_dir: Some(dir.0.to_string_lossy().into_owned()),
         attachments_dir: String::new(),
+        telegram_media_dir: "/telegram-media".into(),
         link_images_dir: "/link-images".into(),
         link_fetcher_url: "http://link-fetch.invalid".into(),
         irc_send: None,

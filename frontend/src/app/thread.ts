@@ -13,7 +13,7 @@ import { LogScope, chatLogHtml, formatChatLog } from './copy-log';
 import { MAX_RESTORE_PAGES, PAGE, ThreadWindow } from './thread-window';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
-import { Conversation, LinkOffer, Message, Origin } from './models';
+import { Conversation, LinkOffer, Message, Origin, Attachment } from './models';
 
 /** How often an open, visible thread asks whether anything is newer.
  *
@@ -47,6 +47,19 @@ export class Thread {
   // For the template. Naming an attachment is shared with the clipboard —
   // see attachment.ts.
   protected readonly attachmentName = attachmentName;
+
+  /** Where an attachment's bytes come from.
+   *
+   *  ⚠ Two routes because two origins hold bytes and they are keyed differently:
+   *  Signal's by the attachment's own id, Telegram's by the MESSAGE's, since a
+   *  Telegram message has at most one file and no separate id for it. The origin is
+   *  an input to this component, so the decision is made once here rather than by
+   *  prefixing ids and parsing them apart on the server. */
+  protected attachmentUrl(a: Attachment): string {
+    return this.origin() === 'telegram'
+      ? `/api/telegram-media/${a.id}`
+      : `/api/attachments/${a.id}`;
+  }
   protected readonly attachmentNoun = attachmentNoun;
 
   /** Which deleted messages the reader has asked to see, by id.
