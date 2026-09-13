@@ -304,8 +304,15 @@ key — loudly logged, sending off, the archive still served.
   document's attributes, which the pass that would also fetch the bytes would read.
 - **Telegram secret chats are absent and no login can reach them** — they are
   device-local by construction and the server never holds them.
-- Signal edit history is flat: an edit shows as edited, not as a chain. Telegram's
-  is NOT — its superseded versions are kept and shown.
+- Signal edit history is flat: an edit shows as edited, not as a chain.
+- ⚠ **Telegram's edit history exists only for edits seen LIVE, and the backfilled
+  ones can never gain it.** Telegram serves the current text and an `edit_date`; it
+  does not serve superseded versions, so a message edited before this archive
+  existed arrives already-edited with nothing behind it. Measured on the first
+  ingest, 2026-09-13: **558 messages carry an `edit_date` and have no stored prior
+  version**, and no amount of re-running changes that. The `edited` tag is honest
+  for them; the history behind it is empty, which is the difference between "we do
+  not keep it" and "it was never ours to keep".
 - Attachments are Signal-only (the Google Chat export carries none, IRC has no
   such thing), served from the PVC mounted read-only. Metadata-only history rows
   are shown but marked not stored.
