@@ -7,6 +7,23 @@ name: build
 # then build + push xinutec/messages:latest to Docker Hub. The k8s manifests +
 # deploy live in the home monorepo (xinutec/pippijn code/kubes/messages/k8s); the
 # image tag is the only contract between this repo and the deploy.
+
+# ⚠ Runs are serialised, newest wins. `:latest` is one mutable tag, so whichever
+# build finishes LAST is what the cluster pulls — and GitHub's queue does not
+# deliver in order. Measured on life 2026-09-13: three pushes ten minutes apart,
+# and the newest commit's build went green while its own ANCESTOR sat pending for
+# over forty minutes, ready to republish `:latest` from a superseded tree with
+# nothing in any diff to explain it.
+#
+# ⚠ That stale run could be neither cancelled NOR deleted — 409 "has not been
+# queued yet" and 403 "could not delete", for the same run, seconds apart. A run
+# wedged before dispatch has no remedy, so a group that is ALREADY here is the
+# only defence. `cancel-in-progress` is right because this branch only ever ships
+# its tip: an older run's image is never the one wanted.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]
