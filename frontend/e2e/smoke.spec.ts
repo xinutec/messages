@@ -126,7 +126,12 @@ test("the current day's date stays pinned at the top while scrolling", async ({ 
   // not scrolled away above it (large negative offset) nor sitting at its far-down
   // in-flow position.
   const threadTop = await page.locator(".thread").evaluate((e) => e.getBoundingClientRect().top);
-  const box = await page.getByText("Thursday, January 1, 2026", { exact: true }).boundingBox();
+  // ⚠ The en-GB rendering of `fullDate` — day before month. It said "Thursday,
+  // January 1, 2026" until app.config.ts provided LOCALE_ID, because Angular
+  // defaults it to en-US whatever the browser says. If this string ever needs
+  // changing again, check the provider before changing the test: an assertion on
+  // a rendered date is an assertion about the app's locale.
+  const box = await page.getByText("Thursday, 1 January 2026", { exact: true }).boundingBox();
   expect(box).not.toBeNull();
   const offset = (box?.y ?? -999) - threadTop;
   expect(offset).toBeGreaterThanOrEqual(40); // pinned below the sticky head, not scrolled off

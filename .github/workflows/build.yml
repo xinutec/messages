@@ -1,25 +1,6 @@
 ---
 name: build
 
-# messages (Rust backend + Angular frontend) — gate on clippy + cargo test (DB
-# integration tests run against a throwaway MariaDB) and the frontend's
-# angular-eslint + unit tests + prod build + the shared phone-layout harness,
-# then build + push xinutec/messages:latest to Docker Hub. The k8s manifests +
-# deploy live in the home monorepo (xinutec/pippijn code/kubes/messages/k8s); the
-# image tag is the only contract between this repo and the deploy.
-
-# ⚠ Runs are serialised, newest wins. `:latest` is one mutable tag, so whichever
-# build finishes LAST is what the cluster pulls — and GitHub's queue does not
-# deliver in order. Measured on life 2026-09-13: three pushes ten minutes apart,
-# and the newest commit's build went green while its own ANCESTOR sat pending for
-# over forty minutes, ready to republish `:latest` from a superseded tree with
-# nothing in any diff to explain it.
-#
-# ⚠ That stale run could be neither cancelled NOR deleted — 409 "has not been
-# queued yet" and 403 "could not delete", for the same run, seconds apart. A run
-# wedged before dispatch has no remedy, so a group that is ALREADY here is the
-# only defence. `cancel-in-progress` is right because this branch only ever ships
-# its tip: an older run's image is never the one wanted.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -37,8 +18,6 @@ jobs:
       contents: read
     runs-on: ubuntu-latest
     container: rust:1-bookworm
-    # A throwaway MariaDB so the archive integration tests actually run in CI
-    # (they seed + assert real queries; they skip when the env var is unset).
     services:
       mariadb:
         image: mariadb:11.8
@@ -54,16 +33,7 @@ jobs:
       - uses: actions/checkout@v6
       - run: rustup component add clippy
       - run: cargo clippy --all-targets -- -D warnings
-      # Default (parallel) test threads, same as the local gate: the archive
-      # tests seed one shared fixture instead of one per test, so they no longer
-      # need serialising, and both places now exercise the same thing.
       - run: cargo test
-      # The frontend's types are generated from the Rust wire types; fail if the
-      # committed output drifted from them. Does in CI what `scripts/gen-types.sh
-      # --check` does locally, without the nix dev shell. Deleting the directory first so a
-      # type REMOVED from Rust shows up as a leftover file, and asking git for
-      # status rather than diff so an ADDED one (untracked) counts too — a plain
-      # `git diff --exit-code` is blind to both.
       - run: rm -rf frontend/src/app/generated
       - run: cargo test --features ts export_bindings
       - name: generated types match the Rust types
@@ -84,9 +54,6 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v6
-      # Before setup-node, whose `cache: pnpm` shells out to `pnpm store path`.
-      # The major floats: pinning it would be a second version held level with
-      # the flake's by hand, and the lockfile is what has to match.
       - uses: pnpm/action-setup@v6
         with:
           version: 11
@@ -99,7 +66,6 @@ jobs:
       - run: pnpm run lint
       - run: pnpm test
       - run: pnpm exec ng build --configuration production
-      # Real-browser render check: icon fonts load, no text overlaps/overflow.
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm run ui-check
 
