@@ -201,12 +201,22 @@ gains a second reader.
 | field | Rust | thread.html | copy-log.ts | search |
 | --- | --- | --- | --- | --- |
 | `deleted` | Signal and Telegram read it; gchat/IRC are always `false` | hidden behind a click, body AND attachments | `(deleted)` and nothing else, attachments included | the hit matches and is listed, with `(deleted)` where the snippet goes |
-| `edited` | Signal and Telegram, by different mechanisms — see below | `edited` tag in the meta line | ` (edited)` on the last line | not shown |
+| `edited` | Signal and Telegram, by different mechanisms — see below. Telegram's is `edit_date` AND `edit_hide` | `edited` tag in the meta line | ` (edited)` on the last line | not shown |
 | `edits` | Signal walks an append-only chain; Telegram reads a separate table of superseded text | behind the `edited` tag | not shown | not shown |
 | `kind` | IRC (two of its column's four values) and Telegram (`message`, excluding `service`) | `* ` before the body | `HH:MM  * nick ` prefix | not shown |
 | `is_outgoing` | all four origins | `.out` class | nothing — the sender's name carries it | not shown |
 
-⚠ **`edited` is now one word for two mechanisms, and that is the row most likely
+⚠ **AN EDIT DATE IS NOT AN EDIT TO SHOW.** Telegram carries `edit_hide` beside
+`edit_date`, documented as "whether the message should be shown as not modified to
+the user, even if an edit date is present" — it sets a date for its own reasons and
+asks clients not to surface it. This reader printed `edited` from the date alone,
+and Pippijn found it on an ordinary photo in a live conversation that Telegram
+itself showed as untouched. Measured as the archive re-read itself: **606 hidden
+against 51 genuine**, so about 92% of the tags were noise. The archive records both
+— it keeps what it was given — and the reader honours the instruction; the history
+panel is driven by the same `edited`, so one statement rather than two decisions.
+
+⚠ **`edited` is also one word for two mechanisms, and that is the row most likely
 to grow a defect.** Signal sends an edit as a NEW message pointing at the original,
 so its history is the archive's natural shape. Telegram MUTATES the message and
 keeps its id, so the archive files the superseded text in `telegram_message_edits`
