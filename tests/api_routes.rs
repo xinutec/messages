@@ -154,6 +154,12 @@ async fn a_real_session_gets_in() {
 
 /// An unknown origin is a 404, not a 400: the URL names a conversation that does
 /// not exist. Signed in, so this cannot pass for the 401 reason.
+///
+/// ⚠ **The name here has to be one that will never become real.** This test said
+/// `telegram` until Telegram became an origin, at which point it went on passing
+/// for a different reason — the conversation genuinely did not exist — and stopped
+/// testing unknown-origin rejection at all. A test that survives the thing it
+/// tests being implemented is worse than no test, because it reports success.
 #[tokio::test]
 async fn an_unknown_origin_is_not_found() {
     let Some(pool) = pool().await else { return };
@@ -162,7 +168,7 @@ async fn an_unknown_origin_is_not_found() {
         go(
             &pool,
             "GET",
-            "/api/conversations/telegram/7/messages",
+            "/api/conversations/carrier-pigeon/7/messages",
             Some(&cookie)
         )
         .await,
@@ -170,12 +176,21 @@ async fn an_unknown_origin_is_not_found() {
     );
 }
 
-/// ⚠ **Signal cannot be sent to, and that is a DECISION rather than a gap.**
-/// `signal-cli-rest-api` is a linked device in the same namespace and could
-/// send; what stops it is that an IRC echo is confirmable against irssi's log
-/// where a Signal echo would be the only evidence the message existed. A future
-/// change that "adds Signal support" by widening this check should have to
-/// delete this test and read why.
+/// ⚠ **Signal and Telegram cannot be sent to, and that is a DECISION rather than
+/// a gap.** `signal-cli-rest-api` is a linked device in the same namespace and
+/// could send; what stops it is that an IRC echo is confirmable against irssi's
+/// log where a Signal echo would be the only evidence the message existed.
+///
+/// Telegram is the case where that reasoning does NOT apply and the answer is
+/// still no: an outgoing message comes straight back down the same update stream,
+/// so it is as confirmable as IRC's. What holds it back is only that the origin
+/// arrived read-only and sending has not been thought through — which makes it a
+/// deliberate omission with a known remedy rather than an impossibility. A future
+/// change that widens this check should have to delete this test and read why.
+///
+/// ⚠ These names are REAL origins, unlike the one in the test above. The claim is
+/// "a known origin that is not IRC is refused", so a fictional name would prove
+/// nothing here.
 #[tokio::test]
 async fn sending_is_refused_for_every_origin_but_irc() {
     let Some(pool) = pool().await else { return };

@@ -311,7 +311,7 @@ describe('App', () => {
   it('labels every origin as itself, with none borrowing another name', () => {
     const { app } = setup(makeApi());
     const labels = app.origins.map((o) => app.originLabels[o]);
-    expect(labels).toEqual(['Signal', 'Google Chat', 'IRC']);
+    expect(labels).toEqual(['Signal', 'Google Chat', 'IRC', 'Telegram']);
     expect(new Set(labels).size).toBe(app.origins.length);
     for (const label of labels) expect(label).not.toBe('');
   });

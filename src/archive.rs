@@ -20,9 +20,10 @@ use sqlx::{AssertSqlSafe, MySqlPool, Row};
 ///
 /// One type for the URL path segment, the `origin` field the frontend reads and
 /// every per-origin match arm, replacing the `"signal"`/`"gchat"` strings those
-/// three used to agree on by convention. The match in [`messages_page`] is now
-/// exhaustive, so adding a third origin is a compile error at every site that
-/// has to handle it rather than a silently empty page.
+/// used to agree on by convention. The match in [`messages_page`] is exhaustive,
+/// so adding an origin is a compile error at every site that has to handle it
+/// rather than a silently empty page — which is how Telegram, the fourth, was
+/// added without a page anywhere coming back blank.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -31,6 +32,7 @@ pub enum Origin {
     Signal,
     Gchat,
     Irc,
+    Telegram,
 }
 
 impl Origin {
@@ -41,17 +43,24 @@ impl Origin {
             "signal" => Some(Origin::Signal),
             "gchat" => Some(Origin::Gchat),
             "irc" => Some(Origin::Irc),
+            "telegram" => Some(Origin::Telegram),
             _ => None,
         }
     }
 }
 
-/// Whether a conversation is one-to-one or a group.
+/// Whether a conversation is one-to-one, a group, or a broadcast.
 ///
-/// The same distinction the writer calls `ThreadKind` (see the `signal` repo's
-/// `parse.rs`) and the `conversations.type` ENUM stores; named for the reader's
-/// model, where it is a field of [`Conversation`] and where "thread" already
-/// means Google Chat's in-group threading.
+/// The first two are the distinction the writer calls `ThreadKind` (see the
+/// `signal` repo's `parse.rs`) and the `conversations.type` ENUM stores; named for
+/// the reader's model, where it is a field of [`Conversation`] and where "thread"
+/// already means Google Chat's in-group threading.
+///
+/// `channel` is Telegram's alone and is not a conversation at all — it is a feed
+/// with an audience. It is stored rather than filtered because whether to show one
+/// is the reader's question, and it is a THIRD value rather than folded into
+/// `group` because a reader that wants people, not announcements, has no way back
+/// once they are the same thing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -59,17 +68,21 @@ impl Origin {
 pub enum ConversationKind {
     Dm,
     Group,
+    /// A broadcast with an audience rather than a conversation. Telegram's only:
+    /// the other three origins have no such thing.
+    Channel,
 }
 
 impl ConversationKind {
-    /// Parse a `conversations.type` ENUM value. The column is `ENUM('dm','group')`,
-    /// so None means the schema moved underneath us — the caller errors rather
-    /// than guessing a kind, which would mislabel every conversation of the new
-    /// sort as a DM.
+    /// Parse a conversation-kind ENUM value. Signal's column is
+    /// `ENUM('dm','group')` and Telegram's adds `channel`, so None means the
+    /// schema moved underneath us — the caller errors rather than guessing a kind,
+    /// which would mislabel every conversation of the new sort as a DM.
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "dm" => Some(ConversationKind::Dm),
             "group" => Some(ConversationKind::Group),
+            "channel" => Some(ConversationKind::Channel),
             _ => None,
         }
     }
@@ -109,6 +122,12 @@ impl MessageKind {
             _ => None,
         }
     }
+}
+
+/// Telegram stores unix SECONDS — its own unit, and all it gives: the message
+/// constructor has no sub-second field. The unified API uses milliseconds.
+pub fn s_to_ms(s: i64) -> i64 {
+    s * 1_000
 }
 
 /// Google Chat stores microsecond timestamps; the unified API uses milliseconds.
@@ -635,6 +654,49 @@ pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
         });
     }
 
+    // Telegram. Restricted to `kind = 'message'` for the reason IRC restricts to
+    // message-and-action: a service event ("X joined", a pinned notice) is not
+    // something anybody said, and counting it would make a conversation look
+    // busier than it was.
+    //
+    // ⚠ **AGGREGATE-THEN-JOIN, and that shape is the IRC lesson applied before it
+    // has to be learned again.** The derived table lets MariaDB answer the whole
+    // aggregate from `idx_tg_conv_kind_ts`; grouping the join instead makes it
+    // choose the unique key and read every candidate row. There is no maintained
+    // stats table here yet and at this archive's size there should not be — the
+    // threshold where one became necessary for IRC was measured at 3.7M rows and
+    // 1.29s, and `irc_conversation_stats` (signal's v11-v14) is the ready-made
+    // answer if Telegram ever approaches it.
+    let telegram = sqlx::query(
+        r"SELECT t.id AS id, t.kind AS kind, t.name AS name,
+                 COALESCE(s.cnt, 0) AS cnt, s.last_ts AS last_ts
+          FROM telegram_conversations t
+          LEFT JOIN (
+              SELECT conversation_id, COUNT(*) AS cnt, MAX(sent_at) AS last_ts
+              FROM telegram_messages
+              WHERE kind = 'message'
+              GROUP BY conversation_id
+          ) s ON s.conversation_id = t.id",
+    )
+    .fetch_all(pool)
+    .await?;
+    for r in telegram {
+        let kind: String = r.try_get("kind")?;
+        let Some(kind) = ConversationKind::parse(&kind) else {
+            bail!("telegram_conversations.kind holds an unknown kind: {kind:?}");
+        };
+        let last_s: Option<i64> = r.try_get("last_ts")?;
+        out.push(Conversation {
+            origin: Origin::Telegram,
+            id: r.try_get::<i64, _>("id")?.to_string(),
+            name: r.try_get("name")?,
+            kind,
+            network: None,
+            message_count: r.try_get("cnt")?,
+            last_ts: last_s.map(s_to_ms),
+        });
+    }
+
     // IRC. ⚠ THIS READS A MAINTAINED TABLE AND MUST NOT GO BACK TO AGGREGATING.
     // `irc_conversation_stats` holds one row per conversation, kept current by
     // triggers on `irc_messages` (signal's migrations v11-v14) — which is also
@@ -747,9 +809,21 @@ pub async fn messages_page(
         Origin::Signal => signal_messages(pool, id, cursor, limit, dir).await?,
         Origin::Gchat => gchat_messages(pool, id, cursor, limit, dir).await?,
         Origin::Irc => irc_messages(pool, id, cursor, limit, dir).await?,
+        Origin::Telegram => telegram_messages(pool, id, cursor, limit, dir).await?,
     };
     let mut page = page;
-    attach_edits(pool, id, &mut page.msgs).await?;
+    // ⚠ **Edit history is per-origin because the two origins that have any store
+    // it differently.** Signal appends a row per version and points it at the
+    // original (`edit_of_ts`); Telegram mutates the message and the archive files
+    // the superseded text beside it. One function cannot read both, and calling
+    // Signal's against a Telegram thread id would quietly find nothing and report
+    // no history for every edited message.
+    match origin {
+        Origin::Signal => attach_edits(pool, id, &mut page.msgs).await?,
+        Origin::Telegram => attach_telegram_edits(pool, id, &mut page.msgs).await?,
+        // Google Chat's export carries no revisions, and IRC has no such concept.
+        Origin::Gchat | Origin::Irc => {}
+    }
     attach_link_images(pool, &mut page.msgs).await?;
     let page = page;
     let has_more = page.msgs.len() as i64 == limit;
@@ -1208,6 +1282,208 @@ pub struct SearchHit {
 /// Only Signal has retraction at all: gchat and IRC have no such column, so their
 /// hits are `deleted: false` because there is nothing to be deleted, not because
 /// anything was checked.
+/// One page of a Telegram conversation.
+///
+/// ⚠ The cursor carries `sent_at` in SECONDS, which is coarse: a busy minute puts
+/// many messages on one value, so `id` is doing more tie-breaking work here than
+/// in the other origins. That is why it is in the comparison at every boundary
+/// rather than only in the `ORDER BY` — without it a page boundary that lands
+/// inside a second would either repeat or skip whatever shares it.
+async fn telegram_messages(
+    pool: &MySqlPool,
+    conversation_id: &str,
+    cursor: Option<(i64, i64)>,
+    limit: i64,
+    dir: PageDir,
+) -> Result<Fetched> {
+    // A Telegram conversation id is a number in the URL. A non-numeric one is not
+    // a conversation that can exist, so it pages as empty rather than erroring —
+    // the same answer the other origins give for an id nothing matches.
+    let Ok(conversation_id) = conversation_id.parse::<i64>() else {
+        return Ok(Fetched::new(Vec::new(), Vec::new(), dir));
+    };
+    let (cur_ts, cur_id) = (cursor.map(|(ts, _)| ts), cursor.map(|(_, id)| id));
+    // Only what was SAID: `kind = 'message'` leaves out the service events the
+    // archive also holds, matching what the conversation list counts.
+    let sql = match dir {
+        PageDir::Older => {
+            r"SELECT m.id AS id, m.msg_id AS msg_id, m.sent_at AS sent_at,
+                     m.sender_name AS sender, m.is_outgoing AS is_outgoing,
+                     m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at
+              FROM telegram_messages m
+              WHERE m.conversation_id = ? AND m.kind = 'message'
+                AND (? IS NULL OR m.sent_at < ? OR (m.sent_at = ? AND m.id < ?))
+              ORDER BY m.sent_at DESC, m.id DESC
+              LIMIT ?"
+        }
+        PageDir::Newer => {
+            r"SELECT m.id AS id, m.msg_id AS msg_id, m.sent_at AS sent_at,
+                     m.sender_name AS sender, m.is_outgoing AS is_outgoing,
+                     m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at
+              FROM telegram_messages m
+              WHERE m.conversation_id = ? AND m.kind = 'message'
+                AND (? IS NULL OR m.sent_at > ? OR (m.sent_at = ? AND m.id > ?))
+              ORDER BY m.sent_at ASC, m.id ASC
+              LIMIT ?"
+        }
+        PageDir::AtAndNewer => {
+            r"SELECT m.id AS id, m.msg_id AS msg_id, m.sent_at AS sent_at,
+                     m.sender_name AS sender, m.is_outgoing AS is_outgoing,
+                     m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at
+              FROM telegram_messages m
+              WHERE m.conversation_id = ? AND m.kind = 'message'
+                AND (? IS NULL OR m.sent_at > ? OR (m.sent_at = ? AND m.id >= ?))
+              ORDER BY m.sent_at ASC, m.id ASC
+              LIMIT ?"
+        }
+    };
+    // Nothing is BUILT here: one of three literals above, values bound.
+    // dev-lint: allow-sqlx — `sql` is one of the three literals directly above.
+    let rows = sqlx::query(sql)
+        .bind(conversation_id)
+        .bind(cur_ts)
+        .bind(cur_ts)
+        .bind(cur_ts)
+        .bind(cur_id)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+
+    let mut msgs = Vec::with_capacity(rows.len());
+    let mut keys = Vec::with_capacity(rows.len());
+    let mut msg_ids = Vec::with_capacity(rows.len());
+    for r in rows {
+        let id: i64 = r.try_get("id")?;
+        let sent_at: i64 = r.try_get("sent_at")?;
+        let deleted: i8 = r.try_get("deleted")?;
+        let is_outgoing: i8 = r.try_get("is_outgoing")?;
+        let edited_at: Option<i64> = r.try_get("edited_at")?;
+        keys.push((sent_at, id));
+        msg_ids.push(r.try_get::<i32, _>("msg_id")?);
+        msgs.push(Message {
+            // ⚠ The row's surrogate id, NOT `msg_id`. The API's message id has to
+            // be unique across the page and stable for the reactions join below;
+            // `msg_id` is unique only within its conversation, which is true here
+            // but stops being true the moment anything holds two pages at once.
+            id: id.to_string(),
+            ts: s_to_ms(sent_at),
+            sender: r
+                .try_get::<Option<String>, _>("sender")?
+                .unwrap_or_default(),
+            is_outgoing: is_outgoing != 0,
+            // Telegram draws no action/message distinction; its service events are
+            // a separate `kind` this query excludes.
+            kind: MessageKind::Message,
+            body: r.try_get("body")?,
+            deleted: deleted != 0,
+            edited: edited_at.is_some(),
+            reactions: Vec::new(),
+            // No bytes are stored for Telegram media, so there is nothing to serve
+            // — see the v16 migration in the `signal` repo.
+            attachments: Vec::new(),
+            link_images: Vec::new(),
+            edits: Vec::new(),
+            link_offers: Vec::new(),
+        });
+    }
+
+    // Reactions, already aggregated per emoji by the writer — the same shape
+    // Google Chat's have, so the same limit applies: you can see that four people
+    // laughed, not which four.
+    //
+    // ⚠ A custom emoji has no characters to draw. Its row holds a document id and
+    // a NULL emoji, and this leaves those out rather than rendering a blank bubble
+    // with a count beside it. What the archive holds and what the screen can show
+    // are different questions, and this is the second one.
+    if !msg_ids.is_empty() {
+        let placeholders = vec!["?"; msg_ids.len()].join(",");
+        let sql = format!(
+            "SELECT msg_id, emoji, cnt FROM telegram_reactions
+             WHERE conversation_id = ? AND emoji IS NOT NULL
+               AND msg_id IN ({placeholders})",
+        );
+        // Fixed template, computed placeholder count, every value bound.
+        let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
+        for id in &msg_ids {
+            q = q.bind(id);
+        }
+        for rr in q.fetch_all(pool).await? {
+            let msg_id: i32 = rr.try_get("msg_id")?;
+            let reaction = Reaction {
+                emoji: rr.try_get("emoji")?,
+                count: i64::from(rr.try_get::<i32, _>("cnt")?),
+            };
+            // The page's rows in order, so position by `msg_id` rather than the
+            // surrogate id the API reports.
+            if let Some(i) = msg_ids.iter().position(|m| *m == msg_id) {
+                msgs[i].reactions.push(reaction);
+            }
+        }
+    }
+
+    Ok(Fetched::new(msgs, keys, dir))
+}
+
+/// Telegram's edit history: the superseded versions of each edited message.
+///
+/// ⚠ **The ordering is the whole difficulty, and it is not the one Signal has.**
+/// Signal's versions each arrive with their own send time, so they sort by it.
+/// Telegram gives a message one `edit_date` — the LAST edit — so a superseded
+/// version is filed under the `edit_date` it carried, and the ORIGINAL carried
+/// none. `was_edited_at IS NULL` is therefore the oldest version rather than an
+/// unknown one, and sorting it as NULL-last would put the original at the end of
+/// its own history.
+async fn attach_telegram_edits(
+    pool: &MySqlPool,
+    conversation_id: &str,
+    msgs: &mut [Message],
+) -> Result<()> {
+    let Ok(conversation_id) = conversation_id.parse::<i64>() else {
+        return Ok(());
+    };
+    // Only the edited ones, and by the id the API reported.
+    let ids: Vec<i64> = msgs
+        .iter()
+        .filter(|m| m.edited)
+        .filter_map(|m| m.id.parse::<i64>().ok())
+        .collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let placeholders = vec!["?"; ids.len()].join(",");
+    let sql = format!(
+        "SELECT m.id AS row_id, e.was_edited_at AS was_edited_at, e.text AS text,
+                m.sent_at AS sent_at
+         FROM telegram_message_edits e
+         JOIN telegram_messages m
+           ON m.conversation_id = e.conversation_id AND m.msg_id = e.msg_id
+         WHERE e.conversation_id = ? AND m.id IN ({placeholders})
+         ORDER BY e.was_edited_at IS NOT NULL, e.was_edited_at ASC, e.id ASC",
+    );
+    // Fixed template, computed placeholder count, every value bound.
+    let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
+    for id in &ids {
+        q = q.bind(id);
+    }
+    for row in q.fetch_all(pool).await? {
+        let row_id: i64 = row.try_get("row_id")?;
+        let row_id = row_id.to_string();
+        // The original version was sent when the message was sent; a later
+        // superseded version was current until the edit that replaced it, which is
+        // the date it carries.
+        let was: Option<i64> = row.try_get("was_edited_at")?;
+        let sent_at: i64 = row.try_get("sent_at")?;
+        let edit = MessageEdit {
+            ts: s_to_ms(was.unwrap_or(sent_at)),
+            body: row.try_get("text")?,
+        };
+        if let Some(m) = msgs.iter_mut().find(|m| m.id == row_id) {
+            m.edits.push(edit);
+        }
+    }
+    Ok(())
+}
+
 pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchHit>> {
     let like = escape_like(q);
     let mut hits = Vec::new();
@@ -1273,6 +1549,46 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
             // MICROSECONDS, deliberately unlike the `ts` above: two rows inside
             // one millisecond are distinct here and identical there.
             cursor: encode_cursor(ts_us, id),
+        });
+    }
+
+    // Telegram. Only what was said, as the list and the page do, and the id is
+    // numeric so the hit carries it as text the way the URL will.
+    let trows = sqlx::query(
+        r"SELECT m.id AS id, m.conversation_id AS cid, t.name AS cname,
+                 m.sent_at AS sent_at, m.sender_name AS sender, m.text AS body,
+                 m.deleted AS deleted
+          FROM telegram_messages m
+          LEFT JOIN telegram_conversations t ON t.id = m.conversation_id
+          WHERE m.kind = 'message' AND m.text LIKE ?
+          ORDER BY m.sent_at DESC LIMIT ?",
+    )
+    .bind(&like)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    for r in trows {
+        let sent_at: i64 = r.try_get("sent_at")?;
+        let id: i64 = r.try_get("id")?;
+        let deleted: i8 = r.try_get("deleted")?;
+        hits.push(SearchHit {
+            origin: Origin::Telegram,
+            conversation_id: r.try_get::<i64, _>("cid")?.to_string(),
+            conversation_name: r.try_get("cname")?,
+            ts: s_to_ms(sent_at),
+            sender: r
+                .try_get::<Option<String>, _>("sender")?
+                .unwrap_or_default(),
+            // ⚠ The snippet is sent even for a retracted message, and the reader
+            // hides it — the archive-wide policy this repo settled on 2026-09-04.
+            // A search that cannot find what was retracted is not an archive's
+            // search.
+            snippet: r.try_get::<Option<String>, _>("body")?.unwrap_or_default(),
+            deleted: deleted != 0,
+            // SECONDS, matching what `telegram_messages` pages on. Minting this
+            // from `ts` would put milliseconds in a cursor the query compares
+            // against seconds, and every landing would miss.
+            cursor: encode_cursor(sent_at, id),
         });
     }
 

@@ -58,8 +58,9 @@ export class App {
     signal: 'Signal',
     gchat: 'Google Chat',
     irc: 'IRC',
+    telegram: 'Telegram',
   };
-  readonly origins: readonly Origin[] = ['signal', 'gchat', 'irc'];
+  readonly origins: readonly Origin[] = ['signal', 'gchat', 'irc', 'telegram'];
 
   // ?origin filters the list — view-state on the route, like health's ?date.
   private params = toSignal(this.route.queryParamMap);

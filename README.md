@@ -1,10 +1,10 @@
-# messages — Signal + Google Chat + IRC archive viewer
+# messages — Signal + Google Chat + IRC + Telegram archive viewer
 
 A web UI for the message archive stored in the **`signal` MariaDB** on the isis
-k3s cluster — three origins ([Signal](../signal) live + history, the imported
-Google Chat tables, and irssi's autologs). Reading is all of it bar one thing:
-IRC conversations can be replied to, through the irssi that already holds the
-connections. Same per-service pattern as `life`/`health`.
+k3s cluster — four origins ([Signal](../signal) live + history, the imported
+Google Chat tables, irssi's autologs, and Telegram live + history). Reading is all
+of it bar one thing: IRC conversations can be replied to, through the irssi that
+already holds the connections. Same per-service pattern as `life`/`health`.
 
 ```
  Browser ──VPN/login──▶ messages.xinutec.org (isis, ns: signal)
@@ -13,7 +13,8 @@ connections. Same per-service pattern as `life`/`health`.
                             ▼
                         signal MariaDB  ─ messages / conversations / reactions   (Signal)
                                         ├ gchat_messages / gchat_conversations…   (Google Chat)
-                                        └ irc_messages / irc_conversations         (IRC)
+                                        ├ irc_messages / irc_conversations         (IRC)
+                                        └ telegram_messages / telegram_conversations…  (Telegram)
 ```
 
 **IRC shows only what was said.** Its tables also hold joins, parts and server
@@ -81,8 +82,10 @@ them, so check before trusting it.
   anyone the archive has not seen.
 - `POST /api/telemetry` — fold client events into the server log. Always 204.
 
-`{origin}` is `signal`, `gchat` or `irc`; `{id}` is the Signal `thread_id`, the
-gchat `group_id`, or the numeric `irc_conversations.id`. That, a conversation's
+`{origin}` is `signal`, `gchat`, `irc` or `telegram`; `{id}` is the Signal
+`thread_id`, the gchat `group_id`, the numeric `irc_conversations.id`, or
+Telegram's folded peer id (a signed number — negative for a group or channel; see
+the `signal` repo's v15 migration for the fold). That, a conversation's
 `kind` (`dm`/`group`) and a message's (`message`/`action`) are all Rust enums, so
 they reach the frontend as string unions rather than `string`, and an unknown
 `{origin}` is a 404. A message's `kind` is IRC's only — the star on an action is
@@ -197,10 +200,27 @@ gains a second reader.
 
 | field | Rust | thread.html | copy-log.ts | search |
 | --- | --- | --- | --- | --- |
-| `deleted` | Signal reads it; gchat/IRC are always `false` | hidden behind a click, body AND attachments | `(deleted)` and nothing else, attachments included | the hit matches and is listed, with `(deleted)` where the snippet goes |
-| `edited` | Signal only | `edited` tag in the meta line | ` (edited)` on the last line | not shown |
-| `kind` | IRC only; two of the column's four values | `* ` before the body | `HH:MM  * nick ` prefix | not shown |
-| `is_outgoing` | all three origins | `.out` class | nothing — the sender's name carries it | not shown |
+| `deleted` | Signal and Telegram read it; gchat/IRC are always `false` | hidden behind a click, body AND attachments | `(deleted)` and nothing else, attachments included | the hit matches and is listed, with `(deleted)` where the snippet goes |
+| `edited` | Signal and Telegram, by different mechanisms — see below | `edited` tag in the meta line | ` (edited)` on the last line | not shown |
+| `edits` | Signal walks an append-only chain; Telegram reads a separate table of superseded text | behind the `edited` tag | not shown | not shown |
+| `kind` | IRC (two of its column's four values) and Telegram (`message`, excluding `service`) | `* ` before the body | `HH:MM  * nick ` prefix | not shown |
+| `is_outgoing` | all four origins | `.out` class | nothing — the sender's name carries it | not shown |
+
+⚠ **`edited` is now one word for two mechanisms, and that is the row most likely
+to grow a defect.** Signal sends an edit as a NEW message pointing at the original,
+so its history is the archive's natural shape. Telegram MUTATES the message and
+keeps its id, so the archive files the superseded text in `telegram_message_edits`
+and the row holds the current words. `attach_edits` reads the first and
+`attach_telegram_edits` the second; `messages_page` dispatches on origin rather
+than calling one of them for everything, because Signal's query against a Telegram
+id finds nothing and would report "never edited" for every edited message.
+
+⚠ **A Telegram `channel` is a third `ConversationKind`, not a group.** Folding it
+into `group` would have cost nothing today and left no way back: a reader who wants
+people rather than announcement feeds cannot recover the distinction once the two
+are one value. `MessagesStore.unnamed` is a `Record` over the kind for the same
+reason `originLabels` is one — the ternary it replaced would have called a channel
+a Group.
 
 **Naming a conversation is the same problem one level up, and had three answers
 until 2026-09-04.** `MessagesStore.title` is the namer: it trims, and falls back
@@ -270,7 +290,22 @@ key — loudly logged, sending off, the archive still served.
 ## Known limits
 - The Signal reaction count approximates live state as distinct non-removed
   authors per emoji, so a same-author add-then-remove inside one page is missed.
-- Signal edit history is flat: an edit shows as edited, not as a chain.
+- **Telegram reactions are aggregated by Telegram itself**, so — as with Google
+  Chat — you can see that four people laughed and not which four. A CUSTOM emoji
+  reaction is held as a document id with no characters to draw, and the thread
+  leaves those out rather than drawing a blank bubble with a count beside it: the
+  archive holds it, the screen cannot show it.
+- **Telegram media is recorded as a KIND and never fetched.** A photo shows as
+  having been a photo. Bytes are Signal-only in this archive (the `attachments`
+  PVC), so there is nothing for `/api/attachments` to serve and a Telegram message
+  carries an empty `attachments` list by construction.
+- **A Telegram video, sticker, voice note and PDF all read as `document`.** They
+  are one wire type (`messageMediaDocument`) and the finer label lives in the
+  document's attributes, which the pass that would also fetch the bytes would read.
+- **Telegram secret chats are absent and no login can reach them** — they are
+  device-local by construction and the server never holds them.
+- Signal edit history is flat: an edit shows as edited, not as a chain. Telegram's
+  is NOT — its superseded versions are kept and shown.
 - Attachments are Signal-only (the Google Chat export carries none, IRC has no
   such thing), served from the PVC mounted read-only. Metadata-only history rows
   are shown but marked not stored.

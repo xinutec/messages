@@ -1,7 +1,7 @@
 import { Injectable, inject, signal } from '@angular/core';
 
 import { MessagesApi } from './messages-api';
-import { Conversation, Me } from './models';
+import { Conversation, ConversationKind, Me } from './models';
 
 // Shared shell state: the signed-in user and the conversation list, read by both
 // the App shell (toolbar + list) and the routed Thread (title lookup). Keeping it
@@ -58,10 +58,22 @@ export class MessagesStore {
     return this.conversations().find((c) => c.origin === origin && c.id === id) ?? null;
   }
 
+  /** What to call a conversation that has no name, one per kind.
+   *
+   *  A `Record` for the reason the origin labels are one: this was
+   *  `c.kind === 'dm' ? 'Direct message' : 'Group'`, which does not fail when a
+   *  third kind arrives — it calls it a Group. Telegram's channels are that third
+   *  kind, and this is now a type error the day there is a fourth. */
+  private readonly unnamed: Record<ConversationKind, string> = {
+    dm: 'Direct message',
+    group: 'Group',
+    channel: 'Channel',
+  };
+
   title(c: Conversation): string {
     // Empty/whitespace name → kind-based fallback. An explicit length check (not
     // `||`/`??`) makes the empty-string-is-no-name intent unambiguous.
     const name = c.name?.trim() ?? '';
-    return name.length > 0 ? name : c.kind === 'dm' ? 'Direct message' : 'Group';
+    return name.length > 0 ? name : this.unnamed[c.kind];
   }
 }

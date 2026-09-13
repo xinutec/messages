@@ -5,8 +5,9 @@
  *
  * One type for the URL path segment, the `origin` field the frontend reads and
  * every per-origin match arm, replacing the `"signal"`/`"gchat"` strings those
- * three used to agree on by convention. The match in [`messages_page`] is now
- * exhaustive, so adding a third origin is a compile error at every site that
- * has to handle it rather than a silently empty page.
+ * used to agree on by convention. The match in [`messages_page`] is exhaustive,
+ * so adding an origin is a compile error at every site that has to handle it
+ * rather than a silently empty page — which is how Telegram, the fourth, was
+ * added without a page anywhere coming back blank.
  */
-export type Origin = "signal" | "gchat" | "irc";
+export type Origin = "signal" | "gchat" | "irc" | "telegram";

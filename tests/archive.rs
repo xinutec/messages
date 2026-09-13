@@ -36,10 +36,20 @@ fn conversation_kind_parses_the_enum_column_and_nothing_else() {
         ConversationKind::parse("group"),
         Some(ConversationKind::Group)
     );
-    // The column is ENUM('dm','group'); anything else means the schema moved,
-    // and list_conversations errors rather than defaulting to a kind.
-    assert_eq!(ConversationKind::parse("channel"), None);
+    // ⚠ `channel` became a REAL kind when Telegram arrived, and this test asserted
+    // it was rejected. That is the whole difficulty with a "nothing else" test: the
+    // set it excludes shrinks, and the assertion goes on passing right up to the
+    // day the thing it rejects is something the schema stores.
+    assert_eq!(
+        ConversationKind::parse("channel"),
+        Some(ConversationKind::Channel)
+    );
+    // The columns are ENUM('dm','group') and ENUM('dm','group','channel'); anything
+    // else means the schema moved, and list_conversations errors rather than
+    // defaulting to a kind. Case included: MariaDB's ENUM values are what they are.
     assert_eq!(ConversationKind::parse("DM"), None);
+    assert_eq!(ConversationKind::parse("broadcast"), None);
+    assert_eq!(ConversationKind::parse(""), None);
 }
 
 /// The wire spelling is the frontend's contract — `Origin` and `ConversationKind`
@@ -175,6 +185,10 @@ async fn seed(pool: &MySqlPool) {
         "irc_conversation_stats",
         "irc_messages",
         "irc_conversations",
+        "telegram_reactions",
+        "telegram_message_edits",
+        "telegram_messages",
+        "telegram_conversations",
         "sessions",
     ] {
         let _ = sqlx::query(AssertSqlSafe(format!("DROP TABLE IF EXISTS {t}")))
@@ -201,6 +215,22 @@ async fn seed(pool: &MySqlPool) {
         // No trigger here: production maintains this from `signal`'s migrations
         // v11-v14, and this suite seeds it from the rows instead (see `seed`).
         "CREATE TABLE irc_conversation_stats (conversation_id INT NOT NULL PRIMARY KEY, cnt BIGINT NOT NULL DEFAULT 0, last_sent_at DATETIME NULL) DEFAULT CHARSET=utf8mb4",
+        // ⚠ **TELEGRAM'S TABLES ARE THE `signal` REPO'S, AND THIS IS A SECOND COPY
+        // OF THEM.** So are the gchat and IRC ones above; the difference worth
+        // stating is what that copy is FOR. It is not only a fixture: dev-lint
+        // reads the CREATE TABLEs in this file to know which tables the queries in
+        // `src/` may name, so a table missing here is reported as a table nothing
+        // creates. Which means a column that drifts in `signal`'s migrations and
+        // not here produces a suite that passes against a schema production does
+        // not have — the `uniq_irc_line` note above is that lesson already learned
+        // once.
+        //
+        // `kind` carries `service` because the queries EXCLUDE it, and a fixture
+        // with no excludable rows cannot show that the exclusion works.
+        "CREATE TABLE telegram_conversations (id BIGINT PRIMARY KEY, kind ENUM('dm','group','channel') NOT NULL, name VARCHAR(255) NULL, username VARCHAR(255) NULL) DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE telegram_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, sent_at BIGINT NOT NULL, sender_id BIGINT NULL, sender_name VARCHAR(255) NULL, is_outgoing TINYINT(1) NOT NULL DEFAULT 0, kind ENUM('message','service') NOT NULL DEFAULT 'message', text TEXT NULL, media_kind VARCHAR(32) NULL, edited_at BIGINT NULL, reply_to_msg_id INT NULL, fwd_from_name VARCHAR(255) NULL, deleted TINYINT(1) NOT NULL DEFAULT 0, deleted_at TIMESTAMP NULL, UNIQUE KEY uniq_tg_msg (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE telegram_message_edits (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, was_edited_at BIGINT NULL, text TEXT NULL, UNIQUE KEY uniq_tg_edit (conversation_id, msg_id, was_edited_at)) DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE telegram_reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, emoji VARCHAR(32) NULL, custom_emoji_id BIGINT NULL, cnt INT NOT NULL DEFAULT 0, chosen TINYINT(1) NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
     ];
     for stmt in ddl {
         sqlx::query(stmt).execute(pool).await.expect("ddl");
@@ -384,6 +414,58 @@ async fn seed(pool: &MySqlPool) {
     .execute(pool)
     .await
     .unwrap();
+
+    // Telegram. A DM, a channel, and — deliberately — a message of each awkward
+    // kind: a service event the queries must leave out, one edited twice, one
+    // retracted whose words are still there, and two messages sharing a SECOND so
+    // the cursor's tie-break is exercised rather than assumed.
+    //
+    // The ids are the folded form the writer produces: a user is positive, a
+    // channel is -100 in front of its id. Written out rather than computed, because
+    // a fixture that reproduces the code's arithmetic cannot disagree with it.
+    sqlx::query(
+        "INSERT INTO telegram_conversations (id, kind, name, username) VALUES
+            (4242, 'dm', 'Tessa', 'tessa'),
+            (-1000000000055, 'channel', 'Announcements', NULL),
+            (-77, 'group', 'Klaverjas', NULL)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO telegram_messages
+            (conversation_id, msg_id, sent_at, sender_id, sender_name, is_outgoing,
+             kind, text, edited_at, deleted) VALUES
+            (4242, 10, 1700000000, 4242, 'Tessa', 0, 'message', 'hoi', NULL, 0),
+            (4242, 11, 1700000060, 777, 'Me', 1, 'message', 'ook hoi', NULL, 0),
+            (4242, 12, 1700000060, 4242, 'Tessa', 0, 'message', 'same second', NULL, 0),
+            (4242, 13, 1700000120, 4242, 'Tessa', 0, 'message', 'third go', 1700000500, 0),
+            (4242, 14, 1700000180, 4242, 'Tessa', 0, 'message', 'forget it', NULL, 1),
+            (4242, 15, 1700000240, 4242, 'Tessa', 0, 'service', 'changed the photo', NULL, 0),
+            (-1000000000055, 3, 1700000300, NULL, NULL, 0, 'message', 'an announcement', NULL, 0)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    // Two superseded versions of msg 13. The ORIGINAL carries no edit date — that
+    // is what makes it the oldest, and sorting it as an unknown would put it last.
+    sqlx::query(
+        "INSERT INTO telegram_message_edits (conversation_id, msg_id, was_edited_at, text) VALUES
+            (4242, 13, NULL, 'first go'),
+            (4242, 13, 1700000400, 'second go')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    // One drawable reaction and one custom emoji, which has no characters to show.
+    sqlx::query(
+        "INSERT INTO telegram_reactions (conversation_id, msg_id, emoji, custom_emoji_id, cnt, chosen) VALUES
+            (4242, 10, '👍', NULL, 3, 0),
+            (4242, 10, NULL, 55555, 1, 0)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -394,13 +476,20 @@ async fn conversations_normalise_and_sort_across_origins() {
     };
 
     let convs = archive::list_conversations(&pool).await.unwrap();
-    // Newest activity first. The IRC pair leads because its fixture carries real
-    // datetimes (2020) while the Signal and Google Chat rows carry bare epoch
-    // milliseconds in 1970 — carol last spoke 00:03, #chan 00:01. Their ids are
+    // Newest activity first. The TELEGRAM rows lead because their fixture carries
+    // real unix seconds (2023); then the IRC pair, whose fixture carries real
+    // datetimes (2020) — carol last spoke 00:03, #chan 00:01 — while the Signal and
+    // Google Chat rows carry bare epoch milliseconds in 1970. IRC ids are
     // auto-increment, so they are looked up rather than written down here.
-    // Then: gc1(7000), group:g1(5000), dm:alice(4000), dm:tie(1500), gc2(None).
+    // Then: gc1(7000), group:g1(5000), dm:alice(4000), dm:tie(1500).
     // Keyed on (network, target), not target — `s_20` alone matches two rows,
     // which is the whole point of the pair.
+    //
+    // ⚠ The two conversations with NO messages tie at the end, and the order
+    // between them is the order they were collected in — `sort_by_key` is stable.
+    // That is a property of the implementation rather than of the answer, so it is
+    // named here: if the tail ever swaps, the collection order changed and nothing
+    // is broken.
     let irc_id = |network: &str, name: &str| {
         convs
             .iter()
@@ -417,6 +506,8 @@ async fn conversations_normalise_and_sort_across_origins() {
     assert_eq!(
         ids,
         [
+            "-1000000000055".to_string(),
+            "4242".to_string(),
             irc_id("net", "carol"),
             irc_id("net", "#chan"),
             irc_id("xinutec", "s_20"),
@@ -426,6 +517,7 @@ async fn conversations_normalise_and_sort_across_origins() {
             "dm:alice".to_string(),
             "dm:tie".to_string(),
             "gc2".to_string(),
+            "-77".to_string(),
         ],
         "sort by last_ts desc"
     );
@@ -1613,4 +1705,226 @@ async fn a_message_nobody_edited_has_no_history() {
         .await
         .unwrap();
     assert!(page.messages[1].edits.is_empty());
+}
+
+/// The Telegram conversations reach the list with the kind they were stored with,
+/// and the count leaves out what nobody said.
+///
+/// ⚠ `channel` is the assertion that matters. It is a THIRD `ConversationKind`, and
+/// the cheap thing to have done was fold it into `group` — which would have passed
+/// every other test in this file and left a broadcast feed indistinguishable from
+/// the people in it.
+#[tokio::test]
+async fn telegram_conversations_keep_their_kind_and_count_only_speech() {
+    let Some(pool) = seeded_pool().await else {
+        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
+        return;
+    };
+    let convs = archive::list_conversations(&pool).await.unwrap();
+    let tg = |id: &str| {
+        convs
+            .iter()
+            .find(|c| c.origin == Origin::Telegram && c.id == id)
+            .unwrap_or_else(|| panic!("no Telegram conversation {id}"))
+    };
+
+    let dm = tg("4242");
+    assert_eq!(dm.kind, ConversationKind::Dm);
+    assert_eq!(dm.name.as_deref(), Some("Tessa"));
+    // Six rows in the fixture; the service event is not one of them.
+    assert_eq!(dm.message_count, 5, "the service event must not be counted");
+    // The newest SPEECH, in milliseconds — not the service event at 1700000240.
+    assert_eq!(dm.last_ts, Some(1_700_000_180_000));
+
+    assert_eq!(tg("-1000000000055").kind, ConversationKind::Channel);
+    assert_eq!(tg("-77").kind, ConversationKind::Group);
+    // A conversation with no messages still appears, as the other origins' do.
+    assert_eq!(tg("-77").message_count, 0);
+    assert_eq!(tg("-77").last_ts, None);
+}
+
+/// A page of a Telegram conversation: oldest-first, speech only, and the two
+/// messages sharing a second both present and in a stable order.
+///
+/// ⚠ The shared second is the point. Telegram's timestamps are SECONDS — all it
+/// gives — so a page boundary inside one second is not a rare case here the way a
+/// shared millisecond is elsewhere. A cursor comparing the timestamp alone would
+/// either repeat one of those two messages or lose it.
+#[tokio::test]
+async fn a_telegram_page_is_speech_in_order_including_a_shared_second() {
+    let Some(pool) = seeded_pool().await else {
+        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
+        return;
+    };
+    let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 3, PageDir::Older)
+        .await
+        .unwrap();
+    // The newest three, ascending, with the service event excluded: that leaves
+    // 'same second', 'third go', 'forget it'.
+    let bodies: Vec<Option<&str>> = page.messages.iter().map(|m| m.body.as_deref()).collect();
+    assert_eq!(
+        bodies,
+        vec![Some("same second"), Some("third go"), Some("forget it")]
+    );
+    assert!(page.has_more);
+
+    // Page back one more, through the cursor rather than by guessing an offset. The
+    // boundary lands inside 1700000060, which two messages share.
+    let older = archive::messages_page(
+        &pool,
+        Origin::Telegram,
+        "4242",
+        archive::parse_cursor(page.next_cursor.as_deref().unwrap()),
+        3,
+        PageDir::Older,
+    )
+    .await
+    .unwrap();
+    let bodies: Vec<Option<&str>> = older.messages.iter().map(|m| m.body.as_deref()).collect();
+    assert_eq!(
+        bodies,
+        vec![Some("hoi"), Some("ook hoi")],
+        "the other message of the shared second must appear exactly once"
+    );
+}
+
+/// Telegram's edit history, oldest first, with the ORIGINAL first.
+///
+/// ⚠ This is where Telegram differs from Signal and where one function for both
+/// would have been wrong. Signal's versions each carry their own send time;
+/// Telegram's superseded versions carry the `edit_date` they were replaced at, and
+/// the original carries NONE. Sorting NULL as unknown puts the first thing said at
+/// the end of its own history.
+#[tokio::test]
+async fn a_telegram_edit_history_starts_with_what_was_said_first() {
+    let Some(pool) = seeded_pool().await else {
+        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
+        return;
+    };
+    let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 50, PageDir::Older)
+        .await
+        .unwrap();
+    let edited = page
+        .messages
+        .iter()
+        .find(|m| m.body.as_deref() == Some("third go"))
+        .expect("the edited message");
+    assert!(edited.edited);
+    assert_eq!(
+        edited
+            .edits
+            .iter()
+            .map(|e| e.body.as_deref())
+            .collect::<Vec<_>>(),
+        vec![Some("first go"), Some("second go")]
+    );
+    // The original's stamp is when the MESSAGE was sent; the second version's is
+    // the edit date it carried.
+    assert_eq!(edited.edits[0].ts, 1_700_000_120_000);
+    assert_eq!(edited.edits[1].ts, 1_700_000_400_000);
+
+    // And a message nobody edited carries no history rather than an empty version.
+    let plain = page
+        .messages
+        .iter()
+        .find(|m| m.body.as_deref() == Some("hoi"))
+        .expect("an unedited message");
+    assert!(!plain.edited);
+    assert!(plain.edits.is_empty());
+}
+
+/// A Telegram reaction reaches the reader only if it can be drawn, and a retracted
+/// message still carries its words for the reader to hide.
+#[tokio::test]
+async fn telegram_reactions_are_drawable_and_a_retraction_keeps_its_words() {
+    let Some(pool) = seeded_pool().await else {
+        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
+        return;
+    };
+    let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 50, PageDir::Older)
+        .await
+        .unwrap();
+
+    let reacted = page
+        .messages
+        .iter()
+        .find(|m| m.body.as_deref() == Some("hoi"))
+        .expect("the reacted message");
+    // ⚠ ONE, not two. The fixture holds a custom-emoji reaction beside the thumb,
+    // and it has no characters to render — so the archive keeps it and the screen
+    // leaves it out, rather than drawing a blank bubble with a 1 beside it.
+    assert_eq!(reacted.reactions.len(), 1);
+    assert_eq!(reacted.reactions[0].emoji, "👍");
+    assert_eq!(reacted.reactions[0].count, 3);
+
+    let gone = page
+        .messages
+        .iter()
+        .find(|m| m.deleted)
+        .expect("the retracted message");
+    assert_eq!(
+        gone.body.as_deref(),
+        Some("forget it"),
+        "the server sends retracted text and the reader hides it — the archive-wide policy"
+    );
+}
+
+/// Search finds Telegram messages, and the cursor it mints lands on the hit.
+///
+/// ⚠ The cursor is the assertion. It has to be in SECONDS, because that is what
+/// `telegram_messages` pages on; minting it from the millisecond `ts` beside it
+/// would produce a landing that misses by a factor of a thousand — and the only
+/// symptom would be a search result that opens the wrong part of a conversation.
+#[tokio::test]
+async fn a_telegram_search_hit_lands_on_its_own_message() {
+    let Some(pool) = seeded_pool().await else {
+        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
+        return;
+    };
+    let hits = archive::search(&pool, "third go", 20).await.unwrap();
+    let hit = hits
+        .iter()
+        .find(|h| h.origin == Origin::Telegram)
+        .expect("a Telegram hit");
+    assert_eq!(hit.conversation_id, "4242");
+    assert_eq!(hit.conversation_name.as_deref(), Some("Tessa"));
+    assert_eq!(hit.ts, 1_700_000_120_000);
+
+    let landed = archive::messages_page(
+        &pool,
+        Origin::Telegram,
+        &hit.conversation_id,
+        archive::parse_cursor(&hit.cursor),
+        5,
+        PageDir::AtAndNewer,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        landed.messages.first().map(|m| m.body.as_deref()),
+        Some(Some("third go")),
+        "a landing must include the message it landed on, not its neighbour"
+    );
+}
+
+/// A conversation id that is not a number pages as empty rather than erroring —
+/// the answer the other origins give for an id nothing matches.
+#[tokio::test]
+async fn a_non_numeric_telegram_id_is_an_empty_page() {
+    let Some(pool) = seeded_pool().await else {
+        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
+        return;
+    };
+    let page = archive::messages_page(
+        &pool,
+        Origin::Telegram,
+        "nonsense",
+        None,
+        10,
+        PageDir::Older,
+    )
+    .await
+    .unwrap();
+    assert!(page.messages.is_empty());
+    assert!(!page.has_more);
 }
