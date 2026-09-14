@@ -229,9 +229,9 @@ async fn seed(pool: &MySqlPool) {
         // `kind` carries `service` because the queries EXCLUDE it, and a fixture
         // with no excludable rows cannot show that the exclusion works.
         "CREATE TABLE telegram_conversations (id BIGINT PRIMARY KEY, kind ENUM('dm','group','channel') NOT NULL, name VARCHAR(255) NULL, username VARCHAR(255) NULL) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE telegram_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, sent_at BIGINT NOT NULL, sender_id BIGINT NULL, sender_name VARCHAR(255) NULL, is_outgoing TINYINT(1) NOT NULL DEFAULT 0, kind ENUM('message','service') NOT NULL DEFAULT 'message', text TEXT NULL, media_kind VARCHAR(32) NULL, edited_at BIGINT NULL, reply_to_msg_id INT NULL, fwd_from_name VARCHAR(255) NULL, edit_hidden TINYINT(1) NULL, deleted TINYINT(1) NOT NULL DEFAULT 0, deleted_at TIMESTAMP NULL, UNIQUE KEY uniq_tg_msg (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE telegram_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, sent_at BIGINT NOT NULL, sender_id BIGINT NULL, sender_name VARCHAR(255) NULL, is_outgoing TINYINT(1) NOT NULL DEFAULT 0, kind ENUM('message','service') NOT NULL DEFAULT 'message', text TEXT NULL, media_kind VARCHAR(32) NULL, media_size BIGINT NULL, media_mime VARCHAR(128) NULL, edited_at BIGINT NULL, reply_to_msg_id INT NULL, fwd_from_name VARCHAR(255) NULL, edit_hidden TINYINT(1) NULL, deleted TINYINT(1) NOT NULL DEFAULT 0, deleted_at TIMESTAMP NULL, UNIQUE KEY uniq_tg_msg (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_message_edits (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, was_edited_at BIGINT NULL, text TEXT NULL, UNIQUE KEY uniq_tg_edit (conversation_id, msg_id, was_edited_at)) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE telegram_media (conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, state ENUM('offered','stored','failed') NOT NULL, stored_name VARCHAR(255) NULL, size_bytes BIGINT NULL, content_type VARCHAR(128) NULL, note VARCHAR(255) NULL, PRIMARY KEY (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE telegram_media (conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, state ENUM('offered','stored','failed') NOT NULL, stored_name VARCHAR(255) NULL, content_type VARCHAR(128) NULL, note VARCHAR(255) NULL, PRIMARY KEY (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, emoji VARCHAR(32) NULL, custom_emoji_id BIGINT NULL, cnt INT NOT NULL DEFAULT 0, chosen TINYINT(1) NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
     ];
     for stmt in ddl {
@@ -450,13 +450,31 @@ async fn seed(pool: &MySqlPool) {
     .execute(pool)
     .await
     .unwrap();
+    // ⚠ The size lives on the MESSAGE, so the fixture puts it there — the media row
+    // records only what is on the volume. A fixture carrying it in both places would
+    // be reproducing the duplication that produced wrong sizes in production.
+    sqlx::query(
+        "UPDATE telegram_messages SET media_kind = 'photo', media_size = 204800, media_mime = 'image/jpeg'
+          WHERE conversation_id = 4242 AND msg_id = 14",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE telegram_messages SET media_kind = 'video', media_size = 1610612736, media_mime = 'video/mp4'
+          WHERE conversation_id = 4242 AND msg_id = 13",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
     // Media: one photo whose bytes are held, one video that is only offered — the
     // two states a reader has to tell apart, since `available` is what decides
     // whether a picture is drawn or a "not stored" marker is.
     sqlx::query(
-        "INSERT INTO telegram_media (conversation_id, msg_id, state, stored_name, size_bytes, content_type) VALUES
-            (4242, 14, 'stored', '4242_14', 204800, 'image/jpeg'),
-            (4242, 13, 'offered', NULL, 1610612736, 'video/mp4')",
+        "INSERT INTO telegram_media (conversation_id, msg_id, state, stored_name, content_type) VALUES
+            (4242, 14, 'stored', '4242_14', 'image/jpeg'),
+            (4242, 13, 'offered', NULL, 'video/mp4')",
     )
     .execute(pool)
     .await

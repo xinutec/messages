@@ -1441,9 +1441,18 @@ async fn telegram_messages(
     // true, and is the hook a request button will later hang from.
     if !msg_ids.is_empty() {
         let placeholders = vec!["?"; msg_ids.len()].join(",");
+        // ⚠ The SIZE comes from `telegram_messages`, not from the media row, and the
+        // join is why. `telegram_media` held its own `size_bytes` for a day and it
+        // was a `stat` that raced the write's visibility — 218MB of files recorded
+        // as 86MB, some as zero. One number, in the table whose subject is what
+        // Telegram said about the file.
         let sql = format!(
-            "SELECT msg_id, state, size_bytes, content_type FROM telegram_media
-             WHERE conversation_id = ? AND msg_id IN ({placeholders})",
+            "SELECT d.msg_id AS msg_id, d.state AS state, d.content_type AS content_type,
+                    m.media_size AS media_size
+             FROM telegram_media d
+             JOIN telegram_messages m
+               ON m.conversation_id = d.conversation_id AND m.msg_id = d.msg_id
+             WHERE d.conversation_id = ? AND d.msg_id IN ({placeholders})",
         );
         // Fixed template, computed placeholder count, every value bound.
         let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
@@ -1470,7 +1479,7 @@ async fn telegram_messages(
                 // unnamed attachment from its type, on both the screen and the
                 // clipboard, so `None` is the honest value rather than a synthesised one.
                 file_name: None,
-                size: mr.try_get("size_bytes")?,
+                size: mr.try_get("media_size")?,
                 available: state == "stored",
             });
         }
