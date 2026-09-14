@@ -30,6 +30,9 @@ function file(over: Partial<Attachment>): Attachment {
     size: null,
     available: true,
     is_image: false,
+    // Signal's case: nothing to ask for. The Telegram states are exercised in
+    // tests/archive.rs, where a real row can carry them.
+    fetch: null,
     ...over,
   };
 }
@@ -162,13 +165,13 @@ describe('formatChatLog', () => {
         attachments: [
           file({ file_name: 'shot.png', is_image: true }),
           file({ file_name: 'notes.pdf' }),
-          file({ file_name: 'old.jpg', is_image: true, available: false }),
+          file({ file_name: 'old.jpg', is_image: true, available: false, fetch: null }),
           file({ content_type: 'audio/ogg' }),
           file({ file_name: '', content_type: 'text/plain' }),
           // Real paste, 2026-08-16: a Signal photo carries no filename, and
           // `[image: image/jpeg]` said image twice.
           file({ content_type: 'image/jpeg', is_image: true }),
-          file({ content_type: 'image/png', is_image: true, available: false }),
+          file({ content_type: 'image/png', is_image: true, available: false, fetch: null }),
           file({}),
         ],
       }),

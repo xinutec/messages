@@ -4,7 +4,7 @@
 use axum::Json;
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::header;
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
@@ -173,6 +173,28 @@ pub async fn telegram_media(
     })?;
     let ct = content_type.unwrap_or_else(|| "application/octet-stream".to_string());
     Ok(([(header::CONTENT_TYPE, ct)], Body::from(bytes)).into_response())
+}
+
+/// POST /api/telegram-media/{id}/request → a reader asked for these bytes.
+///
+/// ⚠ **This writes a row and returns; it does NOT fetch.** The only process that can
+/// fetch is the Telegram feed, because it is the only one holding a session — and
+/// that pod listens on no port, which is a property worth keeping: nothing in the
+/// cluster can dial the process that holds a logged-in account. So the request is a
+/// row in a queue the feed polls, and the reader watches for `available`.
+///
+/// 204 whether or not anything was queued. A request for something already stored,
+/// or already asked for, is not an error the reader can act on — and the state it is
+/// really asking about arrives with the next page load either way.
+pub async fn request_telegram_media(
+    State(app): State<AppState>,
+    AuthUser(_user): AuthUser,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, AppError> {
+    if archive::request_telegram_media(&app.pool, id).await? {
+        tracing::info!("telegram media {id} requested");
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// GET /api/link-images/{id} → the picture we hold for a link in a message.

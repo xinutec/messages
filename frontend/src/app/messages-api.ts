@@ -33,6 +33,17 @@ export class MessagesApi {
     );
   }
 
+  /** Ask the Telegram feed for an attachment it has not fetched. The id is the
+   *  message's, which is what the page already holds — as with a link picture, the
+   *  browser never names a file, so this cannot be turned into a fetch-anything
+   *  endpoint. 204 whether or not anything was queued. */
+  requestTelegramMedia(id: string): Observable<void> {
+    return this.http.post<void>(
+      `/api/telegram-media/${encodeURIComponent(id)}/request`,
+      {},
+    );
+  }
+
   conversations(): Observable<Conversation[]> {
     return this.http.get<Conversation[]>('/api/conversations');
   }

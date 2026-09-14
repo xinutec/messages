@@ -690,6 +690,30 @@ export class Thread {
    *  its own way out of the cluster and no access to the archive, and this app
    *  waits for it rather than leaving the reader to watch a spinner on a queue.
    */
+  /** Ask the feed for an attachment it has not fetched.
+   *
+   *  ⚠ Unlike a link picture, this does NOT come back with an answer: the fetch is a
+   *  queue the Telegram feed polls, and a 1.5GB video takes long enough that holding
+   *  a request open would be a request that times out rather than one that waits. So
+   *  the row's own state carries it — marked here immediately so the control changes
+   *  under the finger, and confirmed by the state that arrives with the next page. */
+  protected requestMedia(a: Attachment): void {
+    this.setAsking(a.id, true);
+    this.api.requestTelegramMedia(a.id).subscribe({
+      // 204 either way: a file already stored or already asked for is not an error
+      // the reader can act on. The control stays in "fetching" until the row says
+      // otherwise, which is the only thing that actually knows.
+      error: () => this.setAsking(a.id, false),
+    });
+  }
+
+  /** A size a person can read. Only ever shown for something not yet fetched, where
+   *  the number is the whole point of the decision to ask for it. */
+  protected mib(bytes: number): string {
+    const mib = bytes / (1024 * 1024);
+    return mib >= 10 ? `${Math.round(mib)} MB` : `${mib.toFixed(1)} MB`;
+  }
+
   protected requestLinkImage(offer: LinkOffer): void {
     this.setAsking(offer.id, true);
     this.api.requestLinkImage(offer.id).subscribe({

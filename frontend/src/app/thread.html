@@ -118,13 +118,31 @@
                        it out for itself. The icon says what kind of thing it
                        is, so only the name is printed here. -->
                   @if (a.available && a.is_image) {
-                    <a [href]="'/api/attachments/' + a.id" target="_blank" rel="noopener">
+                    <a [href]="attachmentUrl(a)" target="_blank" rel="noopener">
                       <img [src]="attachmentUrl(a)" [alt]="attachmentName(a) ?? 'image'" loading="lazy" />
                     </a>
                   } @else if (a.available) {
-                    <a [href]="'/api/attachments/' + a.id" target="_blank" rel="noopener">
+                    <a [href]="attachmentUrl(a)" target="_blank" rel="noopener">
                       <mat-icon>attach_file</mat-icon>{{ attachmentName(a) ?? attachmentNoun(a) }}
                     </a>
+                  } @else if (a.fetch === 'wanted' || isAsking(a.id)) {
+                    <!-- ⚠ A LARGE FILE, so this can last minutes rather than the
+                         seconds a link picture takes. The state is on the ROW, not
+                         only in this component, so it survives a reload and a second
+                         reader sees it too. -->
+                    <span class="waiting">
+                      <mat-icon>attach_file</mat-icon>{{ attachmentName(a) ?? attachmentNoun(a) }} — fetching…
+                    </span>
+                  } @else if (a.fetch) {
+                    <!-- AN OFFER, NOT A FILE. The archive knows this is at Telegram
+                         and deliberately did not fetch it: the videos alone are
+                         3.3GB. Asking queues it for the feed, which is the only
+                         process holding a session. -->
+                    <button type="button" class="fetch-offer" (click)="requestMedia(a)">
+                      <mat-icon>attach_file</mat-icon>{{ attachmentName(a) ?? attachmentNoun(a) }}
+                      @if (a.size) { ({{ mib(a.size) }}) }
+                      — fetch
+                    </button>
                   } @else {
                     <span class="unavailable">
                       <mat-icon>attach_file</mat-icon>{{ attachmentName(a) ?? attachmentNoun(a) }} (not stored)

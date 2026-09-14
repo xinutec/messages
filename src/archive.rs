@@ -204,6 +204,39 @@ pub struct Reaction {
     pub count: i64,
 }
 
+/// Whether an attachment's bytes can be ASKED for, and whether they have been.
+///
+/// ⚠ `None` is Signal's case and means "there is nothing to ask" — its blobs are
+/// fetched by the ingester as they arrive, so an absent one is absent for good.
+/// Telegram's large media is the case this exists for: the archive knows the file is
+/// there and has deliberately not fetched it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub enum FetchState {
+    /// Telegram has it; nobody has asked. A reader may.
+    Offered,
+    /// Asked for, and the feed has not delivered it yet.
+    Wanted,
+    /// Tried and could not. A reader may ask again.
+    Failed,
+}
+
+impl FetchState {
+    /// Parse a `telegram_media.state` value. `stored` is deliberately absent: a
+    /// stored file is described by `available`, and giving it a second
+    /// representation here would let the two disagree.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "offered" => Some(FetchState::Offered),
+            "wanted" => Some(FetchState::Wanted),
+            "failed" => Some(FetchState::Failed),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -217,6 +250,8 @@ pub struct Attachment {
     /// history rows are `false` — the UI shows them but can't fetch the blob.
     pub available: bool,
     pub is_image: bool,
+    /// Whether these bytes can be asked for — `None` when there is nothing to ask.
+    pub fetch: Option<FetchState>,
 }
 
 /// One version of a message that was edited, oldest first. The CURRENT text is
@@ -539,6 +574,28 @@ pub async fn link_image_blob(pool: &MySqlPool, id: &str) -> Result<Option<(Strin
 
 /// Stored location + content-type for an attachment blob, if its bytes exist.
 /// Used by the serving endpoint; returns None when unknown or metadata-only.
+/// A reader asked for a Telegram file the archive has not fetched.
+///
+/// ⚠ Only `offered` and `failed` move: a request against something already stored
+/// would queue a re-download that overwrites a good file, and one against something
+/// already `wanted` would restart its place in the queue every time a reader tapped
+/// twice. Reports whether anything changed so the caller can tell those apart from a
+/// real queueing.
+pub async fn request_telegram_media(pool: &MySqlPool, row_id: i64) -> Result<bool> {
+    let changed = sqlx::query(
+        "UPDATE telegram_media d
+           JOIN telegram_messages m
+             ON m.conversation_id = d.conversation_id AND m.msg_id = d.msg_id
+            SET d.state = 'wanted', d.requested_at = CURRENT_TIMESTAMP
+          WHERE m.id = ? AND d.state IN ('offered', 'failed')",
+    )
+    .bind(row_id)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(changed != 0)
+}
+
 /// The bytes the archive holds for a Telegram message, by the message's api id.
 ///
 /// ⚠ Resolved through `telegram_messages` rather than taken from the client,
@@ -1007,6 +1064,9 @@ async fn signal_messages(
                 file_name: ar.try_get("file_name")?,
                 size: ar.try_get("size_bytes")?,
                 available: stored_path.is_some(),
+                // Signal's blobs arrive with the message or not at all; there is
+                // nothing a reader could ask for.
+                fetch: None,
             };
             if let Some(m) = msgs.iter_mut().find(|m| m.id == mid) {
                 m.attachments.push(att);
@@ -1481,6 +1541,7 @@ async fn telegram_messages(
                 file_name: None,
                 size: mr.try_get("media_size")?,
                 available: state == "stored",
+                fetch: FetchState::parse(&state),
             });
         }
     }

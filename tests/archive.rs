@@ -231,7 +231,7 @@ async fn seed(pool: &MySqlPool) {
         "CREATE TABLE telegram_conversations (id BIGINT PRIMARY KEY, kind ENUM('dm','group','channel') NOT NULL, name VARCHAR(255) NULL, username VARCHAR(255) NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, sent_at BIGINT NOT NULL, sender_id BIGINT NULL, sender_name VARCHAR(255) NULL, is_outgoing TINYINT(1) NOT NULL DEFAULT 0, kind ENUM('message','service') NOT NULL DEFAULT 'message', text TEXT NULL, media_kind VARCHAR(32) NULL, media_size BIGINT NULL, media_mime VARCHAR(128) NULL, edited_at BIGINT NULL, reply_to_msg_id INT NULL, fwd_from_name VARCHAR(255) NULL, edit_hidden TINYINT(1) NULL, deleted TINYINT(1) NOT NULL DEFAULT 0, deleted_at TIMESTAMP NULL, UNIQUE KEY uniq_tg_msg (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_message_edits (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, was_edited_at BIGINT NULL, text TEXT NULL, UNIQUE KEY uniq_tg_edit (conversation_id, msg_id, was_edited_at)) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE telegram_media (conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, state ENUM('offered','stored','failed') NOT NULL, stored_name VARCHAR(255) NULL, content_type VARCHAR(128) NULL, note VARCHAR(255) NULL, PRIMARY KEY (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE telegram_media (conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, state ENUM('offered','wanted','stored','failed') NOT NULL, stored_name VARCHAR(255) NULL, content_type VARCHAR(128) NULL, note VARCHAR(255) NULL, requested_at TIMESTAMP NULL, stored_at TIMESTAMP NULL, PRIMARY KEY (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, emoji VARCHAR(32) NULL, custom_emoji_id BIGINT NULL, cnt INT NOT NULL DEFAULT 0, chosen TINYINT(1) NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
     ];
     for stmt in ddl {
@@ -2064,4 +2064,60 @@ async fn telegram_media_arrives_as_attachments_with_availability() {
 
     // A message with no media has no attachments, rather than an empty placeholder.
     assert!(by("hoi").attachments.is_empty());
+}
+
+/// ⚠ **A request moves only what has NOT been fetched.** Against something already
+/// stored it would queue a re-download that overwrites a good file; against something
+/// already `wanted` it would restart its place in the queue every time a reader
+/// tapped twice. Both would look like success, which is why the call reports whether
+/// anything actually changed.
+#[tokio::test]
+async fn requesting_media_queues_only_what_is_not_held() {
+    let Some(pool) = seeded_pool().await else {
+        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
+        return;
+    };
+    let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 50, PageDir::Older)
+        .await
+        .unwrap();
+    let id_of = |body: &str| {
+        page.messages
+            .iter()
+            .find(|m| m.body.as_deref() == Some(body))
+            .unwrap_or_else(|| panic!("no message {body:?}"))
+            .id
+            .parse::<i64>()
+            .expect("a numeric api id")
+    };
+
+    // The offered video: queued, and the reader is told it was.
+    let video = id_of("third go");
+    assert!(archive::request_telegram_media(&pool, video).await.unwrap());
+    // Asking again changes nothing — it is already in the queue.
+    assert!(
+        !archive::request_telegram_media(&pool, video).await.unwrap(),
+        "a second tap must not re-queue it"
+    );
+
+    // And the reader now sees it as wanted rather than as something to ask for.
+    let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 50, PageDir::Older)
+        .await
+        .unwrap();
+    let after = page
+        .messages
+        .iter()
+        .find(|m| m.body.as_deref() == Some("third go"))
+        .expect("the message");
+    assert_eq!(
+        after.attachments[0].fetch,
+        Some(archive::FetchState::Wanted)
+    );
+    assert!(!after.attachments[0].available);
+
+    // The stored photo is untouchable: requesting it would overwrite a good file.
+    let photo = id_of("forget it");
+    assert!(
+        !archive::request_telegram_media(&pool, photo).await.unwrap(),
+        "a stored file must not be re-queued"
+    );
 }

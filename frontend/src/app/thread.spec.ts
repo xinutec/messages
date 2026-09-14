@@ -502,7 +502,7 @@ describe('Thread copy', () => {
         {
           ...msg('a', new Date(2026, 7, 13, 14, 32).getTime()),
           attachments: [
-            { id: 'x', content_type: 'image/jpeg', file_name: null, size: null, available: false, is_image: true },
+            { id: 'x', content_type: 'image/jpeg', file_name: null, size: null, available: false, is_image: true, fetch: null },
           ],
         },
       ]),
@@ -554,7 +554,7 @@ async function withDeleted(withImage = false): Promise<ComponentFixture<Thread>>
         body: null,
         deleted: true,
         attachments: [
-          { id: 'i1', content_type: 'image/jpeg', file_name: 'x.jpg', size: 10, available: true, is_image: true },
+          { id: 'i1', content_type: 'image/jpeg', file_name: 'x.jpg', size: 10, available: true, is_image: true, fetch: null },
         ],
       }
     : { ...msg('d', new Date(2026, 7, 13, 14, 33).getTime()), sender: 'simon', body: 'the retracted words', deleted: true };
