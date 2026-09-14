@@ -17,11 +17,12 @@
     "@angular/common": "^22.0.4",
     "@angular/compiler": "^22.0.4",
     "@angular/core": "^22.0.4",
+    "@angular/service-worker": "^22.0.4",
     "@angular/forms": "^22.0.4",
     "@angular/material": "^22.0.3",
     "@angular/platform-browser": "^22.0.4",
     "@angular/router": "^22.0.4",
-    "@xinutec/ui-harness": "github:xinutec/ui-harness#efe5ee46bd138dee8ee195b7b4925c59d4f5c3d4",
+    "@xinutec/ui-harness": "github:xinutec/ui-harness#cc25bcabc48294be62927c6c0e1993dc632420bb",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0"
   },

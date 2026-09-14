@@ -1,6 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { Router, provideRouter } from '@angular/router';
+import { provideServiceWorker } from '@angular/service-worker';
 import { of, throwError } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -57,6 +58,11 @@ function render(api: MessagesApi): ComponentFixture<App> {
     providers: [
       provideZonelessChangeDetection(),
       provideRouter([]),
+      // The REAL SwUpdate, inert. `App` starts the updater in its constructor, so
+      // the injector needs one — and a disabled service worker is what Angular
+      // documents for tests, rather than a stub that would agree with whatever this
+      // file believed about the API.
+      provideServiceWorker('ngsw-worker.js', { enabled: false }),
       { provide: MessagesApi, useValue: api },
     ],
   });
@@ -70,6 +76,11 @@ function setup(api: MessagesApi): { app: App; router: Router } {
     providers: [
       provideZonelessChangeDetection(),
       provideRouter([]),
+      // The REAL SwUpdate, inert. `App` starts the updater in its constructor, so
+      // the injector needs one — and a disabled service worker is what Angular
+      // documents for tests, rather than a stub that would agree with whatever this
+      // file believed about the API.
+      provideServiceWorker('ngsw-worker.js', { enabled: false }),
       { provide: MessagesApi, useValue: api },
     ],
   });

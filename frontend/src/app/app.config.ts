@@ -1,4 +1,5 @@
-import { ApplicationConfig, LOCALE_ID, provideBrowserGlobalErrorListeners, provideZonelessChangeDetection } from '@angular/core';
+import { ApplicationConfig, LOCALE_ID, isDevMode, provideBrowserGlobalErrorListeners, provideZonelessChangeDetection } from '@angular/core';
+import { provideServiceWorker } from '@angular/service-worker';
 import { provideHttpClient, withFetch } from '@angular/common/http';
 import { provideRouter, withComponentInputBinding } from '@angular/router';
 
@@ -24,5 +25,12 @@ export const appConfig: ApplicationConfig = {
     // A real routes table (see app.routes.ts); route params bind to the Thread's
     // inputs so the URL is the source of truth for the open conversation.
     provideRouter(routes, withComponentInputBinding()),
+    // Registered after the app settles, so it never competes with the first paint
+    // or the sign-in redirect. `enabled: !isDevMode()` keeps `ng serve` free of a
+    // worker that would cache a build being rebuilt under it.
+    provideServiceWorker('ngsw-worker.js', {
+      enabled: !isDevMode(),
+      registrationStrategy: 'registerWhenStable:30000',
+    }),
   ],
 };

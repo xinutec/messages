@@ -1,4 +1,5 @@
 import { Component, computed, inject, signal } from '@angular/core';
+import { AppSwUpdates } from './sw-updates';
 import { DatePipe } from '@angular/common';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, NavigationEnd, Router, RouterOutlet } from '@angular/router';
@@ -37,6 +38,7 @@ import { Conversation, Origin, SearchHit } from './models';
 })
 export class App {
   private api = inject(MessagesApi);
+  private swUpdates = inject(AppSwUpdates);
   private store = inject(MessagesStore);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
@@ -105,6 +107,7 @@ export class App {
   });
 
   constructor() {
+    this.swUpdates.start();
     this.store.init();
     this.telemetry.init();
 
