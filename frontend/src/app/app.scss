@@ -121,11 +121,12 @@
   padding: 1rem;
 }
 
-/* The build stamp. Deliberately quiet — it is there to be found when somebody asks
-   "am I looking at a current page?", not to compete with the conversation list. */
+/* The build stamp, at the end of the scrolling list. Deliberately quiet — it is
+   there to be found when somebody asks "am I looking at a current page?", not to
+   compete with the conversation list. */
 .build {
   display: block;
-  padding: 0.75rem 1rem;
+  padding: 0.75rem 1rem 1.25rem;
   text-align: center;
   font: var(--mat-sys-label-small);
   color: var(--mat-sys-on-surface-variant);

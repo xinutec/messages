@@ -105,15 +105,20 @@
           }
         </mat-action-list>
       }
+      <!-- ⚠ WHICH BUILD THIS IS, stamped INTO the bundle rather than fetched. A page
+           served from a stale cache then shows its OWN old sha instead of whatever
+           the server currently reports — the difference between spotting staleness
+           and being reassured by it. See scripts/stamp-version.mjs.
+
+           Inside the scrolling list, not pinned under it: on a phone a fixed footer
+           costs ~68px of conversations forever to answer a question asked once a
+           month. Here it costs nothing until you reach the end, which is where you
+           would look for it. -->
+      <footer class="build" [title]="'built ' + builtAt">build {{ build.sha }} · {{ builtAt }}</footer>
     </aside>
 
     <div class="pane"><router-outlet /></div>
   </div>
-  <!-- ⚠ WHICH BUILD THIS IS, stamped INTO the bundle rather than fetched. A page
-       served from a stale cache then shows its own old sha instead of whatever the
-       server currently reports — which is the difference between spotting the
-       staleness and being reassured by it. See scripts/stamp-version.mjs. -->
-  <footer class="build" [title]="'built ' + builtAt">build {{ build.sha }} · {{ builtAt }}</footer>
 } @else {
   <div class="signin">
     <h1>messages</h1>
