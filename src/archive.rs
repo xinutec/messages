@@ -237,6 +237,19 @@ impl FetchState {
     }
 }
 
+/// The two fields of an attachment that change while a fetch is in flight.
+///
+/// Deliberately the same shape those fields have on `Attachment`, so the reader
+/// applies an answer by copying rather than by translating between two vocabularies.
+#[derive(Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct MediaState {
+    pub available: bool,
+    pub fetch: Option<FetchState>,
+    pub content_type: Option<String>,
+}
+
 #[derive(Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -574,6 +587,32 @@ pub async fn link_image_blob(pool: &MySqlPool, id: &str) -> Result<Option<(Strin
 
 /// Stored location + content-type for an attachment blob, if its bytes exist.
 /// Used by the serving endpoint; returns None when unknown or metadata-only.
+/// What the archive now holds for one Telegram message, for a reader watching a
+/// fetch it asked for.
+///
+/// ⚠ **This exists because the request is ASYNCHRONOUS and the POST cannot answer.**
+/// A link picture is fetched while the request is open, so its response carries the
+/// outcome; a 1.5GB video is fetched by another process minutes later. Without
+/// something to ask, the control that said "fetching…" said it forever — which it
+/// did, on a file that had already arrived ninety seconds earlier.
+pub async fn telegram_media_state(pool: &MySqlPool, row_id: i64) -> Result<Option<MediaState>> {
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT d.state, d.content_type
+           FROM telegram_messages m
+           JOIN telegram_media d
+             ON d.conversation_id = m.conversation_id AND d.msg_id = m.msg_id
+          WHERE m.id = ?",
+    )
+    .bind(row_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(state, content_type)| MediaState {
+        available: state == "stored",
+        fetch: FetchState::parse(&state),
+        content_type,
+    }))
+}
+
 /// A reader asked for a Telegram file the archive has not fetched.
 ///
 /// ⚠ Only `offered` and `failed` move: a request against something already stored

@@ -107,6 +107,7 @@ pub fn router(state: AppState) -> Router {
         .route("/conversations/{origin}/{id}/send", post(api::send))
         .route("/attachments/{id}", get(api::attachment))
         .route("/telegram-media/{id}", get(api::telegram_media))
+        .route("/telegram-media/{id}/state", get(api::telegram_media_state))
         .route(
             "/telegram-media/{id}/request",
             post(api::request_telegram_media),

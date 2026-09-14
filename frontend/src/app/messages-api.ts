@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { Conversation, LinkImageState, Me, MessagesPage, Origin, SearchHit, SendResult, TelemetryEvent } from './models';
+import { Conversation, LinkImageState, Me, MessagesPage, Origin, SearchHit, SendResult, TelemetryEvent, MediaState } from './models';
 
 /** Thin client over the messages backend. Same-origin in prod; via the dev
  *  proxy (proxy.conf.json) in `ng serve`. Session cookie rides along. */
@@ -30,6 +30,14 @@ export class MessagesApi {
     return this.http.post<LinkImageState>(
       `/api/link-images/${encodeURIComponent(id)}/request`,
       {},
+    );
+  }
+
+  /** Has an asked-for attachment arrived? The POST cannot say — the fetch happens
+   *  in another process, minutes later for a large file. */
+  telegramMediaState(id: string): Observable<MediaState> {
+    return this.http.get<MediaState>(
+      `/api/telegram-media/${encodeURIComponent(id)}/state`,
     );
   }
 

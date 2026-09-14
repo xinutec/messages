@@ -23,6 +23,17 @@ import { Conversation, LinkOffer, Message, Origin, Attachment } from './models';
  *  query is indexed on `(conversation_id, sent_at)` and returns one page. */
 const POLL_MS = 5000;
 
+/** How often a fetch in flight is asked about. */
+const MEDIA_WATCH_INTERVAL_MS = 4000;
+
+/** How long to keep asking before giving up quietly.
+ *
+ *  ⚠ Generous because the files this watches are the LARGE ones — being asked for is
+ *  what makes a file large enough to wait for. Bounded because something genuinely
+ *  stuck should stop costing a request every four seconds, and the row is still the
+ *  truth: reopening the conversation asks again. */
+const MEDIA_WATCH_LIMIT_MS = 15 * 60 * 1000;
+
 
 @Component({
   selector: 'app-thread',
@@ -237,6 +248,10 @@ export class Thread {
       // the window and 2 runs in 3 landed back INSIDE the conversation, the list
       // entry replaced in history. Silent: no page error, nothing in the log.
       if (this.fromTimer != null) clearTimeout(this.fromTimer);
+      // Every fetch being watched. Same reason as the interval above: a watcher
+      // that outlives its component polls for a conversation nobody is looking at.
+      for (const tick of this.watching.values()) clearInterval(tick);
+      this.watching.clear();
     });
 
     // The soft keyboard opening is a resize of the scroll container, and the
@@ -323,6 +338,7 @@ export class Thread {
     if (lastOld && firstNew && lastOld.ts > firstNew.ts) return false;
 
     this.messages.set([...older.messages, ...newer.messages]);
+    this.watchInFlight([...older.messages, ...newer.messages]);
     this.hasMore.set(older.has_more);
     this.cursor = older.next_cursor;
     this.newerCursor = newer.prev_cursor;
@@ -398,6 +414,7 @@ export class Thread {
         cursor = older.next_cursor;
       }
       this.messages.set(msgs);
+      this.watchInFlight(msgs);
       this.hasMore.set(hasMore);
       this.cursor = cursor;
       this.loadingThread.set(false);
@@ -678,6 +695,13 @@ export class Thread {
    *  that same request — there is no queue to poll and nothing to reconcile. */
   private readonly asking = signal<ReadonlySet<string>>(new Set());
 
+  /** Attachment id → interval handle, for fetches being watched.
+   *
+   *  ⚠ Cleared on destroy below. A timer that outlives its component keeps polling
+   *  an endpoint for a conversation nobody is looking at — the class of leak
+   *  #1541 exists about. */
+  private readonly watching = new Map<string, number>();
+
   protected isAsking(id: string): boolean {
     return this.asking().has(id);
   }
@@ -701,10 +725,89 @@ export class Thread {
     this.setAsking(a.id, true);
     this.api.requestTelegramMedia(a.id).subscribe({
       // 204 either way: a file already stored or already asked for is not an error
-      // the reader can act on. The control stays in "fetching" until the row says
-      // otherwise, which is the only thing that actually knows.
+      // the reader can act on.
+      next: () => this.watchMedia(a.id),
       error: () => this.setAsking(a.id, false),
     });
+  }
+
+  /** Watch an asked-for attachment until it arrives.
+   *
+   *  ⚠ **WITHOUT THIS THE CONTROL SAID "fetching…" FOREVER.** The request is
+   *  answered by a 204 that knows nothing: the fetch happens in the Telegram feed,
+   *  which for a 14MB video took ninety seconds and for a 1.5GB one takes far
+   *  longer. The first version relied on "the state that arrives with the next page"
+   *  and nothing ever re-fetched the page, so a file that had already landed went on
+   *  being reported as in flight.
+   *
+   *  ⚠ Bounded, and it gives up quietly rather than pretending. Something genuinely
+   *  stuck should stop costing requests, and the row is still the truth — reopening
+   *  the conversation asks again. */
+  private watchMedia(id: string): void {
+    if (this.watching.has(id)) return;
+    const started = Date.now();
+    const tick = window.setInterval(() => {
+      if (Date.now() - started > MEDIA_WATCH_LIMIT_MS) {
+        this.stopWatching(id);
+        this.setAsking(id, false);
+        return;
+      }
+      this.api.telegramMediaState(id).subscribe({
+        next: (state) => {
+          if (state.available) {
+            this.landMedia(id, state.content_type);
+            this.stopWatching(id);
+            this.setAsking(id, false);
+          } else if (state.fetch === 'failed') {
+            // Back to an offer: it can be asked for again, and saying so beats a
+            // control that spins over something that has already given up.
+            this.stopWatching(id);
+            this.setAsking(id, false);
+            this.setFetchState(id, 'failed');
+          }
+        },
+        error: () => {
+          this.stopWatching(id);
+          this.setAsking(id, false);
+        },
+      });
+    }, MEDIA_WATCH_INTERVAL_MS);
+    this.watching.set(id, tick);
+  }
+
+  private stopWatching(id: string): void {
+    const tick = this.watching.get(id);
+    if (tick !== undefined) window.clearInterval(tick);
+    this.watching.delete(id);
+  }
+
+  /** The file arrived: flip the attachment in the model so it draws. */
+  private landMedia(id: string, contentType: string | null): void {
+    this.messages.update((cur) =>
+      cur.map((m) => ({
+        ...m,
+        attachments: m.attachments.map((a) =>
+          a.id === id
+            ? {
+                ...a,
+                available: true,
+                fetch: null,
+                content_type: contentType ?? a.content_type,
+                is_image: (contentType ?? a.content_type ?? '').startsWith('image/'),
+              }
+            : a,
+        ),
+      })),
+    );
+  }
+
+  private setFetchState(id: string, fetch: Attachment['fetch']): void {
+    this.messages.update((cur) =>
+      cur.map((m) => ({
+        ...m,
+        attachments: m.attachments.map((a) => (a.id === id ? { ...a, fetch } : a)),
+      })),
+    );
   }
 
   /** A size a person can read. Only ever shown for something not yet fetched, where
@@ -712,6 +815,19 @@ export class Thread {
   protected mib(bytes: number): string {
     const mib = bytes / (1024 * 1024);
     return mib >= 10 ? `${Math.round(mib)} MB` : `${mib.toFixed(1)} MB`;
+  }
+
+  /** Pick up fetches already in flight when a page arrives.
+   *
+   *  ⚠ Not only what THIS session asked for. A reader who taps, navigates away and
+   *  comes back — or a second reader entirely — finds the row still `wanted`, and
+   *  without this the control would sit at "fetching…" with nothing watching it. */
+  private watchInFlight(msgs: Message[]): void {
+    for (const m of msgs) {
+      for (const a of m.attachments) {
+        if (a.fetch === 'wanted') this.watchMedia(a.id);
+      }
+    }
   }
 
   protected requestLinkImage(offer: LinkOffer): void {

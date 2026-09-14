@@ -20,6 +20,7 @@ export * from "./generated/MessageKind";
 export * from "./generated/MessagesPage";
 export * from "./generated/Origin";
 export * from "./generated/FetchState";
+export * from "./generated/MediaState";
 export * from "./generated/Reaction";
 export * from "./generated/SearchHit";
 export * from "./generated/SendRequest";

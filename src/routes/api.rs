@@ -175,6 +175,21 @@ pub async fn telegram_media(
     Ok(([(header::CONTENT_TYPE, ct)], Body::from(bytes)).into_response())
 }
 
+/// GET /api/telegram-media/{id}/state → has it arrived yet?
+///
+/// A reader that asked for a large file watches this. The POST cannot answer,
+/// because the fetch happens in another process minutes later.
+pub async fn telegram_media_state(
+    State(app): State<AppState>,
+    AuthUser(_user): AuthUser,
+    Path(id): Path<i64>,
+) -> Result<Json<archive::MediaState>, AppError> {
+    match archive::telegram_media_state(&app.pool, id).await? {
+        Some(state) => Ok(Json(state)),
+        None => Err(AppError::NotFound),
+    }
+}
+
 /// POST /api/telegram-media/{id}/request → a reader asked for these bytes.
 ///
 /// ⚠ **This writes a row and returns; it does NOT fetch.** The only process that can
