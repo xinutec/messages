@@ -6,3 +6,6 @@
 /playwright-report
 # Per-run eye-check screenshots left by the ui-harness layout checks.
 /ui-snapshots/
+
+# Written by scripts/stamp-version.mjs at build time.
+/src/app/build-info.ts

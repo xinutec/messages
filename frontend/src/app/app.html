@@ -109,10 +109,15 @@
 
     <div class="pane"><router-outlet /></div>
   </div>
+  <!-- ⚠ WHICH BUILD THIS IS, stamped INTO the bundle rather than fetched. A page
+       served from a stale cache then shows its own old sha instead of whatever the
+       server currently reports — which is the difference between spotting the
+       staleness and being reassured by it. See scripts/stamp-version.mjs. -->
+  <footer class="build" [title]="'built ' + builtAt">build {{ build.sha }} · {{ builtAt }}</footer>
 } @else {
   <div class="signin">
     <h1>messages</h1>
-    <p>Your Signal &amp; Google Chat archive.</p>
+    <p>Your Signal, Google Chat, IRC and Telegram archive.</p>
     <a mat-flat-button href="/login">Sign in with Nextcloud</a>
   </div>
 }

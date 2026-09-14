@@ -18,6 +18,13 @@ RUN apk add --no-cache git ca-certificates \
     && npm install -g pnpm \
     && pnpm install --frozen-lockfile
 COPY frontend/ .
+# Stamp the build version into the bundle (see frontend/scripts/stamp-version.mjs).
+# ⚠ Explicit rather than via package.json's `prebuild` hook, because the line below
+# runs `ng` directly and a `pre*` hook only fires for `pnpm run <script>`.
+# The build context has no .git, so the commit comes from GIT_SHA, passed by CI;
+# a local `docker build` without it stamps `dev`, which is the honest answer.
+ARG GIT_SHA=dev
+RUN GIT_SHA="$GIT_SHA" node scripts/stamp-version.mjs
 RUN pnpm exec ng build --configuration production
 
 # --- backend (deps cached in their own layer) ---

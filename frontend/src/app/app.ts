@@ -1,5 +1,6 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { AppSwUpdates } from './sw-updates';
+import { BUILD_INFO } from './build-info';
 import { DatePipe } from '@angular/common';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, NavigationEnd, Router, RouterOutlet } from '@angular/router';
@@ -39,6 +40,11 @@ import { Conversation, Origin, SearchHit } from './models';
 export class App {
   private api = inject(MessagesApi);
   private swUpdates = inject(AppSwUpdates);
+
+  /** Which build this is. Read from the bundle, never from the server — see the
+   *  note in app.html. */
+  protected readonly build = BUILD_INFO;
+  protected readonly builtAt = new Date(BUILD_INFO.builtAt).toLocaleString();
   private store = inject(MessagesStore);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
