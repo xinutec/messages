@@ -61,11 +61,31 @@ function bulk(prefix: string, startTs: number, n: number) {
   return Array.from({ length: n }, (_, k) => m(startTs + k * 10, `${prefix}${k}`));
 }
 
-const scrollThreadTop = (page: Page) =>
-  page.evaluate(() => {
+/** Scroll the thread to the top, and REFUSE to pretend when there is nothing to
+ *  scroll.
+ *
+ *  ⚠ **`if (t) t.scrollTop = 0` made a missing container look like a successful
+ *  scroll.** The caller then waited its full 90s for a `?from` that could never
+ *  be written, and Playwright blamed `waitForURL` — the line after the one that
+ *  actually did nothing. Measured 2026-09-15 from a preserved failure: the
+ *  screenshot showed the viewport still at only26..only39, the BOTTOM, while
+ *  the page snapshot listed only0 first and read as though the scroll had
+ *  landed. It had not; that listing is DOM order.
+ *
+ *  Waiting for `.thread` rather than for a message, because a message being
+ *  present does not put the scroll container on the page. */
+const scrollThreadTop = async (page: Page) => {
+  await page.locator(".thread").waitFor();
+  const scrolled = await page.evaluate(() => {
     const t = document.querySelector(".thread");
-    if (t) t.scrollTop = 0;
+    if (!t) return null;
+    t.scrollTop = 0;
+    return t.scrollTop;
   });
+  if (scrolled === null) {
+    throw new Error("scrollThreadTop: .thread is not in the DOM — nothing was scrolled");
+  }
+};
 
 // Paged mock: a tall recent page (enough rows to scroll) that has an older page
 // below it. `cursor` present → the older page; absent → the fresh page.
