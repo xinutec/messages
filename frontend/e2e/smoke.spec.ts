@@ -9,6 +9,27 @@ import { expectIconFontLoaded, expectNoTextOverlaps } from "@xinutec/ui-harness"
  * unit tests (jsdom) can't see fonts or layout.
  */
 
+/** Scroll `.thread` to `top` — a pixel offset, or "bottom" — and refuse to
+ *  pretend when there is nothing to scroll.
+ *
+ *  ⚠ **Both callers assert about what is on screen AFTER scrolling**, so a
+ *  silent no-op does not merely fail — it can PASS, against an unscrolled page.
+ *  That is the quieter half of the fault that held #1243 and the messages
+ *  routing flake open for weeks: `if (t)` turning "container absent" into
+ *  "scrolled fine". */
+async function scrollThread(page: Page, top: number | "bottom"): Promise<void> {
+  await page.locator(".thread").waitFor();
+  const moved = await page.evaluate((to) => {
+    const t = document.querySelector(".thread");
+    if (!t) return null;
+    t.scrollTop = to === "bottom" ? t.scrollHeight : to;
+    return t.scrollTop;
+  }, top);
+  if (moved === null) {
+    throw new Error("scrollThread: .thread is not in the DOM — nothing was scrolled");
+  }
+}
+
 const ME = { user_id: "u1", display_name: "Test User" };
 
 const CONVERSATIONS = [
@@ -101,10 +122,7 @@ test("a scrolled multi-day thread does not stack date separators", async ({ page
   await page.getByText("msg 1-24", { exact: true }).waitFor();
   // Scroll the thread to the bottom — where the sticky bug piled the dates up,
   // and where the last day's header now floats (sticky) over its messages.
-  await page.evaluate(() => {
-    const t = document.querySelector(".thread");
-    if (t) t.scrollTop = t.scrollHeight;
-  });
+  await scrollThread(page, "bottom");
   await page.waitForTimeout(150);
   await expectNoTextOverlaps(page, testInfo);
 });
@@ -117,10 +135,7 @@ test("the current day's date stays pinned at the top while scrolling", async ({ 
   await page.goto("/conversation/signal/dm:a");
   await page.getByText("msg 0-0", { exact: true }).waitFor();
   // Scroll down within the first (tall) day so its header has scrolled past.
-  await page.evaluate(() => {
-    const t = document.querySelector(".thread");
-    if (t) t.scrollTop = 400;
-  });
+  await scrollThread(page, 400);
   await page.waitForTimeout(150);
   // Day 1's header is pinned just below the sticky conversation head (~3.25rem),
   // not scrolled away above it (large negative offset) nor sitting at its far-down
