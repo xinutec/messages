@@ -23,8 +23,7 @@
             # `nix run ../dev-lint#with-test-db` — the gate's "tests (against a
             # real MariaDB)" row — and NOT a script in this repository: three
             # repos carried near-identical copies of one and they were folded
-            # into dev-lint. This comment named the deleted copy until 2026-08-14,
-            # which is how it came to be written a second time.
+            # into dev-lint.
             pkgs.mariadb
             pkgs.nodejs_24 # Angular 22 frontend (frontend/)
             pkgs.pnpm # the frontend's installer; node ships npm too, ignore it
