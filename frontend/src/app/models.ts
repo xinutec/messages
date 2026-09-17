@@ -22,6 +22,7 @@ export * from "./generated/Origin";
 export * from "./generated/FetchState";
 export * from "./generated/MediaState";
 export * from "./generated/Reaction";
+export * from "./generated/ReplyTo";
 export * from "./generated/SearchHit";
 export * from "./generated/SendRequest";
 export * from "./generated/SendResult";

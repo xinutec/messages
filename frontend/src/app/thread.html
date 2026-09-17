@@ -51,6 +51,32 @@
                   <span class="tag">deleted</span>
                 }
               </div>
+              <!-- What this message answered. Drawn ABOVE the body and above the
+                   deletion gate, because "this was a reply" stays true of a
+                   message whose words were withdrawn — it is the shape of the
+                   conversation, not its content.
+
+                   ⚠ Only clickable when the archive HOLDS the target. Signal
+                   quotes by timestamp and Telegram by an id the backfill may not
+                   have reached, so an unresolved quote is a real and ordinary
+                   outcome; it renders as plain text rather than a control that
+                   would go nowhere. -->
+              @if (m.reply_to; as r) {
+                @if (r.id) {
+                  <button type="button" class="reply-quote" (click)="jumpToReply(r)"
+                          aria-label="Go to the message this replies to">
+                    @if (r.sender) { <span class="who">{{ r.sender }}</span> }
+                    <span class="said" [class.absent]="r.deleted || !r.excerpt">{{
+                      r.deleted ? '(deleted)' : (r.excerpt ?? '(no text)')
+                    }}</span>
+                  </button>
+                } @else {
+                  <div class="reply-quote missing">
+                    <span class="said absent">a message this archive doesn't hold</span>
+                    @if (r.ts) { <span class="who">{{ r.ts | date: 'short' }}</span> }
+                  </div>
+                }
+              }
               <!-- ⚠ A DELETION HIDES THE PICTURES TOO. Until 2026-09-03 the
                    attachment loop was not gated on `m.deleted`, so a deleted
                    message read `(deleted)` where its words had been and drew its

@@ -49,6 +49,13 @@ them, so check before trusting it.
   (created on boot, `src/db.rs`).
 - `frontend/` — Angular (login gate → conversation list with origin filter →
   thread view with reactions / edited / deleted markers, and a composer on IRC).
+  A message that answered another shows it as a quote above itself, and clicking
+  the quote goes to what it answered. **Two of the four origins record the
+  association at all** — Signal quotes by TIMESTAMP and Telegram by message id —
+  so a quote can legitimately point at something the archive does not hold, and
+  says so rather than vanishing. Google Chat's `thread_id` is not this: 7,804
+  distinct threads over 7,922 messages means almost every message is its own, so
+  there is nothing there to draw.
   Selecting across two or more messages and copying gives an irssi-style log —
   `src/app/copy-log.ts`, the inverse of `signal/src/irclog.rs`, actions included.
   `src/app/thread-window.ts` is the scrolling: it collapses all but a window of a

@@ -17,7 +17,7 @@ function msg(over: Partial<Message> & Pick<Message, 'ts' | 'sender'>): Message {
     deleted: false,
     edited: false,
     reactions: [],
-    attachments: [], link_images: [], link_offers: [], edits: [],
+    attachments: [], link_images: [], link_offers: [], edits: [], reply_to: null,
     ...over,
   };
 }

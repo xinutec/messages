@@ -87,6 +87,20 @@
 // Grid cell for the routed Thread component (which is itself the scroll container).
 .pane {
   min-height: 0;
+  // ⚠ **AND `min-width: 0`, for the same reason in the other axis.** A grid
+  // item's automatic minimum size is its MIN-CONTENT size, so a `1fr` track is
+  // only as narrow as the widest unbreakable thing inside it — and a pane that
+  // cannot be narrower than its content is a pane that pushes the viewport
+  // instead of clipping. One `white-space: nowrap` reply excerpt took the thread
+  // 267px past the right edge of a 412px phone, carrying the bubbles, the meta
+  // lines and the attachment rows with it.
+  //
+  // This is also why `.body` carries `overflow-wrap: anywhere` (thread.scss):
+  // that was the same defect met in the one place it had already shown up, cured
+  // per-element. This is the cure at the cause, and it is what lets any
+  // `text-overflow: ellipsis` inside the pane work at all — an ellipsis needs a
+  // definite width to clip TO, and without this there is never one.
+  min-width: 0;
 }
 
 // Phone: single pane. Show the list; when a conversation is open (a child route

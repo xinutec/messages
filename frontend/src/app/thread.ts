@@ -13,7 +13,7 @@ import { LogScope, chatLogHtml, formatChatLog } from './copy-log';
 import { MAX_RESTORE_PAGES, PAGE, ThreadWindow } from './thread-window';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
-import { Conversation, LinkOffer, Message, Origin, Attachment } from './models';
+import { Conversation, LinkOffer, Message, Origin, Attachment, ReplyTo } from './models';
 
 /** How often an open, visible thread asks whether anything is newer.
  *
@@ -285,9 +285,10 @@ export class Thread {
    *  look alike — you arrive in the right place and then have to work out which
    *  line you came for. Measured on the phone against a hit from 2013.
    *
-   *  Its lifetime is exactly `?at`'s, and that is one rule rather than two:
-   *  both mean "this is where you were put", both stop being true the moment
-   *  the reader scrolls, and both are cleared in `commitFromParam`. */
+   *  Set by `?at` and by `jumpToReply` when the message replied to was already
+   *  on screen — which is the same statement, "this is where you were put",
+   *  reached two ways. It stops being true the moment the reader scrolls, and
+   *  `commitFromParam` clears it along with `?at` itself. */
   readonly landedId = signal<string | null>(null);
 
   private resetState(): void {
@@ -358,6 +359,43 @@ export class Thread {
     });
     this.win.trimToWindow();
     return true;
+  }
+
+  /** Go to the message a reply answers.
+   *
+   *  ⚠ **Two paths, and the cheap one is not always available.** A reply nearly
+   *  always answers something a few lines up, which is already on screen — so
+   *  the first try is a plain scroll: no fetch, no navigation, no losing the
+   *  reader's place in the thread they are in.
+   *
+   *  But only a WINDOW of a long conversation is in the DOM (`thread-window.ts`),
+   *  and a reply to something from last year is outside it. `scrollToTs` answers
+   *  with the nearest RENDERED message when the one asked for is not there,
+   *  which would be the wrong message presented as the right one — the exact
+   *  failure the `landed` marker exists to prevent. So a target that is not
+   *  currently rendered goes through `?at` instead, the same landing a search
+   *  hit uses, which fetches half a page either side and marks what it reached.
+   */
+  jumpToReply(r: ReplyTo): void {
+    if (!r.id) return;
+    const here = this.rendered().find((m) => m.id === r.id);
+    if (here) {
+      this.landedId.set(here.id);
+      this.win.withScrollLock(() => this.win.scrollToTs(here.ts));
+      return;
+    }
+    // Unreachable through the template — the backend mints `cursor` and `id`
+    // together — but the type allows it, and silently doing nothing is better
+    // than navigating to a conversation's newest page as if that were the answer.
+    if (!r.cursor) return;
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      // `from` goes with it. The two are competing answers to "where should the
+      // reader be", and leaving a stale `from` beside a fresh `at` describes two
+      // different places at once.
+      queryParams: { at: r.cursor, from: null },
+      queryParamsHandling: 'merge',
+    });
   }
 
   /** Load the thread. Restores the paged-back depth from ?from (the ts the user

@@ -5,6 +5,7 @@ import type { LinkOffer } from "./LinkOffer";
 import type { MessageEdit } from "./MessageEdit";
 import type { MessageKind } from "./MessageKind";
 import type { Reaction } from "./Reaction";
+import type { ReplyTo } from "./ReplyTo";
 
 export type Message = { id: string, 
 /**
@@ -28,4 +29,10 @@ edits: Array<MessageEdit>,
  * Links in `body` we could fetch a picture for but have not. Serving them
  * offers them; a reader has to ask.
  */
-link_offers: Array<LinkOffer>, };
+link_offers: Array<LinkOffer>, 
+/**
+ * What this message answered, for the origins that record it — Signal and
+ * Telegram. Always `None` for Google Chat and IRC, neither of which has
+ * the association at all.
+ */
+reply_to: ReplyTo | null, };

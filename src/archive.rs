@@ -12,6 +12,7 @@
 
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
+use std::collections::HashMap;
 
 use crate::link_image::{LinkState, askable};
 use sqlx::{AssertSqlSafe, MySqlPool, Row};
@@ -293,6 +294,38 @@ pub struct LinkImage {
     pub content_type: String,
 }
 
+#[derive(Serialize, Clone)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+/// What a message was a reply TO, for the two origins that record one.
+///
+/// ⚠ **A reply can point at a message this archive does not hold**, and that is
+/// not an error to hide: Signal's quote names a TIMESTAMP, so a quote of
+/// anything older than the archive resolves to nothing, and Telegram's names a
+/// message id that may sit in a gap the backfill has not reached. Every field
+/// but the flag is therefore optional, and an unresolved reply still renders —
+/// "this answered something" is true and worth showing even when the something
+/// cannot be produced.
+pub struct ReplyTo {
+    /// The API id of the message replied to, or `None` when the archive does
+    /// not hold it. Its presence is what makes the quote clickable.
+    pub id: Option<String>,
+    /// Cursor addressing the target, to be passed back as `?at` — the same
+    /// landing a search hit uses. `None` exactly when `id` is.
+    pub cursor: Option<String>,
+    /// Epoch milliseconds of the message replied to, when known.
+    #[cfg_attr(feature = "ts", ts(type = "number | null"))]
+    pub ts: Option<i64>,
+    pub sender: Option<String>,
+    /// A short prefix of what it said — `None` for a target with no text, and
+    /// for a DELETED one.
+    pub excerpt: Option<String>,
+    /// The target is held but deleted. ⚠ A deleted message's words stay behind a
+    /// click in this app, so its excerpt is withheld here for the same reason:
+    /// a quote is not the place that reveals it.
+    pub deleted: bool,
+}
+
 #[derive(Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -318,6 +351,10 @@ pub struct Message {
     /// Links in `body` we could fetch a picture for but have not. Serving them
     /// offers them; a reader has to ask.
     pub link_offers: Vec<LinkOffer>,
+    /// What this message answered, for the origins that record it — Signal and
+    /// Telegram. Always `None` for Google Chat and IRC, neither of which has
+    /// the association at all.
+    pub reply_to: Option<ReplyTo>,
 }
 
 /// A link the reader can ask us to fetch a picture for.
@@ -354,6 +391,184 @@ type Version = (i64, Option<String>);
 /// already corrected, which is the failure this whole change is about.
 ///
 /// One query for the page, like reactions.
+/// How much of a quoted message a reply preview carries.
+pub const EXCERPT_CHARS: usize = 120;
+
+/// A one-line prefix of a quoted message.
+///
+/// ⚠ **Truncated by CHARACTERS, not bytes.** These bodies are full of emoji and
+/// non-Latin text — the Telegram archive alone is mostly neither — and slicing a
+/// `String` at a byte offset panics mid-codepoint. Newlines are folded because
+/// the preview is one line by construction; letting a body's own line breaks
+/// through would let a two-word quote push the message it belongs to off screen.
+pub fn excerpt(body: Option<&str>) -> Option<String> {
+    let flat = body?.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.is_empty() {
+        return None;
+    }
+    let mut out: String = flat.chars().take(EXCERPT_CHARS).collect();
+    if flat.chars().count() > EXCERPT_CHARS {
+        out.push('…');
+    }
+    Some(out)
+}
+
+/// Resolve Signal's quotes for one page.
+///
+/// ⚠ **Signal names the quoted message by TIMESTAMP** (`quote_target_ts`), not by
+/// id, so resolution is a lookup on `(thread_id, server_ts)` and legitimately
+/// misses: a quote of anything older than this archive has nothing to match. A
+/// miss is recorded as an unresolved reply rather than dropped — see [`ReplyTo`].
+async fn attach_signal_replies(
+    pool: &MySqlPool,
+    thread_id: &str,
+    msgs: &mut [Message],
+    quotes: &[(String, i64)],
+) -> Result<()> {
+    if quotes.is_empty() {
+        return Ok(());
+    }
+    let targets: Vec<i64> = {
+        let mut t: Vec<i64> = quotes.iter().map(|(_, ts)| *ts).collect();
+        t.sort_unstable();
+        t.dedup();
+        t
+    };
+    let placeholders = vec!["?"; targets.len()].join(",");
+    let sql = format!(
+        "SELECT m.id AS id, m.server_ts AS ts, m.body AS body, m.deleted AS deleted,
+                COALESCE(ct.profile_name, m.sender_uuid) AS sender
+         FROM messages m
+         LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
+         WHERE m.thread_id = ? AND m.edit_of_ts IS NULL
+           AND m.server_ts IN ({placeholders})",
+    );
+    // A fixed template with a computed count of `?` and every value bound.
+    let mut q = sqlx::query(AssertSqlSafe(sql)).bind(thread_id);
+    for ts in &targets {
+        q = q.bind(ts);
+    }
+    let mut found: HashMap<i64, ReplyTo> = HashMap::new();
+    for r in q.fetch_all(pool).await? {
+        let id: i64 = r.try_get("id")?;
+        let ts: i64 = r.try_get("ts")?;
+        let deleted: i8 = r.try_get("deleted")?;
+        let deleted = deleted != 0;
+        let body: Option<String> = r.try_get("body")?;
+        found.entry(ts).or_insert_with(|| ReplyTo {
+            id: Some(id.to_string()),
+            cursor: Some(encode_cursor(ts, id)),
+            ts: Some(ts),
+            sender: r.try_get("sender").ok(),
+            excerpt: if deleted {
+                None
+            } else {
+                excerpt(body.as_deref())
+            },
+            deleted,
+        });
+    }
+    for (msg_id, target_ts) in quotes {
+        let Some(m) = msgs.iter_mut().find(|m| &m.id == msg_id) else {
+            continue;
+        };
+        m.reply_to = Some(found.get(target_ts).cloned().unwrap_or(ReplyTo {
+            id: None,
+            cursor: None,
+            // ⚠ Kept even when the target is missing: for Signal the timestamp IS
+            // the quote, so "answering something from 2024" stays sayable when
+            // the something itself is not held.
+            ts: Some(*target_ts),
+            sender: None,
+            excerpt: None,
+            deleted: false,
+        }));
+    }
+    Ok(())
+}
+
+/// Resolve Telegram's replies for one page.
+///
+/// ⚠ **Restricted to `kind = 'message'`, which is what the page query returns.**
+/// A reply can name a service event, and resolving to one would hand back an id
+/// for a row no page ever contains — the reader would click a quote and land
+/// beside it rather than on it. Treating that as unresolved keeps the promise
+/// that an id in a [`ReplyTo`] is a message the reader can actually be taken to.
+async fn attach_telegram_replies(
+    pool: &MySqlPool,
+    conversation_id: i64,
+    msgs: &mut [Message],
+    replies: &[(String, i32)],
+) -> Result<()> {
+    if replies.is_empty() {
+        return Ok(());
+    }
+    let targets: Vec<i32> = {
+        let mut t: Vec<i32> = replies.iter().map(|(_, m)| *m).collect();
+        t.sort_unstable();
+        t.dedup();
+        t
+    };
+    let placeholders = vec!["?"; targets.len()].join(",");
+    let sql = format!(
+        "SELECT m.id AS id, m.msg_id AS msg_id, m.sent_at AS sent_at, m.text AS body,
+                m.deleted AS deleted, m.sender_name AS sender
+         FROM telegram_messages m
+         WHERE m.conversation_id = ? AND m.kind = 'message'
+           AND m.msg_id IN ({placeholders})",
+    );
+    // A fixed template with a computed count of `?` and every value bound.
+    let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
+    for id in &targets {
+        q = q.bind(id);
+    }
+    let mut found: HashMap<i32, ReplyTo> = HashMap::new();
+    for r in q.fetch_all(pool).await? {
+        let id: i64 = r.try_get("id")?;
+        let msg_id: i32 = r.try_get("msg_id")?;
+        let sent_at: i64 = r.try_get("sent_at")?;
+        let deleted: i8 = r.try_get("deleted")?;
+        let deleted = deleted != 0;
+        let body: Option<String> = r.try_get("body")?;
+        found.insert(
+            msg_id,
+            ReplyTo {
+                id: Some(id.to_string()),
+                // ⚠ The cursor's ts is Telegram's NATIVE unit (seconds), because
+                // that is what the page query compares against. `ts` below is
+                // milliseconds, because that is what the API speaks. Minting the
+                // cursor from the millisecond value would address a row a
+                // thousand-fold in the future and page from the wrong end.
+                cursor: Some(encode_cursor(sent_at, id)),
+                ts: Some(s_to_ms(sent_at)),
+                sender: r.try_get::<Option<String>, _>("sender").ok().flatten(),
+                excerpt: if deleted {
+                    None
+                } else {
+                    excerpt(body.as_deref())
+                },
+                deleted,
+            },
+        );
+    }
+    for (msg_id, target) in replies {
+        let Some(m) = msgs.iter_mut().find(|m| &m.id == msg_id) else {
+            continue;
+        };
+        m.reply_to = Some(found.get(target).cloned().unwrap_or(ReplyTo {
+            id: None,
+            cursor: None,
+            // Telegram's reply names an id, which says nothing about WHEN — so
+            // unlike Signal's, an unresolved one has no timestamp to offer.
+            ts: None,
+            sender: None,
+            excerpt: None,
+            deleted: false,
+        }));
+    }
+    Ok(())
+}
+
 async fn attach_edits(pool: &MySqlPool, thread_id: &str, msgs: &mut [Message]) -> Result<()> {
     let originals: Vec<i64> = msgs.iter().filter(|m| m.edited).map(|m| m.ts).collect();
     if originals.is_empty() {
@@ -999,7 +1214,8 @@ async fn signal_messages(
             r"SELECT m.id AS id, m.server_ts AS ts,
                  COALESCE(ct.profile_name, m.sender_uuid) AS sender,
                  m.is_outgoing AS is_outgoing, m.body AS body,
-                 m.deleted AS deleted, m.edited AS edited
+                 m.deleted AS deleted, m.edited AS edited,
+                 m.quote_target_ts AS quote_target_ts
           FROM messages m
           LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
           WHERE m.thread_id = ?
@@ -1012,7 +1228,8 @@ async fn signal_messages(
             r"SELECT m.id AS id, m.server_ts AS ts,
                  COALESCE(ct.profile_name, m.sender_uuid) AS sender,
                  m.is_outgoing AS is_outgoing, m.body AS body,
-                 m.deleted AS deleted, m.edited AS edited
+                 m.deleted AS deleted, m.edited AS edited,
+                 m.quote_target_ts AS quote_target_ts
           FROM messages m
           LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
           WHERE m.thread_id = ?
@@ -1025,7 +1242,8 @@ async fn signal_messages(
             r"SELECT m.id AS id, m.server_ts AS ts,
                  COALESCE(ct.profile_name, m.sender_uuid) AS sender,
                  m.is_outgoing AS is_outgoing, m.body AS body,
-                 m.deleted AS deleted, m.edited AS edited
+                 m.deleted AS deleted, m.edited AS edited,
+                 m.quote_target_ts AS quote_target_ts
           FROM messages m
           LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
           WHERE m.thread_id = ?
@@ -1053,9 +1271,13 @@ async fn signal_messages(
     let mut ts_list = Vec::with_capacity(rows.len());
     let mut ids = Vec::with_capacity(rows.len());
     let mut keys = Vec::with_capacity(rows.len());
+    let mut quotes: Vec<(String, i64)> = Vec::new();
     for r in rows {
         let id: i64 = r.try_get("id")?;
         let ts: i64 = r.try_get("ts")?;
+        if let Some(target) = r.try_get::<Option<i64>, _>("quote_target_ts")? {
+            quotes.push((id.to_string(), target));
+        }
         keys.push((ts, id));
         let is_outgoing: i8 = r.try_get("is_outgoing")?;
         let deleted: i8 = r.try_get("deleted")?;
@@ -1076,6 +1298,7 @@ async fn signal_messages(
             edits: Vec::new(),
             link_images: Vec::new(), // both filled for the whole page in messages_page
             link_offers: Vec::new(),
+            reply_to: None,
         });
     }
 
@@ -1141,6 +1364,8 @@ async fn signal_messages(
             }
         }
     }
+
+    attach_signal_replies(pool, thread_id, &mut msgs, &quotes).await?;
 
     Ok(Fetched::new(msgs, keys, dir))
 }
@@ -1223,6 +1448,7 @@ async fn gchat_messages(
             edits: Vec::new(),
             link_images: Vec::new(), // both filled for the whole page in messages_page
             link_offers: Vec::new(),
+            reply_to: None,
         });
     }
 
@@ -1362,6 +1588,7 @@ async fn irc_messages(
             edits: Vec::new(),
             link_images: Vec::new(), // both filled for the whole page in messages_page
             link_offers: Vec::new(),
+            reply_to: None,
             attachments: Vec::new(), // nor these
         });
     }
@@ -1435,7 +1662,8 @@ async fn telegram_messages(
             r"SELECT m.id AS id, m.msg_id AS msg_id, m.sent_at AS sent_at,
                      m.sender_name AS sender, m.is_outgoing AS is_outgoing,
                      m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at,
-                     m.edit_hidden AS edit_hidden
+                     m.edit_hidden AS edit_hidden,
+                     m.reply_to_msg_id AS reply_to_msg_id
               FROM telegram_messages m
               WHERE m.conversation_id = ? AND m.kind = 'message'
                 AND (? IS NULL OR m.sent_at < ? OR (m.sent_at = ? AND m.id < ?))
@@ -1446,7 +1674,8 @@ async fn telegram_messages(
             r"SELECT m.id AS id, m.msg_id AS msg_id, m.sent_at AS sent_at,
                      m.sender_name AS sender, m.is_outgoing AS is_outgoing,
                      m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at,
-                     m.edit_hidden AS edit_hidden
+                     m.edit_hidden AS edit_hidden,
+                     m.reply_to_msg_id AS reply_to_msg_id
               FROM telegram_messages m
               WHERE m.conversation_id = ? AND m.kind = 'message'
                 AND (? IS NULL OR m.sent_at > ? OR (m.sent_at = ? AND m.id > ?))
@@ -1457,7 +1686,8 @@ async fn telegram_messages(
             r"SELECT m.id AS id, m.msg_id AS msg_id, m.sent_at AS sent_at,
                      m.sender_name AS sender, m.is_outgoing AS is_outgoing,
                      m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at,
-                     m.edit_hidden AS edit_hidden
+                     m.edit_hidden AS edit_hidden,
+                     m.reply_to_msg_id AS reply_to_msg_id
               FROM telegram_messages m
               WHERE m.conversation_id = ? AND m.kind = 'message'
                 AND (? IS NULL OR m.sent_at > ? OR (m.sent_at = ? AND m.id >= ?))
@@ -1480,9 +1710,13 @@ async fn telegram_messages(
     let mut msgs = Vec::with_capacity(rows.len());
     let mut keys = Vec::with_capacity(rows.len());
     let mut msg_ids = Vec::with_capacity(rows.len());
+    let mut replies: Vec<(String, i32)> = Vec::new();
     for r in rows {
         let id: i64 = r.try_get("id")?;
         let sent_at: i64 = r.try_get("sent_at")?;
+        if let Some(target) = r.try_get::<Option<i32>, _>("reply_to_msg_id")? {
+            replies.push((id.to_string(), target));
+        }
         let deleted: i8 = r.try_get("deleted")?;
         let is_outgoing: i8 = r.try_get("is_outgoing")?;
         let edited_at: Option<i64> = r.try_get("edited_at")?;
@@ -1523,6 +1757,7 @@ async fn telegram_messages(
             link_images: Vec::new(),
             edits: Vec::new(),
             link_offers: Vec::new(),
+            reply_to: None,
         });
     }
 
@@ -1618,6 +1853,8 @@ async fn telegram_messages(
             }
         }
     }
+
+    attach_telegram_replies(pool, conversation_id, &mut msgs, &replies).await?;
 
     Ok(Fetched::new(msgs, keys, dir))
 }

@@ -11,8 +11,8 @@
 //! them too. NEVER point it at the real signal DB.
 
 use messages::archive::{
-    self, ConversationKind, MessageKind, Origin, PageDir, encode_cursor, escape_like,
-    kind_from_is_dm, parse_cursor, us_to_ms,
+    self, ConversationKind, EXCERPT_CHARS, MessageKind, Origin, PageDir, encode_cursor,
+    escape_like, excerpt, kind_from_is_dm, parse_cursor, us_to_ms,
 };
 
 // ---- pure units (no DB) -----------------------------------------------------
@@ -118,6 +118,42 @@ fn cursor_round_trips_and_rejects_garbage() {
     assert_eq!(parse_cursor("123_"), None);
     assert_eq!(parse_cursor("_9"), None);
     assert_eq!(parse_cursor(""), None);
+}
+
+#[test]
+fn an_excerpt_is_one_line_and_never_splits_a_character() {
+    assert_eq!(excerpt(None), None);
+    assert_eq!(excerpt(Some("")), None);
+    // Whitespace-only is nothing to quote, not a quote of nothing.
+    assert_eq!(excerpt(Some("   \n  ")), None);
+    assert_eq!(excerpt(Some("hoi")), Some("hoi".to_string()));
+
+    // A quote is ONE line: the body's own breaks are folded, because a preview
+    // that grows downwards pushes the message it belongs to off the screen.
+    assert_eq!(
+        excerpt(Some("two\nlines\there")),
+        Some("two lines here".to_string())
+    );
+
+    // Short enough → no ellipsis. Exactly at the bound is still short enough.
+    let exact = "a".repeat(EXCERPT_CHARS);
+    assert_eq!(excerpt(Some(&exact)), Some(exact.clone()));
+    let over = "a".repeat(EXCERPT_CHARS + 1);
+    assert_eq!(excerpt(Some(&over)), Some(format!("{exact}…")));
+
+    // ⚠ **The truncation is by CHARACTER.** These bodies are mostly emoji and
+    // non-Latin text, where a byte-offset slice panics mid-codepoint — the
+    // archive's Telegram half would have taken the app down on its first long
+    // quote. Each of these is multi-byte, so a byte-based cut lands inside one.
+    let emoji = "🐉".repeat(EXCERPT_CHARS + 10);
+    let cut = excerpt(Some(&emoji)).unwrap();
+    assert_eq!(cut.chars().count(), EXCERPT_CHARS + 1, "120 + the ellipsis");
+    assert!(cut.starts_with("🐉🐉"));
+    let cyrillic = "я".repeat(EXCERPT_CHARS + 10);
+    assert_eq!(
+        excerpt(Some(&cyrillic)).unwrap().chars().count(),
+        EXCERPT_CHARS + 1
+    );
 }
 
 // ---- end-to-end against a real MariaDB --------------------------------------
@@ -252,6 +288,22 @@ async fn seed(pool: &MySqlPool) {
          ('dm:alice','me',4000,'gone',1,1,0),
          ('group:g1','alice',5000,'grp findme msg',0,0,0)",
     ).execute(pool).await.unwrap();
+    // Quotes, set by UPDATE so the thread keeps the four messages the ordering
+    // and pagination cases above assert on. Three shapes, which are all three a
+    // Signal quote has: one that resolves, one whose target was DELETED, and one
+    // pointing at a timestamp this archive holds nothing for.
+    sqlx::query(
+        "UPDATE messages SET quote_target_ts = CASE server_ts
+             WHEN 2000 THEN 1000
+             WHEN 3000 THEN 4000
+             WHEN 1000 THEN 999
+         END
+         WHERE thread_id = 'dm:alice' AND server_ts IN (1000, 2000, 3000)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
     // On the ts=2000 message: 👍 from two authors (count 2), 😂 removed (excluded).
     sqlx::query(
         "INSERT INTO reactions (thread_id, target_ts, author_uuid, emoji, reaction_ts, removed) VALUES
@@ -450,6 +502,23 @@ async fn seed(pool: &MySqlPool) {
     .execute(pool)
     .await
     .unwrap();
+    // Replies, by UPDATE for the same reason as Signal's quotes above. Four
+    // shapes: resolving, pointing at a DELETED message, pointing at a SERVICE
+    // event (which no page contains, so it must read as unresolved), and pointing
+    // at an id the archive does not hold.
+    sqlx::query(
+        "UPDATE telegram_messages SET reply_to_msg_id = CASE msg_id
+             WHEN 11 THEN 10
+             WHEN 12 THEN 14
+             WHEN 13 THEN 15
+             WHEN 16 THEN 999
+         END
+         WHERE conversation_id = 4242 AND msg_id IN (11, 12, 13, 16)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
     // ⚠ The size lives on the MESSAGE, so the fixture puts it there — the media row
     // records only what is on the volume. A fixture carrying it in both places would
     // be reproducing the duplication that produced wrong sizes in production.
@@ -2120,4 +2189,129 @@ async fn requesting_media_queues_only_what_is_not_held() {
         !archive::request_telegram_media(&pool, photo).await.unwrap(),
         "a stored file must not be re-queued"
     );
+}
+
+// ---- what a message was a reply to ------------------------------------------
+
+/// Signal's quote names a TIMESTAMP, and the three things that can mean.
+///
+/// ⚠ The unresolved case is not an error path to be tolerated — it is ordinary.
+/// A quote of anything older than this archive has nothing to match, and the
+/// answer "this replied to something, from then" is both true and useful, so it
+/// is asserted here as a RESULT rather than as an absence.
+#[tokio::test]
+async fn a_signal_quote_resolves_withholds_a_deletion_and_survives_a_miss() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+
+    let page = archive::messages_page(&pool, Origin::Signal, "dm:alice", None, 100, PageDir::Older)
+        .await
+        .unwrap();
+    let by_ts = |ts: i64| {
+        page.messages
+            .iter()
+            .find(|m| m.ts == ts)
+            .unwrap_or_else(|| panic!("no message at {ts}"))
+    };
+
+    // Resolves: ts=2000 quotes ts=1000, which Alice said and which is held.
+    let r = by_ts(2000).reply_to.as_ref().expect("2000 quotes 1000");
+    assert_eq!(r.ts, Some(1000));
+    assert_eq!(r.sender.as_deref(), Some("Alice"));
+    assert_eq!(r.excerpt.as_deref(), Some("hi"));
+    assert!(!r.deleted);
+    // The id is what makes it clickable, and the cursor is what a click uses.
+    // They are minted together, so one without the other is a bug in the making.
+    let id = r.id.as_deref().expect("held → an id to go to");
+    let cursor = r.cursor.as_deref().expect("held → a cursor to land on");
+    assert_eq!(parse_cursor(cursor), Some((1000, id.parse().unwrap())));
+
+    // ⚠ The target is DELETED, and its words stay behind a click in this app —
+    // so the quote carries none either. Withholding it here is the same rule the
+    // bubble follows, applied in the one other place the text could escape.
+    let r = by_ts(3000).reply_to.as_ref().expect("3000 quotes 4000");
+    assert!(r.deleted, "the quoted message was deleted");
+    assert_eq!(r.excerpt, None, "a deleted message is not quoted verbatim");
+    assert!(r.id.is_some(), "still somewhere to go");
+
+    // Unresolved: nothing sits at ts=999. The timestamp is still reported,
+    // because for Signal the timestamp IS the quote.
+    let r = by_ts(1000).reply_to.as_ref().expect("1000 quotes 999");
+    assert_eq!((r.id.as_ref(), r.cursor.as_ref()), (None, None));
+    assert_eq!(r.ts, Some(999), "when, even with no what");
+    assert_eq!(r.excerpt, None);
+
+    // A message that quoted nothing says so.
+    assert!(by_ts(4000).reply_to.is_none());
+}
+
+/// Telegram's reply names an ID, and the fourth shape Signal cannot have: a
+/// reply to a SERVICE event.
+#[tokio::test]
+async fn a_telegram_reply_resolves_and_refuses_to_point_at_a_service_event() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+
+    let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 100, PageDir::Older)
+        .await
+        .unwrap();
+    let by_body = |body: &str| {
+        page.messages
+            .iter()
+            .find(|m| m.body.as_deref() == Some(body))
+            .unwrap_or_else(|| panic!("no message {body:?}"))
+            .reply_to
+            .clone()
+    };
+
+    let r = by_body("ook hoi").expect("11 replies to 10");
+    assert_eq!(r.sender.as_deref(), Some("Tessa"));
+    assert_eq!(r.excerpt.as_deref(), Some("hoi"));
+    // ⚠ The cursor's timestamp is Telegram's NATIVE unit — seconds — because that
+    // is what the page query compares `sent_at` against, while `ts` beside it is
+    // the milliseconds the API speaks. Minting the cursor from `ts` would address
+    // a row a thousandfold into the future and page from the wrong end of the
+    // conversation, which is the same trap `a_search_hit_carries_a_cursor` guards.
+    let (cur_ts, _) = parse_cursor(r.cursor.as_deref().unwrap()).unwrap();
+    assert_eq!(cur_ts, 1_700_000_000, "seconds, not milliseconds");
+    assert_eq!(r.ts, Some(1_700_000_000_000), "milliseconds on the wire");
+
+    let r = by_body("same second").expect("12 replies to 14");
+    assert!(r.deleted && r.excerpt.is_none(), "deleted target, no words");
+
+    // ⚠ **A reply to a service event reads as UNRESOLVED, deliberately.** The row
+    // exists, but `kind = 'service'` keeps it off every page — so handing back its
+    // id would give the reader a quote that clicks through to a message they can
+    // never be shown, landing them beside it instead. An id in a ReplyTo is a
+    // promise that the reader can be taken there, and this is what keeps it.
+    let r = by_body("third go").expect("13 replies to the service event 15");
+    assert_eq!(
+        (r.id.as_ref(), r.cursor.as_ref(), r.ts),
+        (None, None, None),
+        "held, but on no page — so not offered as a destination"
+    );
+
+    // Unresolved: no message 999. Unlike Signal's, a Telegram miss has no
+    // timestamp to fall back on — the reply named an id, which says nothing
+    // about when.
+    let r = by_body("telegram touched this").expect("16 replies to 999");
+    assert_eq!((r.id.as_ref(), r.ts), (None, None));
+
+    assert!(by_body("hoi").is_none(), "10 replied to nothing");
+}
+
+/// The two origins that have no such association say nothing rather than
+/// something empty.
+#[tokio::test]
+async fn gchat_and_irc_carry_no_reply() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let page = archive::messages_page(&pool, Origin::Gchat, "gc1", None, 100, PageDir::Older)
+        .await
+        .unwrap();
+    assert!(!page.messages.is_empty());
+    assert!(page.messages.iter().all(|m| m.reply_to.is_none()));
 }

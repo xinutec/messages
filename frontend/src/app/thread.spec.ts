@@ -7,11 +7,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { Thread } from './thread';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
-import { Message, MessagesPage } from './models';
+import { Message, MessagesPage, ReplyTo } from './models';
 import { MAX_RESTORE_PAGES } from './thread-window';
 
 function msg(id: string, ts: number): Message {
-  return { id, ts, sender: 's', is_outgoing: false, kind: 'message', body: 'b', deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [] };
+  return { id, ts, sender: 's', is_outgoing: false, kind: 'message', body: 'b', deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [], reply_to: null };
 }
 
 function makeApi() {
@@ -253,6 +253,70 @@ function fireCopy(fixture: ComponentFixture<Thread>): { written: Map<string, str
   (fixture.nativeElement as HTMLElement).querySelector('.messages')!.dispatchEvent(ev);
   return { written, prevented: ev.defaultPrevented };
 }
+
+/** Going to the message a reply answers.
+ *
+ *  ⚠ **Two paths, and which one runs is the whole behaviour.** A reply to
+ *  something still on screen must NOT navigate — a fetch and a re-land to reach
+ *  a bubble already visible would throw away the reader's position to arrive
+ *  where they already were. A reply to something outside the rendered window
+ *  must navigate, because `scrollToTs` answers with the nearest RENDERED message
+ *  when the one asked for is absent, which lands the reader on a neighbour and
+ *  marks it as the message they asked for. */
+describe('Thread reply jump', () => {
+  const replyTo = (over: Partial<ReplyTo> = {}): ReplyTo => ({
+    id: '1',
+    cursor: '100_1',
+    ts: 100,
+    sender: 's',
+    excerpt: 'b',
+    deleted: false,
+    ...over,
+  });
+
+  it('scrolls to a message already on screen, without navigating', async () => {
+    const { thread } = await opened([msg('1', 100), msg('2', 200)]);
+    const router = TestBed.inject(Router);
+    const nav = vi.spyOn(router, 'navigate').mockResolvedValue(true);
+
+    thread.jumpToReply(replyTo());
+
+    expect(nav).not.toHaveBeenCalled();
+    // Marked, because landing on the right message is not the same as showing
+    // which one — the same rule a search hit follows.
+    expect(thread.landedId()).toBe('1');
+  });
+
+  it('navigates by cursor when the message is not in the rendered window', async () => {
+    const { thread } = await opened([msg('5', 500)]);
+    const router = TestBed.inject(Router);
+    const nav = vi.spyOn(router, 'navigate').mockResolvedValue(true);
+
+    thread.jumpToReply(replyTo({ id: '1', cursor: '100_1' }));
+
+    expect(nav).toHaveBeenCalledWith(
+      [],
+      expect.objectContaining({
+        // `from` goes with it: two competing answers to "where should the reader
+        // be" would otherwise both be in the URL.
+        queryParams: { at: '100_1', from: null },
+        queryParamsHandling: 'merge',
+      }),
+    );
+    expect(thread.landedId()).toBeNull();
+  });
+
+  it('does nothing for a reply the archive cannot resolve', async () => {
+    const { thread } = await opened([msg('5', 500)]);
+    const router = TestBed.inject(Router);
+    const nav = vi.spyOn(router, 'navigate').mockResolvedValue(true);
+
+    thread.jumpToReply(replyTo({ id: null, cursor: null, excerpt: null }));
+
+    expect(nav).not.toHaveBeenCalled();
+    expect(thread.landedId()).toBeNull();
+  });
+});
 
 describe('Thread rendering', () => {
   it('draws an action with its star, which the backend no longer sends', async () => {

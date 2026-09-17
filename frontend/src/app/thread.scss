@@ -146,6 +146,96 @@
     flex-wrap: wrap;
     user-select: none;
   }
+  // What a message was a reply to, drawn as a quote above it.
+  //
+  // ⚠ **It must not compete with the message.** A quote that reads as loudly as
+  // the body turns every reply into two messages and doubles the height of a
+  // thread — 18% of the Telegram archive carries one. Hence the muted colour, the
+  // single clipped line, and the left rule doing the work a border box would do
+  // more heavily.
+  //
+  // The rule is on the LEFT in both directions, including `.out`. Mirroring it
+  // for outgoing messages was tried and reads as a different kind of thing
+  // rather than the same thing from the other side.
+  .reply-quote {
+    display: flex;
+    gap: 0.4rem;
+    align-items: baseline;
+    width: 100%;
+    margin-bottom: 0.25rem;
+    padding: 0.1rem 0 0.1rem 0.4rem;
+    border: 0;
+    border-left: 2px solid color-mix(in srgb, var(--mat-sys-on-surface) 35%, transparent);
+    background: none;
+    color: inherit;
+    font: var(--mat-sys-label-small);
+    text-align: left;
+    opacity: 0.75;
+    overflow: hidden;
+
+    // ⚠ **`min-width: 0`, or the quote drags the bubble off the screen.** A
+    // message is a flex ITEM, so its automatic minimum size is its MIN-CONTENT
+    // width — and a `white-space: nowrap` descendant makes that the whole
+    // string. That minimum BEATS the `max-width: 70%` above it, so a 120-character
+    // excerpt pushed the bubble 258px past the right edge of a 412px phone,
+    // taking the body, the meta line and the attachment row with it. The clipping
+    // looked right in the source and did nothing: there was no narrower width for
+    // the text to be clipped TO.
+    //
+    // So the nowrap lives on the clipped children, each of which opts out of the
+    // minimum in turn. Found by the layout harness, not by reading it.
+    min-width: 0;
+
+    // One line, clipped. A quote is an identifier, not a copy of what it names.
+    %clipped-line {
+      min-width: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    // ⚠ **NEITHER HALF GROWS.** With `flex-grow` on the excerpt, a SHORT quote
+    // spread itself across the bubble and pushed what follows it — the date on an
+    // unresolved quote — hard against the right edge, reading as a separate
+    // right-aligned column rather than as part of the same sentence.
+    //
+    // ⚠ **AND THE NAME DOES NOT SHRINK EITHER — a cap, not a shrink factor.**
+    // Flex distributes shrinkage in proportion to base size, which sounds like it
+    // would spare a short name beside a long excerpt and does not: a 95px name
+    // against a 700px excerpt still surrenders its proportional share, and
+    // "Alice Andersson" rendered as "Alice …" while the excerpt beside it kept
+    // nearly every word. That is backwards — the name is the half that IDENTIFIES
+    // the message, and the excerpt is the half a reader can afford to lose the
+    // end of. Seen in a render; it looked correct in the rule.
+    //
+    // So the excerpt absorbs all of it, and `max-width` — not shrinking — is what
+    // stops an absurd name from claiming the line. An ordinary one never reaches
+    // the cap.
+    .who {
+      @extend %clipped-line;
+      flex: 0 0 auto;
+      max-width: 40%;
+      font-weight: 600;
+    }
+    .said {
+      @extend %clipped-line;
+      flex: 0 1 auto;
+      &.absent {
+        font-style: italic;
+        opacity: 0.8;
+      }
+    }
+
+    // Clickable only when the archive holds the target; `.missing` is the same
+    // quote with nothing to go to, so it gets no pointer and no hover.
+    &:not(.missing) {
+      cursor: pointer;
+      &:hover,
+      &:focus-visible {
+        opacity: 1;
+        border-left-color: var(--mat-sys-primary);
+      }
+    }
+  }
   .body {
     white-space: pre-wrap;
     word-break: break-word;
