@@ -11,7 +11,7 @@ import { Message, MessagesPage, ReplyTo } from './models';
 import { MAX_RESTORE_PAGES } from './thread-window';
 
 function msg(id: string, ts: number): Message {
-  return { id, ts, sender: 's', is_outgoing: false, kind: 'message', body: 'b', deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [], reply_to: null };
+  return { id, ts, sender: 's', is_outgoing: false, kind: 'message', body: 'b', deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [], reply_to: null, read: null };
 }
 
 function makeApi() {

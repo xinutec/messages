@@ -35,4 +35,18 @@ link_offers: Array<LinkOffer>,
  * Telegram. Always `None` for Google Chat and IRC, neither of which has
  * the association at all.
  */
-reply_to: ReplyTo | null, };
+reply_to: ReplyTo | null, 
+/**
+ * Whether the other side has read this message.
+ *
+ * ⚠ **THREE STATES, AND `None` IS NOT "UNREAD".** `Some(true)` is read,
+ * `Some(false)` is sent-and-not-yet-read, and `None` means the archive
+ * CANNOT SAY — which covers every incoming message, every origin but
+ * Telegram, and any conversation no read mark has been captured for yet.
+ *
+ * The distinction is load-bearing because capture started 2026-09-17 and
+ * Telegram keeps no history of reading: a conversation nobody has touched
+ * since has no mark at all, and drawing that as "unread" would be inventing
+ * a fact about somebody's behaviour out of our own late start.
+ */
+read: boolean | null, };

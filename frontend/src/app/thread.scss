@@ -248,6 +248,15 @@
   .tag {
     font-style: italic;
   }
+  // Read state, on your own messages only. Quieter than `edited` and `deleted`:
+  // those mark something that HAPPENED to the message, this is ambient status and
+  // sits on nearly every outgoing bubble once a conversation is active.
+  .tag.read {
+    font-style: normal;
+    &.unread {
+      opacity: 0.55;
+    }
+  }
   // The `edited` tag when there is a history behind it. Styled as the tag it
   // replaces rather than as a button, because it sits in the meta line among the
   // nick and the clock — the dotted underline is the whole affordance, the same

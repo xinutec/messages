@@ -225,6 +225,7 @@ async fn seed(pool: &MySqlPool) {
         "telegram_reactions",
         "telegram_message_edits",
         "telegram_messages",
+        "telegram_read_marks",
         "telegram_conversations",
         "sessions",
     ] {
@@ -269,6 +270,7 @@ async fn seed(pool: &MySqlPool) {
         "CREATE TABLE telegram_message_edits (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, was_edited_at BIGINT NULL, text TEXT NULL, UNIQUE KEY uniq_tg_edit (conversation_id, msg_id, was_edited_at)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_media (conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, state ENUM('offered','wanted','stored','failed') NOT NULL, stored_name VARCHAR(255) NULL, content_type VARCHAR(128) NULL, note VARCHAR(255) NULL, requested_at TIMESTAMP NULL, stored_at TIMESTAMP NULL, PRIMARY KEY (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, emoji VARCHAR(32) NULL, custom_emoji_id BIGINT NULL, cnt INT NOT NULL DEFAULT 0, chosen TINYINT(1) NOT NULL DEFAULT 0, removed_at TIMESTAMP NULL) DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE telegram_read_marks (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, direction ENUM('inbox','outbox') NOT NULL, max_id INT NOT NULL, observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uniq_tg_read (conversation_id, direction, max_id)) DEFAULT CHARSET=utf8mb4",
     ];
     for stmt in ddl {
         sqlx::query(stmt).execute(pool).await.expect("ddl");
@@ -496,12 +498,25 @@ async fn seed(pool: &MySqlPool) {
             (4242, 13, 1700000120, 4242, 'Tessa', 0, 'message', 'third go', 1700000500, 0),
             (4242, 14, 1700000180, 4242, 'Tessa', 0, 'message', 'forget it', NULL, 1),
             (4242, 15, 1700000240, 4242, 'Tessa', 0, 'service', 'changed the photo', NULL, 0),
-            (4242, 16, 1700000260, 4242, 'Tessa', 0, 'message', 'telegram touched this', 1700000600, 0),
+            (4242, 16, 1700000260, 777, 'Me', 1, 'message', 'telegram touched this', 1700000600, 0),
             (-1000000000055, 3, 1700000300, NULL, NULL, 0, 'message', 'an announcement', NULL, 0)",
     )
     .execute(pool)
     .await
     .unwrap();
+    // Read marks. They have read up to msg 11 — so the outgoing 11 is read and
+    // anything of mine after it is not. The INBOX row is deliberately further
+    // along: it must not be mistaken for the outbox one, because it says how far
+    // *I* have read and nothing about them.
+    sqlx::query(
+        "INSERT INTO telegram_read_marks (conversation_id, direction, max_id) VALUES
+            (4242, 'outbox', 11),
+            (4242, 'inbox', 16)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
     // Replies, by UPDATE for the same reason as Signal's quotes above. Four
     // shapes: resolving, pointing at a DELETED message, pointing at a SERVICE
     // event (which no page contains, so it must read as unresolved), and pointing
@@ -2323,4 +2338,84 @@ async fn gchat_and_irc_carry_no_reply() {
         .unwrap();
     assert!(!page.messages.is_empty());
     assert!(page.messages.iter().all(|m| m.reply_to.is_none()));
+}
+
+// ---- who has read how far ---------------------------------------------------
+
+/// ⚠ **THREE STATES, and the third is the one worth protecting.** `None` means
+/// the archive cannot say, and it is not the same as unread: read-mark capture
+/// began 2026-09-17 and Telegram keeps no history of reading, so a conversation
+/// nobody has opened since has no mark at all. Drawing that as "not read" would
+/// turn this archive's own late start into a claim about someone's behaviour.
+#[tokio::test]
+async fn telegram_read_state_is_mine_only_and_silent_without_a_mark() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 100, PageDir::Older)
+        .await
+        .unwrap();
+    let read_of = |body: &str| {
+        page.messages
+            .iter()
+            .find(|m| m.body.as_deref() == Some(body))
+            .unwrap_or_else(|| panic!("no message {body:?}"))
+            .read
+    };
+
+    // Mine, at or before the mark (11): read.
+    assert_eq!(read_of("ook hoi"), Some(true));
+
+    // ⚠ Mine, AFTER the mark: sent and not yet read. This is also the assertion
+    // that pins WHICH mark is read — the fixture's inbox mark is 16, so a reader
+    // asking the wrong direction turns this one true.
+    assert_eq!(read_of("telegram touched this"), Some(false));
+
+    // ⚠ Theirs — `None`, not `false`. "Have they read this?" is not a question
+    // about a message they sent, and answering it with the mark meant for my own
+    // messages would report their own words back as unread.
+    assert_eq!(read_of("hoi"), None);
+    assert_eq!(read_of("same second"), None);
+}
+
+/// The other half: a conversation with no mark says nothing at all, rather than
+/// saying "unread" about every message in it.
+#[tokio::test]
+async fn a_conversation_with_no_read_mark_reports_nothing() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let page = archive::messages_page(
+        &pool,
+        Origin::Telegram,
+        "-1000000000055",
+        None,
+        100,
+        PageDir::Older,
+    )
+    .await
+    .unwrap();
+    assert!(!page.messages.is_empty(), "the channel has a message");
+    assert!(
+        page.messages.iter().all(|m| m.read.is_none()),
+        "no mark → no claim, in either direction"
+    );
+}
+
+/// The origins Telegram's read marks say nothing about.
+#[tokio::test]
+async fn the_other_origins_report_no_read_state() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    for (origin, id) in [(Origin::Signal, "dm:alice"), (Origin::Gchat, "gc1")] {
+        let page = archive::messages_page(&pool, origin, id, None, 100, PageDir::Older)
+            .await
+            .unwrap();
+        assert!(!page.messages.is_empty(), "{origin:?} has messages");
+        assert!(
+            page.messages.iter().all(|m| m.read.is_none()),
+            "{origin:?} records no read state"
+        );
+    }
 }

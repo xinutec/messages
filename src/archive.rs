@@ -355,6 +355,18 @@ pub struct Message {
     /// Telegram. Always `None` for Google Chat and IRC, neither of which has
     /// the association at all.
     pub reply_to: Option<ReplyTo>,
+    /// Whether the other side has read this message.
+    ///
+    /// ⚠ **THREE STATES, AND `None` IS NOT "UNREAD".** `Some(true)` is read,
+    /// `Some(false)` is sent-and-not-yet-read, and `None` means the archive
+    /// CANNOT SAY — which covers every incoming message, every origin but
+    /// Telegram, and any conversation no read mark has been captured for yet.
+    ///
+    /// The distinction is load-bearing because capture started 2026-09-17 and
+    /// Telegram keeps no history of reading: a conversation nobody has touched
+    /// since has no mark at all, and drawing that as "unread" would be inventing
+    /// a fact about somebody's behaviour out of our own late start.
+    pub read: Option<bool>,
 }
 
 /// A link the reader can ask us to fetch a picture for.
@@ -1299,6 +1311,7 @@ async fn signal_messages(
             link_images: Vec::new(), // both filled for the whole page in messages_page
             link_offers: Vec::new(),
             reply_to: None,
+            read: None,
         });
     }
 
@@ -1449,6 +1462,7 @@ async fn gchat_messages(
             link_images: Vec::new(), // both filled for the whole page in messages_page
             link_offers: Vec::new(),
             reply_to: None,
+            read: None,
         });
     }
 
@@ -1589,6 +1603,7 @@ async fn irc_messages(
             link_images: Vec::new(), // both filled for the whole page in messages_page
             link_offers: Vec::new(),
             reply_to: None,
+            read: None,
             attachments: Vec::new(), // nor these
         });
     }
@@ -1758,6 +1773,7 @@ async fn telegram_messages(
             edits: Vec::new(),
             link_offers: Vec::new(),
             reply_to: None,
+            read: None,
         });
     }
 
@@ -1862,8 +1878,50 @@ async fn telegram_messages(
     }
 
     attach_telegram_replies(pool, conversation_id, &mut msgs, &replies).await?;
+    attach_telegram_read(pool, conversation_id, &mut msgs, &msg_ids).await?;
 
     Ok(Fetched::new(msgs, keys, dir))
+}
+
+/// Mark the outgoing messages on this page as read or not.
+///
+/// ⚠ **ONE QUERY FOR THE WHOLE PAGE, because a read mark is per CONVERSATION.**
+/// Telegram records how far the other side has read — a single high-water
+/// `msg_id` — not a flag per message, so "have they read this?" is a comparison
+/// rather than a lookup, and there is nothing to join per row.
+///
+/// ⚠ **`direction = 'outbox'` is the one that says anything about THEM.** The
+/// out-tray is my messages; `inbox` is how far I have read theirs, which is a
+/// fact about the archive's owner and not what a tick on your own message means.
+///
+/// ⚠ **No mark → every message stays `None`, not `false`.** Capture began
+/// 2026-09-17 and Telegram keeps no history of reading, so a conversation nobody
+/// has opened since then has no mark at all. Reporting that as unread would turn
+/// this archive's late start into a claim about somebody's behaviour.
+async fn attach_telegram_read(
+    pool: &MySqlPool,
+    conversation_id: i64,
+    msgs: &mut [Message],
+    msg_ids: &[i32],
+) -> Result<()> {
+    let mark: Option<i32> = sqlx::query_scalar(
+        "SELECT MAX(max_id) FROM telegram_read_marks
+          WHERE conversation_id = ? AND direction = 'outbox'",
+    )
+    .bind(conversation_id)
+    .fetch_optional(pool)
+    .await?
+    .flatten();
+    let Some(mark) = mark else {
+        return Ok(());
+    };
+    for (i, msg_id) in msg_ids.iter().enumerate() {
+        // Only the messages that are MINE have a "have they read it" to answer.
+        if msgs[i].is_outgoing {
+            msgs[i].read = Some(*msg_id <= mark);
+        }
+    }
+    Ok(())
 }
 
 /// Telegram's edit history: the superseded versions of each edited message.

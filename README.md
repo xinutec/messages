@@ -49,6 +49,13 @@ them, so check before trusting it.
   (created on boot, `src/db.rs`).
 - `frontend/` — Angular (login gate → conversation list with origin filter →
   thread view with reactions / edited / deleted markers, and a composer on IRC).
+  An outgoing **Telegram** message says whether it has been `read`, from the
+  `telegram_read_marks` the feed captures — ⚠ **and says nothing when the archive
+  cannot tell.** `read` is a three-state field: capture began 2026-09-17 and
+  Telegram keeps no history of reading, so a conversation nobody has touched since
+  has no mark and every message in it stays silent rather than claiming to be
+  unread. Drawing our own late start as somebody's behaviour is the one mistake
+  this field exists to avoid.
   A message that answered another shows it as a quote above itself, and clicking
   the quote goes to what it answered. **Two of the four origins record the
   association at all** — Signal quotes by TIMESTAMP and Telegram by message id —

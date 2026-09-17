@@ -50,6 +50,15 @@
                 @if (m.deleted && isRevealed(m.id)) {
                   <span class="tag">deleted</span>
                 }
+                <!-- ⚠ Drawn only when the archive can actually SAY. `read` is null
+                     for every incoming message, every origin but Telegram, and any
+                     conversation no mark has been captured for — capture began
+                     2026-09-17 and Telegram keeps no history of reading, so a quiet
+                     conversation has no mark at all. A tick is a claim about
+                     somebody else's behaviour, and this one is never guessed. -->
+                @if (m.read !== null) {
+                  <span class="tag read" [class.unread]="!m.read">{{ m.read ? 'read' : 'sent' }}</span>
+                }
               </div>
               <!-- What this message answered. Drawn ABOVE the body and above the
                    deletion gate, because "this was a reply" stays true of a

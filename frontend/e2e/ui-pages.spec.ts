@@ -63,7 +63,7 @@ const THREAD = {
   messages: [
     { id: "1", ts: Date.UTC(2026, 0, 1, 12, 0), sender: "Alice Andersson", is_outgoing: false,
       body: "Morning! Did the referral letter come through yet? The clinic said they'd post it but it's been almost two weeks now.",
-      deleted: false, edited: true, reply_to: null, reactions: [{ emoji: "👍", count: 3 }, { emoji: "❤️", count: 2 }, { emoji: "🎉", count: 1 }],
+      deleted: false, edited: true, reply_to: null, read: null, reactions: [{ emoji: "👍", count: 3 }, { emoji: "❤️", count: 2 }, { emoji: "🎉", count: 1 }],
       attachments: [], link_images: [], link_offers: [], edits: [] },
     // ⚠ A reply quote whose excerpt is the FULL 120 characters the backend will
     // send, on an OUTGOING bubble — the narrowest one, since `.out` is pushed
@@ -71,7 +71,7 @@ const THREAD = {
     // construction, and if the clipping ever stops working it spills past the
     // right edge here first.
     { id: "2", ts: Date.UTC(2026, 0, 1, 12, 4), sender: "Test User", is_outgoing: true,
-      body: "Not yet — chasing them this afternoon.", deleted: false, edited: false, reactions: [],
+      body: "Not yet — chasing them this afternoon.", deleted: false, edited: false, reactions: [], read: true,
       reply_to: { id: "1", cursor: "1_1", ts: Date.UTC(2026, 0, 1, 12, 0), sender: "Alice Andersson",
         excerpt: "Morning! Did the referral letter come through yet? The clinic said they'd post it but it's been almost two weeks n…",
         deleted: false },
@@ -79,14 +79,14 @@ const THREAD = {
     // An UNRESOLVED quote: the archive holds no such message, so it renders as
     // text with no control. Its line is the longest of the two wordings.
     { id: "3", ts: Date.UTC(2026, 0, 1, 12, 9), sender: "Alice Andersson", is_outgoing: false,
-      body: "Thankyouuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu", deleted: false, edited: false, reactions: [],
+      body: "Thankyouuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu", deleted: false, edited: false, reactions: [], read: null,
       reply_to: { id: null, cursor: null, ts: Date.UTC(2025, 5, 3, 8, 30), sender: null, excerpt: null, deleted: false },
       attachments: [], link_images: [], link_offers: [], edits: [] },
     // A deleted message with BOTH halves behind the reveal: words and a stored
     // image. The attachment-only shape is the one that renders no `.body` at
     // all, so it is the one a careless selector misses.
     { id: "4", ts: Date.UTC(2026, 0, 1, 12, 11), sender: "Alice Andersson", is_outgoing: false,
-      body: "something said and then taken back", deleted: true, edited: false, reactions: [], reply_to: null,
+      body: "something said and then taken back", deleted: true, edited: false, reactions: [], reply_to: null, read: null,
       attachments: [{ id: "a2", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true }], link_images: [], link_offers: [], edits: [] },
   ],
   has_more: false,
@@ -108,6 +108,7 @@ const LONG_THREAD = {
     deleted: false,
     edited: false,
     reply_to: null,
+    read: i % 2 === 1 ? false : null,
     reactions: [],
     attachments: [], link_images: [], link_offers: [], edits: [],
   })),
