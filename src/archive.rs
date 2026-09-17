@@ -1828,11 +1828,18 @@ async fn telegram_messages(
     // a NULL emoji, and this leaves those out rather than rendering a blank bubble
     // with a count beside it. What the archive holds and what the screen can show
     // are different questions, and this is the second one.
+    //
+    // ⚠ **And `removed_at IS NULL`, which is the same distinction again.** A
+    // reaction taken back KEEPS ITS ROW in the archive — the ingester dates it
+    // instead of deleting it, so a re-walk cannot forget that it happened — and the
+    // thread draws what is on the message NOW. Without this filter every retracted
+    // reaction would come back the moment the archive learned it was gone.
     if !msg_ids.is_empty() {
         let placeholders = vec!["?"; msg_ids.len()].join(",");
         let sql = format!(
             "SELECT msg_id, emoji, cnt FROM telegram_reactions
              WHERE conversation_id = ? AND emoji IS NOT NULL
+               AND removed_at IS NULL
                AND msg_id IN ({placeholders})",
         );
         // Fixed template, computed placeholder count, every value bound.

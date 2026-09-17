@@ -268,7 +268,7 @@ async fn seed(pool: &MySqlPool) {
         "CREATE TABLE telegram_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, sent_at BIGINT NOT NULL, sender_id BIGINT NULL, sender_name VARCHAR(255) NULL, is_outgoing TINYINT(1) NOT NULL DEFAULT 0, kind ENUM('message','service') NOT NULL DEFAULT 'message', text TEXT NULL, media_kind VARCHAR(32) NULL, media_size BIGINT NULL, media_mime VARCHAR(128) NULL, edited_at BIGINT NULL, reply_to_msg_id INT NULL, fwd_from_name VARCHAR(255) NULL, edit_hidden TINYINT(1) NULL, deleted TINYINT(1) NOT NULL DEFAULT 0, deleted_at TIMESTAMP NULL, UNIQUE KEY uniq_tg_msg (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_message_edits (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, was_edited_at BIGINT NULL, text TEXT NULL, UNIQUE KEY uniq_tg_edit (conversation_id, msg_id, was_edited_at)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_media (conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, state ENUM('offered','wanted','stored','failed') NOT NULL, stored_name VARCHAR(255) NULL, content_type VARCHAR(128) NULL, note VARCHAR(255) NULL, requested_at TIMESTAMP NULL, stored_at TIMESTAMP NULL, PRIMARY KEY (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE telegram_reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, emoji VARCHAR(32) NULL, custom_emoji_id BIGINT NULL, cnt INT NOT NULL DEFAULT 0, chosen TINYINT(1) NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE telegram_reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, emoji VARCHAR(32) NULL, custom_emoji_id BIGINT NULL, cnt INT NOT NULL DEFAULT 0, chosen TINYINT(1) NOT NULL DEFAULT 0, removed_at TIMESTAMP NULL) DEFAULT CHARSET=utf8mb4",
     ];
     for stmt in ddl {
         sqlx::query(stmt).execute(pool).await.expect("ddl");
@@ -571,9 +571,12 @@ async fn seed(pool: &MySqlPool) {
     .unwrap();
     // One drawable reaction and one custom emoji, which has no characters to show.
     sqlx::query(
-        "INSERT INTO telegram_reactions (conversation_id, msg_id, emoji, custom_emoji_id, cnt, chosen) VALUES
-            (4242, 10, '👍', NULL, 3, 0),
-            (4242, 10, NULL, 55555, 1, 0)",
+        "INSERT INTO telegram_reactions (conversation_id, msg_id, emoji, custom_emoji_id, cnt, chosen, removed_at) VALUES
+            (4242, 10, '👍', NULL, 3, 0, NULL),
+            (4242, 10, NULL, 55555, 1, 0, NULL),
+            -- Taken back. The archive keeps the row and dates it; the thread must
+            -- not draw it. Without the filter this is an extra chip on msg 10.
+            (4242, 10, '❤️', NULL, 1, 0, '2026-01-01 00:00:00')",
     )
     .execute(pool)
     .await
@@ -1968,9 +1971,15 @@ async fn telegram_reactions_are_drawable_and_a_retraction_keeps_its_words() {
         .iter()
         .find(|m| m.body.as_deref() == Some("hoi"))
         .expect("the reacted message");
-    // ⚠ ONE, not two. The fixture holds a custom-emoji reaction beside the thumb,
-    // and it has no characters to render — so the archive keeps it and the screen
-    // leaves it out, rather than drawing a blank bubble with a 1 beside it.
+    // ⚠ ONE, of THREE stored, and each of the other two is left out for its own
+    // reason. A custom-emoji reaction has no characters to render, so the archive
+    // keeps it and the screen omits it rather than drawing a blank bubble with a 1
+    // beside it. And a reaction that was TAKEN BACK keeps its row with a
+    // `removed_at` — the ingester dates it instead of deleting it, so a re-walk
+    // cannot forget that it happened — but it is not on the message now.
+    //
+    // Both are the same distinction: what the archive HOLDS and what the screen
+    // SHOWS are different questions.
     assert_eq!(reacted.reactions.len(), 1);
     assert_eq!(reacted.reactions[0].emoji, "👍");
     assert_eq!(reacted.reactions[0].count, 3);
