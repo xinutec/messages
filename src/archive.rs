@@ -507,6 +507,89 @@ async fn attach_signal_replies(
     Ok(())
 }
 
+/// Resolve Google Chat's quote-replies for one page.
+///
+/// ⚠ **THIS ORIGIN WAS REPORTED AS HAVING NO REPLIES AT ALL, AND THAT WAS A
+/// MEASUREMENT ERROR, NOT A FACT ABOUT GOOGLE.** `gchat_messages.thread_id`
+/// groups messages into topics, every DM message is its own topic, so a diff of
+/// topic-replies against topic-starters found nothing — and an inline
+/// quote-reply in a DM *is* a starter, so the field sat inside the control
+/// group. 126 messages carry a real pointer; the archive drew none of them.
+///
+/// ⚠ **`reply_to_msg_id` IS NOT `thread_id`.** A topic says which conversation a
+/// message belongs to; this says which MESSAGE it answers. A group message can
+/// have both, and they mean different things.
+///
+/// Keyed on the Google message id within a group, not on a timestamp: unlike
+/// Signal, the pointer names an id outright.
+async fn attach_gchat_replies(
+    pool: &MySqlPool,
+    group_id: &str,
+    msgs: &mut [Message],
+    quoted: &[(String, String)],
+) -> Result<()> {
+    if quoted.is_empty() {
+        return Ok(());
+    }
+    let targets: Vec<String> = {
+        let mut t: Vec<String> = quoted.iter().map(|(_, q)| q.clone()).collect();
+        t.sort();
+        t.dedup();
+        t
+    };
+    let placeholders = vec!["?"; targets.len()].join(",");
+    let sql = format!(
+        "SELECT m.id AS id, m.msg_id AS msg_id, m.ts_us AS ts_us,
+                m.sender_name AS sender, m.text AS body
+           FROM gchat_messages m
+          WHERE m.group_id = ? AND m.msg_id IN ({placeholders})",
+    );
+    // A fixed template with a computed count of `?` and every value bound.
+    let mut q = sqlx::query(AssertSqlSafe(sql)).bind(group_id);
+    for t in &targets {
+        q = q.bind(t);
+    }
+    let mut found: HashMap<String, ReplyTo> = HashMap::new();
+    for r in q.fetch_all(pool).await? {
+        let id: i64 = r.try_get("id")?;
+        let ts_us: i64 = r.try_get("ts_us")?;
+        let body: Option<String> = r.try_get("body")?;
+        found.insert(
+            r.try_get("msg_id")?,
+            ReplyTo {
+                id: Some(id.to_string()),
+                // ⚠ The cursor's unit is MICROSECONDS here — Google Chat's own,
+                // and what the page query compares `ts_us` against — while `ts`
+                // beside it is the milliseconds the API speaks. The same trap
+                // Telegram's seconds set, one origin over.
+                cursor: Some(encode_cursor(ts_us, id)),
+                ts: Some(us_to_ms(ts_us)),
+                sender: r.try_get::<Option<String>, _>("sender").ok().flatten(),
+                excerpt: excerpt(body.as_deref()),
+                // Google Chat's capture carries no deletion state at all, so this
+                // is "not known to be deleted" rather than "known to be present".
+                deleted: false,
+            },
+        );
+    }
+    for (msg_id, target) in quoted {
+        let Some(m) = msgs.iter_mut().find(|m| &m.id == msg_id) else {
+            continue;
+        };
+        // ⚠ An unresolved target still says a reply HAPPENED. Dropping it would
+        // render the message as an ordinary one and quietly lose the fact.
+        m.reply_to = Some(found.get(target).cloned().unwrap_or(ReplyTo {
+            id: None,
+            cursor: None,
+            ts: None,
+            sender: None,
+            excerpt: None,
+            deleted: false,
+        }));
+    }
+    Ok(())
+}
+
 /// Resolve Telegram's replies for one page.
 ///
 /// ⚠ **THIS USED TO REFUSE SERVICE EVENTS, AND THE REASON EXPIRED.** The rule was
@@ -1572,7 +1655,8 @@ async fn gchat_messages(
     let sql = match dir {
         PageDir::Older => {
             r"SELECT m.id AS id, m.ts_us AS ts_us, m.sender_name AS sender,
-                 m.is_self AS is_self, m.text AS body
+                 m.is_self AS is_self, m.text AS body,
+                 m.reply_to_msg_id AS reply_to_msg_id, m.group_id AS group_id
           FROM gchat_messages m
           WHERE m.group_id = ?
             AND (? IS NULL OR m.ts_us < ? OR (m.ts_us = ? AND m.id < ?))
@@ -1581,7 +1665,8 @@ async fn gchat_messages(
         }
         PageDir::Newer => {
             r"SELECT m.id AS id, m.ts_us AS ts_us, m.sender_name AS sender,
-                 m.is_self AS is_self, m.text AS body
+                 m.is_self AS is_self, m.text AS body,
+                 m.reply_to_msg_id AS reply_to_msg_id, m.group_id AS group_id
           FROM gchat_messages m
           WHERE m.group_id = ?
             AND (? IS NULL OR m.ts_us > ? OR (m.ts_us = ? AND m.id > ?))
@@ -1590,7 +1675,8 @@ async fn gchat_messages(
         }
         PageDir::AtAndNewer => {
             r"SELECT m.id AS id, m.ts_us AS ts_us, m.sender_name AS sender,
-                 m.is_self AS is_self, m.text AS body
+                 m.is_self AS is_self, m.text AS body,
+                 m.reply_to_msg_id AS reply_to_msg_id, m.group_id AS group_id
           FROM gchat_messages m
           WHERE m.group_id = ?
             AND (? IS NULL OR m.ts_us > ? OR (m.ts_us = ? AND m.id >= ?))
@@ -1613,6 +1699,7 @@ async fn gchat_messages(
         .await?;
 
     let mut msgs = Vec::with_capacity(rows.len());
+    let mut quoted: Vec<(String, String)> = Vec::new();
     let mut ids = Vec::with_capacity(rows.len());
     let mut keys = Vec::with_capacity(rows.len());
     for r in rows {
@@ -1620,6 +1707,9 @@ async fn gchat_messages(
         let ts_us: i64 = r.try_get("ts_us")?;
         keys.push((ts_us, id));
         let is_self: i8 = r.try_get("is_self")?;
+        if let Some(target) = r.try_get::<Option<String>, _>("reply_to_msg_id")? {
+            quoted.push((id.to_string(), target));
+        }
         ids.push(id);
         msgs.push(Message {
             id: id.to_string(),
@@ -1641,6 +1731,8 @@ async fn gchat_messages(
             read: None,
         });
     }
+
+    attach_gchat_replies(pool, group_id, &mut msgs, &quoted).await?;
 
     if !ids.is_empty() {
         let placeholders = vec!["?"; ids.len()].join(",");
