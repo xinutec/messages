@@ -63,7 +63,7 @@ const THREAD = {
   messages: [
     { id: "1", ts: Date.UTC(2026, 0, 1, 12, 0), sender: "Alice Andersson", is_outgoing: false,
       body: "Morning! Did the referral letter come through yet? The clinic said they'd post it but it's been almost two weeks now.",
-      deleted: false, edited: true, reply_to: null, read: null, reactions: [{ emoji: "👍", count: 3 }, { emoji: "❤️", count: 2 }, { emoji: "🎉", count: 1 }],
+      deleted: false, edited: true, reply_to: null, read: null, reactions: [{ emoji: "👍", count: 3, who: ["Bob Bytecode", "Dana", "Test User"] }, { emoji: "❤️", count: 2, who: [] }, { emoji: "🎉", count: 1, who: ["Dana"] }],
       attachments: [], link_images: [], link_offers: [], edits: [] },
     // ⚠ A reply quote whose excerpt is the FULL 120 characters the backend will
     // send, on an OUTGOING bubble — the narrowest one, since `.out` is pushed
@@ -88,6 +88,22 @@ const THREAD = {
     { id: "4", ts: Date.UTC(2026, 0, 1, 12, 11), sender: "Alice Andersson", is_outgoing: false,
       body: "something said and then taken back", deleted: true, edited: false, reactions: [], reply_to: null, read: null,
       attachments: [{ id: "a2", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true }], link_images: [], link_offers: [], edits: [] },
+    // ⚠ A SERVICE EVENT, which this app drew for three origins and never for
+    // Telegram — the page query filtered them out. It arrives as `action`, so it
+    // renders `* Alice made a …` with no bubble, and the longest wording is the
+    // one that can overflow a phone.
+    { id: "5", ts: Date.UTC(2026, 0, 1, 12, 20), sender: "Alice Andersson", is_outgoing: false,
+      kind: "action", body: "made a 55-minute video call", deleted: false, edited: false,
+      reactions: [], reply_to: null, read: null,
+      attachments: [], link_images: [], link_offers: [], edits: [] },
+    // ⚠ Reaction chips that KNOW WHO, with enough names that the hover text is
+    // long — the chip must stay chip-sized regardless, since `who` lives in a
+    // title attribute and must never widen the row.
+    { id: "6", ts: Date.UTC(2026, 0, 1, 12, 24), sender: "Alice Andersson", is_outgoing: false,
+      body: "Six of us are in.", deleted: false, edited: false, reply_to: null, read: null,
+      reactions: [{ emoji: "👍", count: 6, who: ["Alice Andersson", "Bob Bytecode", "Test User", "Dana", "Erin Example"] },
+                  { emoji: "🎉", count: 1, who: ["Dana"] }],
+      attachments: [], link_images: [], link_offers: [], edits: [] },
   ],
   has_more: false,
   next_cursor: null,
@@ -172,6 +188,30 @@ test("open thread — meta + reactions + attachment: lays out cleanly @ phone wi
   await page.getByText("referral-scan-2026-final-v2.pdf", { exact: false }).waitFor();
   await expectNoTextOverlaps(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
+});
+
+/// ⚠ **WHO REACTED LIVES IN A `title`, WHICH MUST NOT CHANGE THE CHIP'S SIZE.**
+/// The names can be far longer than the chip — five of them here — and putting
+/// them anywhere that reflows would push the reaction row past the right edge of
+/// a phone. The layout assertions above already catch the spill; this one pins
+/// the reason the chip is safe, so moving the names into visible text fails here
+/// rather than in a screenshot nobody takes.
+///
+/// ⚠ And `count` stays the number, never `who.length`: Google Chat names nobody
+/// and Telegram truncates a long list, so deriving the count from the names
+/// would under-report exactly when there are the most reactors.
+test("who reacted is a hover, and the chip still says the count @ phone width", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/conversation/signal/dm:a");
+  const chip = page.getByText("👍 6");
+  await chip.waitFor();
+  await expect(chip).toHaveAttribute(
+    "title",
+    "Alice Andersson, Bob Bytecode, Test User, Dana, Erin Example and 1 more",
+  );
+  // A reaction the origin cannot attribute gets no hover at all — empty is "not
+  // recorded", and an empty tooltip would read as "nobody".
+  await expect(page.getByText("❤️ 2")).toHaveAttribute("title", "");
 });
 
 test("a deleted message: hidden by default @ phone width", async ({ page }, testInfo) => {

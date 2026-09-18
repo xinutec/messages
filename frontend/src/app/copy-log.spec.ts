@@ -212,7 +212,7 @@ describe('formatChatLog', () => {
         ts: at(2026, 8, 13, 1, 0),
         sender: 'a',
         body: 'x',
-        reactions: [{ emoji: '👍', count: 2 }],
+        reactions: [{ emoji: '👍', count: 2, who: ['a', 'b'] }],
       }),
     ]);
     expect(out).toBe('--- Day changed Thu Aug 13 2026\n01:00 <a> x');

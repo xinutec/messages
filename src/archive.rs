@@ -203,6 +203,14 @@ pub struct Reaction {
     pub emoji: String,
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub count: i64,
+    /// Who reacted, where the origin records it.
+    ///
+    /// ⚠ **EMPTY MEANS NOT RECORDED, NEVER "NOBODY".** Google Chat aggregates
+    /// reactions and names no one; Telegram names reactors but may TRUNCATE the
+    /// list for a heavily-reacted message. So `who` can be shorter than `count`
+    /// and the count stays authoritative — a reader that derives the number from
+    /// `who.length` would under-report the moment Telegram samples.
+    pub who: Vec<String>,
 }
 
 /// Whether an attachment's bytes can be ASKED for, and whether they have been.
@@ -501,11 +509,17 @@ async fn attach_signal_replies(
 
 /// Resolve Telegram's replies for one page.
 ///
-/// ⚠ **Restricted to `kind = 'message'`, which is what the page query returns.**
-/// A reply can name a service event, and resolving to one would hand back an id
-/// for a row no page ever contains — the reader would click a quote and land
-/// beside it rather than on it. Treating that as unresolved keeps the promise
-/// that an id in a [`ReplyTo`] is a message the reader can actually be taken to.
+/// ⚠ **THIS USED TO REFUSE SERVICE EVENTS, AND THE REASON EXPIRED.** The rule was
+/// that `kind = 'service'` kept an event off every page, so resolving a reply to
+/// one would hand back an id the reader could never be taken to — a quote that
+/// clicks through to nothing. That premise is gone: the page query now returns
+/// service events as [`MessageKind::Action`], so the destination exists and
+/// refusing it would withhold a jump that works.
+///
+/// The promise it was protecting still holds and is worth restating, because it
+/// is the thing to check if this is ever narrowed again: **an id in a [`ReplyTo`]
+/// means the reader can be taken there.** What satisfies that promise is now
+/// "the page query returns it", not "it is speech".
 async fn attach_telegram_replies(
     pool: &MySqlPool,
     conversation_id: i64,
@@ -524,9 +538,13 @@ async fn attach_telegram_replies(
     let placeholders = vec!["?"; targets.len()].join(",");
     let sql = format!(
         "SELECT m.id AS id, m.msg_id AS msg_id, m.sent_at AS sent_at, m.text AS body,
-                m.deleted AS deleted, m.sender_name AS sender
+                m.deleted AS deleted, m.sender_name AS sender,
+                c.duration_s AS call_duration_s, c.reason AS call_reason,
+                c.video AS call_video
          FROM telegram_messages m
-         WHERE m.conversation_id = ? AND m.kind = 'message'
+         LEFT JOIN telegram_calls c
+                ON c.conversation_id = m.conversation_id AND c.msg_id = m.msg_id
+         WHERE m.conversation_id = ?
            AND m.msg_id IN ({placeholders})",
     );
     // A fixed template with a computed count of `?` and every value bound.
@@ -541,7 +559,16 @@ async fn attach_telegram_replies(
         let sent_at: i64 = r.try_get("sent_at")?;
         let deleted: i8 = r.try_get("deleted")?;
         let deleted = deleted != 0;
-        let body: Option<String> = r.try_get("body")?;
+        // ⚠ Composed the same way the page composes it, so a reply to a call
+        // quotes the words the reader can see on the message rather than the
+        // stored label "a call". Two renderings of one row would read as two
+        // different events.
+        let body: Option<String> = call_text(
+            r.try_get("call_duration_s")?,
+            r.try_get::<Option<String>, _>("call_reason")?.as_deref(),
+            r.try_get::<Option<i8>, _>("call_video")?.unwrap_or(0) != 0,
+        )
+        .map_or_else(|| r.try_get("body"), |t| Ok(Some(t)))?;
         found.insert(
             msg_id,
             ReplyTo {
@@ -1135,6 +1162,126 @@ pub async fn irc_target(pool: &MySqlPool, conversation_id: &str) -> Result<Optio
     }))
 }
 
+/// Who reacted to each of these messages, by `(msg_id, emoji)`.
+///
+/// ⚠ **A PEER ID IS NOT A NAME, AND THERE ARE TWO PLACES TO LOOK.** A reactor in a
+/// DM is usually the conversation's own peer, so `telegram_conversations` names
+/// them — but the SELF user has no conversation row, and 8,706 of this archive's
+/// reactions are his own. The second lookup is any message that peer ever sent,
+/// whose `sender_name` the ingester resolved. Measured 2026-09-18: 10 of 12
+/// reactors named by the first, one more by the second, one unnameable because
+/// the account is deleted.
+///
+/// ⚠ The fallback is the ID AS TEXT, never a blank — the same choice the Signal
+/// query has always made with `COALESCE(profile_name, author_uuid)`. A reaction
+/// by somebody unnameable is still a reaction by somebody, and an empty string
+/// would read as the archive not knowing there was a reactor at all.
+async fn telegram_reactors(
+    pool: &MySqlPool,
+    conversation_id: i64,
+    msg_ids: &[i32],
+) -> Result<HashMap<(i32, String), Vec<String>>> {
+    let mut out: HashMap<(i32, String), Vec<String>> = HashMap::new();
+    if msg_ids.is_empty() {
+        return Ok(out);
+    }
+    let placeholders = vec!["?"; msg_ids.len()].join(",");
+    // `removed_at IS NULL` for the reason the aggregate above gives: a reaction
+    // taken back keeps its row so a re-read cannot forget it, and the thread
+    // draws what is on the message now.
+    let sql = format!(
+        "SELECT a.msg_id, a.emoji, a.peer_id,
+                COALESCE(c.name, s.sender_name, CAST(a.peer_id AS CHAR)) AS who
+           FROM telegram_reaction_authors a
+           LEFT JOIN telegram_conversations c ON c.id = a.peer_id
+           LEFT JOIN (SELECT sender_id, MIN(sender_name) AS sender_name
+                        FROM telegram_messages
+                       WHERE sender_id IS NOT NULL AND sender_name IS NOT NULL
+                       GROUP BY sender_id) s ON s.sender_id = a.peer_id
+          WHERE a.conversation_id = ? AND a.removed_at IS NULL
+            AND a.emoji IS NOT NULL
+            AND a.msg_id IN ({placeholders})
+          ORDER BY a.reacted_at, who",
+    );
+    // Fixed template, computed placeholder count, every value bound.
+    let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
+    for id in msg_ids {
+        q = q.bind(id);
+    }
+    for r in q.fetch_all(pool).await? {
+        let key = (r.try_get("msg_id")?, r.try_get("emoji")?);
+        let who: String = r.try_get("who")?;
+        let names = out.entry(key).or_default();
+        if !names.contains(&who) {
+            names.push(who);
+        }
+    }
+    Ok(out)
+}
+
+/// A call in words, from what the archive knows about it.
+///
+/// ⚠ **`None` FOR DURATION IS NOT A ZERO-LENGTH CALL.** Telegram omits the field
+/// for a call that was never answered, so the absence IS the record of it not
+/// being answered — which is why "missed" and "busy" are phrased without one
+/// rather than as "0 seconds". Getting this backwards would report every
+/// unanswered call as a call that happened and took no time.
+///
+/// ⚠ **A VERB PHRASE ABOUT THE SENDER, not a noun phrase naming the event.** An
+/// `Action` is drawn `* Dana <body>` in the thread and `HH:MM  * Dana <body>`
+/// in a copied log, so "a call" renders as `* Dana a call`. Every label the
+/// ingester writes is already phrased this way — "added a member", "changed the
+/// title", "joined Telegram" — and the call ones were the exception because they
+/// were never rendered anywhere to notice.
+///
+/// The sender of a `messageActionPhoneCall` is the CALLER, which is what makes
+/// "made" honest regardless of who picked up.
+///
+/// Returns `None` when this is not a call at all, so the caller falls back to the
+/// stored label for every other kind of service event.
+pub fn call_text(duration_s: Option<i32>, reason: Option<&str>, video: bool) -> Option<String> {
+    // A call row exists only for a `messageActionPhoneCall`, so either column
+    // being present is enough to know this is one.
+    if duration_s.is_none() && reason.is_none() {
+        return None;
+    }
+    let kind = if video { "video call" } else { "call" };
+    Some(match (duration_s, reason) {
+        (Some(secs), _) => format!("made a {} {kind}", human_duration(secs)),
+        (None, Some("missed")) => format!("made a {kind} that went unanswered"),
+        (None, Some("busy")) => format!("made a {kind}, the line was busy"),
+        (None, Some("disconnect")) => format!("made a {kind} that dropped"),
+        // A reason this reader has no phrasing for still happened, and naming it
+        // is better than hiding it behind a generic word.
+        (None, Some(other)) => format!("made a {kind} ({other})"),
+        (None, None) => format!("made a {kind}"),
+    })
+}
+
+/// Seconds as a person would say them.
+///
+/// Deliberately coarse: a call is remembered as "about twenty minutes", and
+/// `1,203 seconds` is a measurement rather than a memory.
+fn human_duration(secs: i32) -> String {
+    let secs = secs.max(0);
+    match secs {
+        0..=59 => format!("{secs}-second"),
+        60..=3599 => {
+            let mins = (secs + 30) / 60;
+            format!("{mins}-minute")
+        }
+        _ => {
+            let hours = secs / 3600;
+            let mins = (secs % 3600 + 30) / 60;
+            if mins == 0 {
+                format!("{hours}-hour")
+            } else {
+                format!("{hours}h{mins:02}m")
+            }
+        }
+    }
+}
+
 /// One page of a conversation, oldest→newest, with reactions attached.
 ///
 /// `cursor` is a position from a previous page — its `next_cursor` to continue
@@ -1354,12 +1501,22 @@ async fn signal_messages(
     // add-then-remove of the same author within the page).
     if !ts_list.is_empty() {
         let placeholders = vec!["?"; ts_list.len()].join(",");
+        // ⚠ **THIS USED TO BE `COUNT(DISTINCT author_uuid)`, WHICH THREW AWAY THE
+        // ONE THING SIGNAL HAS THAT THE OTHER ORIGINS DID NOT.** Signal stores
+        // per-author reaction EVENTS, so it always knew who laughed; the common
+        // `Reaction` shape had nowhere to put them and the count was taken on the
+        // way out. The names come back now, and the DISTINCT is done in Rust
+        // because a `GROUP_CONCAT` would silently truncate at
+        // `group_concat_max_len` — a limit that shows up as a missing name rather
+        // than as an error.
         let sql = format!(
-            "SELECT target_ts, emoji, COUNT(DISTINCT author_uuid) AS cnt
-             FROM reactions
-             WHERE thread_id = ? AND removed = 0 AND emoji IS NOT NULL
-               AND target_ts IN ({placeholders})
-             GROUP BY target_ts, emoji",
+            "SELECT r.target_ts, r.emoji,
+                    COALESCE(ct.profile_name, r.author_uuid) AS who
+             FROM reactions r
+             LEFT JOIN contacts ct ON ct.uuid = r.author_uuid
+             WHERE r.thread_id = ? AND r.removed = 0 AND r.emoji IS NOT NULL
+               AND r.target_ts IN ({placeholders})
+             ORDER BY r.target_ts, r.emoji, who",
         );
         // `sql` is a fixed template with a computed count of `?` placeholders and
         // no interpolated data; all values are bound. Safe to assert.
@@ -1368,12 +1525,31 @@ async fn signal_messages(
             q = q.bind(ts);
         }
         let rrows = q.fetch_all(pool).await?;
+        // Grouped here rather than in SQL, so one author reacting twice with the
+        // same emoji counts once and is named once.
+        let mut grouped: HashMap<(i64, String), Vec<String>> = HashMap::new();
+        let mut order: Vec<(i64, String)> = Vec::new();
         for rr in rrows {
-            let target_ts: i64 = rr.try_get("target_ts")?;
-            let emoji: String = rr.try_get("emoji")?;
-            let count: i64 = rr.try_get("cnt")?;
+            let key = (rr.try_get("target_ts")?, rr.try_get("emoji")?);
+            let who: String = rr.try_get("who")?;
+            let names = grouped.entry(key.clone()).or_insert_with(|| {
+                order.push(key.clone());
+                Vec::new()
+            });
+            if !names.contains(&who) {
+                names.push(who);
+            }
+        }
+        for (target_ts, emoji) in order {
+            let who = grouped
+                .remove(&(target_ts, emoji.clone()))
+                .unwrap_or_default();
             if let Some(m) = msgs.iter_mut().find(|m| m.ts == target_ts) {
-                m.reactions.push(Reaction { emoji, count });
+                m.reactions.push(Reaction {
+                    emoji,
+                    count: who.len() as i64,
+                    who,
+                });
             }
         }
     }
@@ -1484,7 +1660,16 @@ async fn gchat_messages(
             let count: i64 = rr.try_get("cnt")?;
             let mid = mid.to_string();
             if let Some(m) = msgs.iter_mut().find(|m| m.id == mid) {
-                m.reactions.push(Reaction { emoji, count });
+                // ⚠ Google Chat aggregates: the capture is `[emoji, count]` and
+                // never who. Empty here is "this origin cannot say", which is why
+                // `Reaction::who` documents empty as not-recorded rather than as
+                // nobody. (Reactor ids DO exist in the gchat-archive repo's
+                // `reactors.json`, unimported — see that repo's `resolve_reactors`.)
+                m.reactions.push(Reaction {
+                    emoji,
+                    count,
+                    who: Vec::new(),
+                });
             }
         }
     }
@@ -1678,9 +1863,13 @@ async fn telegram_messages(
                      m.sender_name AS sender, m.is_outgoing AS is_outgoing,
                      m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at,
                      m.edit_hidden AS edit_hidden,
-                     m.reply_to_msg_id AS reply_to_msg_id
+                     m.reply_to_msg_id AS reply_to_msg_id, m.kind AS kind,
+                     c.duration_s AS call_duration_s, c.reason AS call_reason,
+                     c.video AS call_video
               FROM telegram_messages m
-              WHERE m.conversation_id = ? AND m.kind = 'message'
+              LEFT JOIN telegram_calls c
+                     ON c.conversation_id = m.conversation_id AND c.msg_id = m.msg_id
+              WHERE m.conversation_id = ?
                 AND (? IS NULL OR m.sent_at < ? OR (m.sent_at = ? AND m.id < ?))
               ORDER BY m.sent_at DESC, m.id DESC
               LIMIT ?"
@@ -1690,9 +1879,13 @@ async fn telegram_messages(
                      m.sender_name AS sender, m.is_outgoing AS is_outgoing,
                      m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at,
                      m.edit_hidden AS edit_hidden,
-                     m.reply_to_msg_id AS reply_to_msg_id
+                     m.reply_to_msg_id AS reply_to_msg_id, m.kind AS kind,
+                     c.duration_s AS call_duration_s, c.reason AS call_reason,
+                     c.video AS call_video
               FROM telegram_messages m
-              WHERE m.conversation_id = ? AND m.kind = 'message'
+              LEFT JOIN telegram_calls c
+                     ON c.conversation_id = m.conversation_id AND c.msg_id = m.msg_id
+              WHERE m.conversation_id = ?
                 AND (? IS NULL OR m.sent_at > ? OR (m.sent_at = ? AND m.id > ?))
               ORDER BY m.sent_at ASC, m.id ASC
               LIMIT ?"
@@ -1702,9 +1895,13 @@ async fn telegram_messages(
                      m.sender_name AS sender, m.is_outgoing AS is_outgoing,
                      m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at,
                      m.edit_hidden AS edit_hidden,
-                     m.reply_to_msg_id AS reply_to_msg_id
+                     m.reply_to_msg_id AS reply_to_msg_id, m.kind AS kind,
+                     c.duration_s AS call_duration_s, c.reason AS call_reason,
+                     c.video AS call_video
               FROM telegram_messages m
-              WHERE m.conversation_id = ? AND m.kind = 'message'
+              LEFT JOIN telegram_calls c
+                     ON c.conversation_id = m.conversation_id AND c.msg_id = m.msg_id
+              WHERE m.conversation_id = ?
                 AND (? IS NULL OR m.sent_at > ? OR (m.sent_at = ? AND m.id >= ?))
               ORDER BY m.sent_at ASC, m.id ASC
               LIMIT ?"
@@ -1746,6 +1943,19 @@ async fn telegram_messages(
         // before, which is the honest default for a row that was never asked.
         let edit_hidden: Option<i8> = r.try_get("edit_hidden")?;
         let edited = edited_at.is_some() && edit_hidden.unwrap_or(0) == 0;
+        let is_service = r.try_get::<String, _>("kind")? == "service";
+        // ⚠ **THE STORED TEXT FOR A CALL IS THE TWO WORDS "a call".** The ingester
+        // writes an English label for a service action and `describe_action`
+        // returns a `&'static str`, so the duration, whether it was video and how
+        // it ended were all discarded before this ever saw them. They are columns
+        // now, and this composes the sentence the label could not — falling back
+        // to the stored words for every other kind of event.
+        let body = call_text(
+            r.try_get("call_duration_s")?,
+            r.try_get::<Option<String>, _>("call_reason")?.as_deref(),
+            r.try_get::<Option<i8>, _>("call_video")?.unwrap_or(0) != 0,
+        )
+        .map_or_else(|| r.try_get("body"), |t| Ok(Some(t)))?;
         keys.push((sent_at, id));
         msg_ids.push(r.try_get::<i32, _>("msg_id")?);
         msgs.push(Message {
@@ -1759,10 +1969,18 @@ async fn telegram_messages(
                 .try_get::<Option<String>, _>("sender")?
                 .unwrap_or_default(),
             is_outgoing: is_outgoing != 0,
-            // Telegram draws no action/message distinction; its service events are
-            // a separate `kind` this query excludes.
-            kind: MessageKind::Message,
-            body: r.try_get("body")?,
+            // ⚠ **A SERVICE EVENT IS AN ACTION, AND IT USED TO BE NOTHING.** This
+            // query excluded `kind = 'service'` outright, so 73 events — every
+            // call in the archive among them — were stored and then filtered out
+            // of the only thing that reads them. `Action` is the shape IRC
+            // already uses for "somebody DID something" rather than said it, and
+            // it is what a service event is.
+            kind: if is_service {
+                MessageKind::Action
+            } else {
+                MessageKind::Message
+            },
+            body,
             deleted: deleted != 0,
             edited,
             reactions: Vec::new(),
@@ -1863,11 +2081,17 @@ async fn telegram_messages(
         for id in &msg_ids {
             q = q.bind(id);
         }
+        let named = telegram_reactors(pool, conversation_id, &msg_ids).await?;
         for rr in q.fetch_all(pool).await? {
             let msg_id: i32 = rr.try_get("msg_id")?;
+            let emoji: String = rr.try_get("emoji")?;
             let reaction = Reaction {
-                emoji: rr.try_get("emoji")?,
                 count: i64::from(rr.try_get::<i32, _>("cnt")?),
+                who: named
+                    .get(&(msg_id, emoji.clone()))
+                    .cloned()
+                    .unwrap_or_default(),
+                emoji,
             };
             // The page's rows in order, so position by `msg_id` rather than the
             // surrogate id the API reports.

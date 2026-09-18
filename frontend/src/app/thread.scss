@@ -409,6 +409,13 @@
       border-radius: 1rem;
       padding: 0 0.4rem;
       margin-right: 0.25rem;
+
+      // A chip the archive can put names to says so by being askable. Only a
+      // cursor, deliberately: who reacted is worth a hover and not worth a
+      // second row of text under every message that has one.
+      &.named {
+        cursor: help;
+      }
     }
   }
 }
