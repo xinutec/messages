@@ -1645,8 +1645,19 @@ async fn gchat_messages(
     if !ids.is_empty() {
         let placeholders = vec!["?"; ids.len()].join(",");
         let sql = format!(
-            "SELECT message_id, emoji, cnt FROM gchat_reactions
-             WHERE emoji IS NOT NULL AND message_id IN ({placeholders})",
+            "SELECT r.message_id, r.emoji, r.cnt,
+                    GROUP_CONCAT(COALESCE(g.sender_name, a.reactor_id)
+                                 ORDER BY COALESCE(g.sender_name, a.reactor_id)
+                                 SEPARATOR 0x1f) AS who
+               FROM gchat_reactions r
+               LEFT JOIN gchat_reaction_authors a
+                      ON a.message_id = r.message_id AND a.emoji = r.emoji
+               LEFT JOIN (SELECT sender_id, MIN(sender_name) AS sender_name
+                            FROM gchat_messages
+                           WHERE sender_id IS NOT NULL GROUP BY sender_id) g
+                      ON g.sender_id = a.reactor_id
+              WHERE r.emoji IS NOT NULL AND r.message_id IN ({placeholders})
+              GROUP BY r.message_id, r.emoji, r.cnt",
         );
         // Fixed template + computed placeholder count, values bound — safe.
         let mut q = sqlx::query(AssertSqlSafe(sql));
@@ -1658,18 +1669,26 @@ async fn gchat_messages(
             let mid: i64 = rr.try_get("message_id")?;
             let emoji: String = rr.try_get("emoji")?;
             let count: i64 = rr.try_get("cnt")?;
+            // ⚠ Joined with 0x1f (unit separator), not a comma: these are display
+            // names and a person called "Smith, John" would otherwise split into
+            // two reactors. GROUP_CONCAT truncates at `group_concat_max_len`
+            // (1024 by default) — acceptable here because the cap is far above
+            // the 15 reactors this archive has, and the failure is a missing
+            // trailing name rather than a wrong one.
+            let who: Vec<String> = rr
+                .try_get::<Option<String>, _>("who")?
+                .map(|s| s.split('\u{1f}').map(str::to_owned).collect())
+                .unwrap_or_default();
             let mid = mid.to_string();
             if let Some(m) = msgs.iter_mut().find(|m| m.id == mid) {
-                // ⚠ Google Chat aggregates: the capture is `[emoji, count]` and
-                // never who. Empty here is "this origin cannot say", which is why
-                // `Reaction::who` documents empty as not-recorded rather than as
-                // nobody. (Reactor ids DO exist in the gchat-archive repo's
-                // `reactors.json`, unimported — see that repo's `resolve_reactors`.)
-                m.reactions.push(Reaction {
-                    emoji,
-                    count,
-                    who: Vec::new(),
-                });
+                // ⚠ **`list_topics` NAMES NOBODY, so these come from a SECOND
+                // capture.** The reaction itself arrives as `[emoji, count]`;
+                // who reacted is a separate rpc that `gchat-archive`'s `sync.py`
+                // replays per reacted message, and `tools/import_gchat_reactors.py`
+                // loads. So `who` is empty for any reaction that capture has not
+                // reached — "not recorded", never "nobody" — and `cnt` stays the
+                // count for exactly that reason.
+                m.reactions.push(Reaction { emoji, count, who });
             }
         }
     }

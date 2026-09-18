@@ -307,6 +307,7 @@ async fn seed(pool: &MySqlPool) {
         "CREATE TABLE telegram_media (conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, state ENUM('offered','wanted','stored','failed') NOT NULL, stored_name VARCHAR(255) NULL, content_type VARCHAR(128) NULL, note VARCHAR(255) NULL, requested_at TIMESTAMP NULL, stored_at TIMESTAMP NULL, PRIMARY KEY (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, emoji VARCHAR(32) NULL, custom_emoji_id BIGINT NULL, cnt INT NOT NULL DEFAULT 0, chosen TINYINT(1) NOT NULL DEFAULT 0, removed_at TIMESTAMP NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_read_marks (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, direction ENUM('inbox','outbox') NOT NULL, max_id INT NOT NULL, observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uniq_tg_read (conversation_id, direction, max_id)) DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE gchat_reaction_authors (id BIGINT AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL, emoji VARCHAR(64) NOT NULL, reactor_id VARCHAR(32) NOT NULL, UNIQUE KEY uniq_gchat_reactor (message_id, emoji, reactor_id)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_reaction_authors (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, peer_id BIGINT NOT NULL, emoji VARCHAR(32) NULL, custom_emoji_id BIGINT NULL, reacted_at BIGINT NOT NULL, removed_at TIMESTAMP NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_calls (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, call_id BIGINT NULL, duration_s INT NULL, reason VARCHAR(32) NULL, video TINYINT(1) NOT NULL DEFAULT 0, UNIQUE KEY uniq_tg_call (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
     ];
@@ -371,9 +372,13 @@ async fn seed(pool: &MySqlPool) {
     // empty group (no messages → last_ts None).
     sqlx::query("INSERT INTO gchat_conversations (group_id, name, is_dm) VALUES ('gc1','Bob',1),('gc2','Team',0)").execute(pool).await.unwrap();
     sqlx::query(
-        "INSERT INTO gchat_messages (group_id, msg_id, sender_name, is_self, ts_us, text) VALUES
-         ('gc1','m1','Bob',0,6000000,'hello findme'),
-         ('gc1','m2','Me',1,7000000,'hey')",
+        // ⚠ `sender_id` is set here so a reactor can be RESOLVED to a name.
+        // `g-carol` deliberately belongs to nobody who has spoken, which is the
+        // other branch: an id the archive cannot put a name to still names a
+        // person, so it falls back to the id rather than to a blank.
+        "INSERT INTO gchat_messages (group_id, msg_id, sender_id, sender_name, is_self, ts_us, text) VALUES
+         ('gc1','m1','g-bob','Bob',0,6000000,'hello findme'),
+         ('gc1','m2','g-me','Me',1,7000000,'hey')",
     )
     .execute(pool)
     .await
@@ -388,6 +393,19 @@ async fn seed(pool: &MySqlPool) {
         .execute(pool)
         .await
         .unwrap();
+    // ⚠ TWO of the three reactors are named, deliberately. Google Chat's
+    // `list_topics` gives only `[emoji, count]`; who reacted comes from a second
+    // capture that may not have reached every message, so a SHORT list is the
+    // normal case and the count must stay the count.
+    sqlx::query(
+        "INSERT INTO gchat_reaction_authors (message_id, emoji, reactor_id) VALUES
+         (?, '❤️', 'g-bob'), (?, '❤️', 'g-carol')",
+    )
+    .bind(m2)
+    .bind(m2)
+    .execute(pool)
+    .await
+    .unwrap();
 
     // Two attachments on the ts=1000 'hi' message: an image with bytes on the
     // PVC (available), and a metadata-only PDF (history import, no bytes).
@@ -876,6 +894,17 @@ async fn gchat_messages_convert_us_and_self() {
     assert_eq!(
         (hey.reactions[0].emoji.as_str(), hey.reactions[0].count),
         ("❤️", 3)
+    );
+    // ⚠ **THREE REACTED, TWO ARE NAMED, AND THE COUNT STAYS THREE.** Google Chat
+    // gives a reaction as `[emoji, count]` and never who; the names come from a
+    // second capture that has not reached every message. Deriving the count from
+    // the names would under-report every reaction that capture has not covered —
+    // which, before `import_gchat_reactors.py` ran, was all of them.
+    assert_eq!(
+        hey.reactions[0].who,
+        vec!["Bob".to_owned(), "g-carol".to_owned()],
+        "named or not, ordered by what the READER sees — ordering by the nullable \
+         name column would sort every unnameable reactor to the front"
     );
 }
 
