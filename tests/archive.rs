@@ -276,7 +276,7 @@ async fn seed(pool: &MySqlPool) {
         "CREATE TABLE reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, thread_id VARCHAR(80) NOT NULL, target_ts BIGINT NOT NULL, author_uuid VARCHAR(64) NOT NULL, emoji VARCHAR(32) NULL, reaction_ts BIGINT NOT NULL, removed TINYINT(1) NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE attachments (id BIGINT AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL, content_type VARCHAR(255) NULL, file_name VARCHAR(512) NULL, size_bytes BIGINT NULL, stored_path VARCHAR(1024) NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE gchat_conversations (group_id VARCHAR(64) PRIMARY KEY, name VARCHAR(255) NULL, is_dm TINYINT(1) NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE gchat_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, group_id VARCHAR(64) NOT NULL, msg_id VARCHAR(64) NOT NULL, thread_id VARCHAR(64) NULL, sender_id VARCHAR(32) NULL, sender_name VARCHAR(255) NULL, is_self TINYINT(1) NOT NULL DEFAULT 0, ts_us BIGINT NOT NULL, sent_at DATETIME(6) NULL, text TEXT NULL) DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE gchat_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, group_id VARCHAR(64) NOT NULL, msg_id VARCHAR(64) NOT NULL, thread_id VARCHAR(64) NULL, reply_to_msg_id VARCHAR(64) NULL, sender_id VARCHAR(32) NULL, sender_name VARCHAR(255) NULL, is_self TINYINT(1) NOT NULL DEFAULT 0, ts_us BIGINT NOT NULL, sent_at DATETIME(6) NULL, text TEXT NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE gchat_reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL, emoji VARCHAR(64) NULL, cnt INT NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE irc_conversations (id INT AUTO_INCREMENT PRIMARY KEY, network VARCHAR(64) NOT NULL, target VARCHAR(255) NOT NULL, is_channel TINYINT(1) NOT NULL DEFAULT 0, is_status TINYINT(1) NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
         // ⚠ `uniq_irc_line` IS NOT DECORATION HERE. It is the archive's dedupe
@@ -376,9 +376,14 @@ async fn seed(pool: &MySqlPool) {
         // `g-carol` deliberately belongs to nobody who has spoken, which is the
         // other branch: an id the archive cannot put a name to still names a
         // person, so it falls back to the id rather than to a blank.
-        "INSERT INTO gchat_messages (group_id, msg_id, sender_id, sender_name, is_self, ts_us, text) VALUES
-         ('gc1','m1','g-bob','Bob',0,6000000,'hello findme'),
-         ('gc1','m2','g-me','Me',1,7000000,'hey')",
+        // ⚠ `m2` QUOTE-REPLIES `m1`, and `m3` replies to a message this archive
+        // does not hold. Both shapes are here because the second is the one a
+        // careless resolver drops — rendering it as an ordinary message and
+        // losing the fact that it answered anything.
+        "INSERT INTO gchat_messages (group_id, msg_id, reply_to_msg_id, sender_id, sender_name, is_self, ts_us, text) VALUES
+         ('gc1','m1',NULL,'g-bob','Bob',0,6000000,'hello findme'),
+         ('gc1','m2','m1','g-me','Me',1,7000000,'hey'),
+         ('gc1','m3','gone','g-bob','Bob',0,8000000,'answering something missing')",
     )
     .execute(pool)
     .await
@@ -745,7 +750,7 @@ async fn conversations_normalise_and_sort_across_origins() {
             by("gc1").message_count,
             by("gc1").last_ts
         ),
-        (Origin::Gchat, ConversationKind::Dm, 2, Some(7000))
+        (Origin::Gchat, ConversationKind::Dm, 3, Some(8000))
     );
     assert_eq!(
         (by("gc2").message_count, by("gc2").last_ts),
@@ -887,7 +892,7 @@ async fn gchat_messages_convert_us_and_self() {
         .await
         .unwrap();
     let ts: Vec<_> = page.messages.iter().map(|m| m.ts).collect();
-    assert_eq!(ts, [6000, 7000], "µs→ms, ascending");
+    assert_eq!(ts, [6000, 7000, 8000], "µs→ms, ascending");
     assert!(!page.messages[0].is_outgoing && page.messages[0].sender == "Bob");
     let hey = &page.messages[1];
     assert!(hey.is_outgoing, "is_self → is_outgoing");
@@ -2429,18 +2434,30 @@ async fn a_telegram_reply_resolves_and_refuses_to_point_at_a_service_event() {
     assert!(by_body("hoi").is_none(), "10 replied to nothing");
 }
 
-/// The two origins that have no such association say nothing rather than
-/// something empty.
+/// ⚠ **THIS TEST USED TO INCLUDE GOOGLE CHAT, AND THAT WAS THE BUG IT PROTECTED.**
+///
+/// It was named `gchat_and_irc_carry_no_reply` and asserted that every Google
+/// Chat message had `reply_to: None` — which passed, because nothing read the
+/// field, and which made a gap in the capture look like a property of the
+/// service. 126 real quote-replies existed the whole time. A green test stating
+/// the wrong rule is worse than no test: it answers the question before anybody
+/// asks it.
+///
+/// IRC genuinely has none. A log line is a line; irssi records no association
+/// between one and another, and there is nothing in the format to have missed.
 #[tokio::test]
-async fn gchat_and_irc_carry_no_reply() {
+async fn irc_carries_no_reply() {
     let Some(pool) = seeded_pool().await else {
         return;
     };
-    let page = archive::messages_page(&pool, Origin::Gchat, "gc1", None, 100, PageDir::Older)
+    let page = archive::messages_page(&pool, Origin::Irc, "1", None, 100, PageDir::Older)
         .await
         .unwrap();
     assert!(!page.messages.is_empty());
-    assert!(page.messages.iter().all(|m| m.reply_to.is_none()));
+    assert!(
+        page.messages.iter().all(|m| m.reply_to.is_none()),
+        "a log line answers nothing, and the format has no way to say otherwise"
+    );
 }
 
 // ---- who has read how far ---------------------------------------------------
@@ -2521,4 +2538,54 @@ async fn the_other_origins_report_no_read_state() {
             "{origin:?} records no read state"
         );
     }
+}
+
+/// ⚠ **GOOGLE CHAT WAS REPORTED AS HAVING NO REPLIES, AND THE REPORT WAS WRONG.**
+///
+/// `thread_id` groups messages into topics and every DM message is its own
+/// topic, so a diff of topic-replies against topic-starters found nothing a
+/// reply carried — and an inline quote-reply in a DM IS a starter, so the field
+/// sat inside the control group. 126 real pointers went undrawn.
+///
+/// The unresolvable case is asserted too, and is the more important half: a
+/// reply whose target the archive does not hold must still render AS a reply.
+/// Dropping it would turn "he answered that" into an ordinary message, which is
+/// the same silent loss one layer up.
+#[tokio::test]
+async fn a_gchat_quote_reply_points_at_the_message_it_answers() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let page = archive::messages_page(&pool, Origin::Gchat, "gc1", None, 100, PageDir::Older)
+        .await
+        .unwrap();
+    let by_body = |b: &str| {
+        page.messages
+            .iter()
+            .find(|m| m.body.as_deref() == Some(b))
+            .unwrap_or_else(|| panic!("no message {b:?}"))
+    };
+
+    let answered = by_body("hey");
+    let r = answered.reply_to.clone().expect("m2 quote-replies m1");
+    assert_eq!(r.sender.as_deref(), Some("Bob"));
+    assert_eq!(r.excerpt.as_deref(), Some("hello findme"));
+    assert!(r.id.is_some(), "the target is held, so it is a destination");
+    // ⚠ MICROSECONDS in the cursor — Google Chat's own unit, which is what the
+    // page query compares `ts_us` against — and milliseconds on the wire. The
+    // same trap Telegram's seconds set one origin over.
+    let (cur_ts, _) = archive::parse_cursor(r.cursor.as_deref().unwrap()).unwrap();
+    assert_eq!(cur_ts, 6_000_000, "µs, the page query's unit");
+    assert_eq!(r.ts, Some(6000), "ms, the API's unit");
+
+    let orphan = by_body("answering something missing");
+    let r = orphan
+        .reply_to
+        .clone()
+        .expect("a reply we cannot resolve is still a reply");
+    assert_eq!(
+        (r.id, r.cursor, r.excerpt),
+        (None, None, None),
+        "nothing to point at, but the message still shows it answered something"
+    );
 }
