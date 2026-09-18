@@ -67,9 +67,28 @@ export class Thread {
    *  an input to this component, so the decision is made once here rather than by
    *  prefixing ids and parsing them apart on the server. */
   protected attachmentUrl(a: Attachment): string {
-    return this.origin() === 'telegram'
-      ? `/api/telegram-media/${a.id}`
-      : `/api/attachments/${a.id}`;
+    // ⚠ **EXHAUSTIVE ON PURPOSE — the `else` that used to be here meant Signal.**
+    // Every origin's attachment ids come from its own AUTO_INCREMENT, so id 42
+    // exists in three tables and names three different pictures; the route is
+    // what keeps them apart. A trailing `: '/api/attachments/…'` silently gave a
+    // NEW origin Signal's endpoint, which answers 404 for an id that exists —
+    // indistinguishable from a picture that was never stored. A Record over
+    // Origin makes adding one a type error instead.
+    const route: Record<Origin, string> = {
+      signal: 'attachments',
+      gchat: 'gchat-attachments',
+      telegram: 'telegram-media',
+      // IRC has no attachments at all; a URL here would never be built, and
+      // naming it is cheaper than a branch that cannot be reached.
+      irc: 'attachments',
+    };
+    const origin = this.origin();
+    // ⚠ No origin, no URL. This cannot happen while a thread is rendering — the
+    // component is routed by origin — but the old `else` absorbed `undefined`
+    // into Signal's endpoint, which is how a wrong-origin id becomes a 404 that
+    // reads like a missing file. An empty src fails visibly and cannot fetch
+    // somebody else's picture.
+    return origin ? `/api/${route[origin]}/${a.id}` : '';
   }
   protected readonly attachmentNoun = attachmentNoun;
 
