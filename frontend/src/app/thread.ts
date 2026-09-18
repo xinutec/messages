@@ -13,7 +13,7 @@ import { LogScope, chatLogHtml, formatChatLog } from './copy-log';
 import { MAX_RESTORE_PAGES, PAGE, ThreadWindow } from './thread-window';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
-import { Conversation, LinkOffer, Message, Origin, Attachment, ReplyTo } from './models';
+import { Conversation, LinkOffer, Message, Origin, Attachment, Reaction, ReplyTo } from './models';
 
 /** How often an open, visible thread asks whether anything is newer.
  *
@@ -376,6 +376,23 @@ export class Thread {
    *  currently rendered goes through `?at` instead, the same landing a search
    *  hit uses, which fetches half a page either side and marks what it reached.
    */
+  /**
+   * The hover text naming who reacted.
+   *
+   * ⚠ **`who` BEING SHORTER THAN `count` IS NORMAL, not a bug to paper over.**
+   * Google Chat records no reactors at all, and Telegram truncates the list for
+   * a heavily-reacted message — so the chip keeps showing `count`, and this only
+   * says as much as the archive actually knows. Saying "3 people" when we can
+   * name one would be inventing two, and naming one while the chip says three
+   * would read as a contradiction unless the difference is spelled out.
+   */
+  reactors(r: Reaction): string {
+    if (!r.who.length) return '';
+    const named = r.who.join(', ');
+    const unnamed = r.count - r.who.length;
+    return unnamed > 0 ? `${named} and ${unnamed} more` : named;
+  }
+
   jumpToReply(r: ReplyTo): void {
     if (!r.id) return;
     const here = this.rendered().find((m) => m.id === r.id);

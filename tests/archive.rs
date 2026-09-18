@@ -11,7 +11,7 @@
 //! them too. NEVER point it at the real signal DB.
 
 use messages::archive::{
-    self, ConversationKind, EXCERPT_CHARS, MessageKind, Origin, PageDir, encode_cursor,
+    self, ConversationKind, EXCERPT_CHARS, MessageKind, Origin, PageDir, call_text, encode_cursor,
     escape_like, excerpt, kind_from_is_dm, parse_cursor, us_to_ms,
 };
 
@@ -21,6 +21,42 @@ use messages::archive::{
 fn us_to_ms_truncates_to_millis() {
     assert_eq!(us_to_ms(7_000_000), 7000);
     assert_eq!(us_to_ms(1_584_389_732_190_514), 1_584_389_732_190);
+}
+
+/// ⚠ **A CALL IS DRAWN `* Dasha <body>`, so the body must be a VERB PHRASE.**
+/// The first version of this said "a call" and rendered as `* Dasha a call`.
+/// Every other service label the ingester writes is already phrased this way —
+/// "added a member", "joined Telegram" — and the calls were the exception only
+/// because nothing rendered them to notice.
+///
+/// ⚠ And an unanswered call has NO duration, which is the record of it not being
+/// answered. Reporting that as a zero-length call would claim it happened.
+#[test]
+fn a_call_reads_as_something_its_sender_did() {
+    assert_eq!(
+        call_text(Some(3273), Some("hangup"), true).as_deref(),
+        Some("made a 55-minute video call")
+    );
+    assert_eq!(
+        call_text(Some(42), Some("hangup"), false).as_deref(),
+        Some("made a 42-second call")
+    );
+    assert_eq!(
+        call_text(Some(7_200), Some("hangup"), false).as_deref(),
+        Some("made a 2-hour call")
+    );
+    assert_eq!(
+        call_text(None, Some("missed"), false).as_deref(),
+        Some("made a call that went unanswered"),
+        "no duration is the record of nobody answering, not a call of no length"
+    );
+    // A reason this reader has no phrasing for still happened.
+    assert_eq!(
+        call_text(None, Some("elsewhere"), false).as_deref(),
+        Some("made a call (elsewhere)")
+    );
+    // Not a call at all: the caller falls back to the stored label.
+    assert_eq!(call_text(None, None, false), None);
 }
 
 #[test]
@@ -271,6 +307,8 @@ async fn seed(pool: &MySqlPool) {
         "CREATE TABLE telegram_media (conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, state ENUM('offered','wanted','stored','failed') NOT NULL, stored_name VARCHAR(255) NULL, content_type VARCHAR(128) NULL, note VARCHAR(255) NULL, requested_at TIMESTAMP NULL, stored_at TIMESTAMP NULL, PRIMARY KEY (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, emoji VARCHAR(32) NULL, custom_emoji_id BIGINT NULL, cnt INT NOT NULL DEFAULT 0, chosen TINYINT(1) NOT NULL DEFAULT 0, removed_at TIMESTAMP NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_read_marks (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, direction ENUM('inbox','outbox') NOT NULL, max_id INT NOT NULL, observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uniq_tg_read (conversation_id, direction, max_id)) DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE telegram_reaction_authors (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, peer_id BIGINT NOT NULL, emoji VARCHAR(32) NULL, custom_emoji_id BIGINT NULL, reacted_at BIGINT NOT NULL, removed_at TIMESTAMP NULL) DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE telegram_calls (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, call_id BIGINT NULL, duration_s INT NULL, reason VARCHAR(32) NULL, video TINYINT(1) NOT NULL DEFAULT 0, UNIQUE KEY uniq_tg_call (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
     ];
     for stmt in ddl {
         sqlx::query(stmt).execute(pool).await.expect("ddl");
@@ -1876,8 +1914,14 @@ async fn telegram_conversations_keep_their_kind_and_count_only_speech() {
     assert_eq!(tg("-77").last_ts, None);
 }
 
-/// A page of a Telegram conversation: oldest-first, speech only, and the two
-/// messages sharing a second both present and in a stable order.
+/// A page of a Telegram conversation: oldest-first, SERVICE EVENTS INCLUDED, and
+/// the two messages sharing a second both present and in a stable order.
+///
+/// ⚠ **The service event used to be filtered out here, and that was the bug.**
+/// `kind = 'service'` excluded 73 events from the only thing that reads them —
+/// every call in the archive among them — so they were captured, stored, and
+/// then made invisible. They arrive as `Action`, the shape IRC already uses for
+/// something done rather than said.
 ///
 /// ⚠ The shared second is the point. Telegram's timestamps are SECONDS — all it
 /// gives — so a page boundary inside one second is not a rare case here the way a
@@ -1892,13 +1936,13 @@ async fn a_telegram_page_is_speech_in_order_including_a_shared_second() {
     let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 3, PageDir::Older)
         .await
         .unwrap();
-    // The newest three, ascending, with the service event excluded.
+    // The newest three, ascending, the service event among them.
     let bodies: Vec<Option<&str>> = page.messages.iter().map(|m| m.body.as_deref()).collect();
     assert_eq!(
         bodies,
         vec![
-            Some("third go"),
             Some("forget it"),
+            Some("changed the photo"),
             Some("telegram touched this")
         ]
     );
@@ -1919,9 +1963,33 @@ async fn a_telegram_page_is_speech_in_order_including_a_shared_second() {
     let bodies: Vec<Option<&str>> = older.messages.iter().map(|m| m.body.as_deref()).collect();
     assert_eq!(
         bodies,
-        vec![Some("hoi"), Some("ook hoi"), Some("same second")],
-        "the other message of the shared second must appear exactly once"
+        vec![Some("ook hoi"), Some("same second"), Some("third go")],
+        "both messages of the shared second, once each"
     );
+
+    // ⚠ **AND ONE MORE PAGE, WHICH IS WHERE THE SHARED SECOND ACTUALLY BITES.**
+    // This boundary sits ON 1700000060 with another row at the same second just
+    // above it, so a cursor comparing only the timestamp would hand `ook hoi`
+    // back a second time or drop `hoi` entirely. Adding the service event to the
+    // page shifted the earlier boundary off that second, and without this the
+    // test would still have passed while no longer testing the thing it is for.
+    let oldest = archive::messages_page(
+        &pool,
+        Origin::Telegram,
+        "4242",
+        archive::parse_cursor(older.next_cursor.as_deref().unwrap()),
+        3,
+        PageDir::Older,
+    )
+    .await
+    .unwrap();
+    let bodies: Vec<Option<&str>> = oldest.messages.iter().map(|m| m.body.as_deref()).collect();
+    assert_eq!(
+        bodies,
+        vec![Some("hoi")],
+        "the row above the boundary shares its second and must not come back"
+    );
+    assert!(!oldest.has_more, "that is the start of the conversation");
 }
 
 /// Telegram's edit history, oldest first, with the ORIGINAL first.
@@ -2305,17 +2373,23 @@ async fn a_telegram_reply_resolves_and_refuses_to_point_at_a_service_event() {
     let r = by_body("same second").expect("12 replies to 14");
     assert!(r.deleted && r.excerpt.is_none(), "deleted target, no words");
 
-    // ⚠ **A reply to a service event reads as UNRESOLVED, deliberately.** The row
-    // exists, but `kind = 'service'` keeps it off every page — so handing back its
-    // id would give the reader a quote that clicks through to a message they can
-    // never be shown, landing them beside it instead. An id in a ReplyTo is a
-    // promise that the reader can be taken there, and this is what keeps it.
+    // ⚠ **A REPLY TO A SERVICE EVENT NOW RESOLVES, AND THE RULE DID NOT CHANGE.**
+    // It used to read as unresolved because `kind = 'service'` kept the event off
+    // every page, so an id would have been a quote clicking through to something
+    // the reader could never be shown. The page returns service events now, so
+    // the destination exists.
+    //
+    // The promise is the same one it always was — an id in a ReplyTo means the
+    // reader can be taken there — and what satisfies it moved from "it is speech"
+    // to "the page query returns it". This assertion is here so that narrowing
+    // the page again without narrowing this fails loudly rather than handing out
+    // dead links.
     let r = by_body("third go").expect("13 replies to the service event 15");
-    assert_eq!(
-        (r.id.as_ref(), r.cursor.as_ref(), r.ts),
-        (None, None, None),
-        "held, but on no page — so not offered as a destination"
+    assert!(
+        r.id.is_some() && r.cursor.is_some() && r.ts.is_some(),
+        "the event is on a page now, so it is a destination"
     );
+    assert_eq!(r.excerpt.as_deref(), Some("changed the photo"));
 
     // Unresolved: no message 999. Unlike Signal's, a Telegram miss has no
     // timestamp to fall back on — the reply named an id, which says nothing

@@ -193,7 +193,8 @@
               @if (m.reactions.length) {
                 <div class="reactions">
                   @for (r of m.reactions; track r.emoji) {
-                    <span class="chip">{{ r.emoji }} {{ r.count }}</span>
+                    <span class="chip" [title]="reactors(r)"
+                          [class.named]="r.who.length">{{ r.emoji }} {{ r.count }}</span>
                   }
                 </div>
               }
