@@ -307,6 +307,7 @@ async fn seed(pool: &MySqlPool) {
         "CREATE TABLE telegram_media (conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, state ENUM('offered','wanted','stored','failed') NOT NULL, stored_name VARCHAR(255) NULL, content_type VARCHAR(128) NULL, note VARCHAR(255) NULL, requested_at TIMESTAMP NULL, stored_at TIMESTAMP NULL, PRIMARY KEY (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, emoji VARCHAR(32) NULL, custom_emoji_id BIGINT NULL, cnt INT NOT NULL DEFAULT 0, chosen TINYINT(1) NOT NULL DEFAULT 0, removed_at TIMESTAMP NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_read_marks (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, direction ENUM('inbox','outbox') NOT NULL, max_id INT NOT NULL, observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uniq_tg_read (conversation_id, direction, max_id)) DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE gchat_attachments (id BIGINT AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL, name VARCHAR(255) NULL, mime VARCHAR(128) NULL, width INT NULL, height INT NULL, uuid VARCHAR(64) NULL, token TEXT NULL, hash1 VARCHAR(128) NULL, hash2 VARCHAR(128) NULL, stored_path VARCHAR(255) NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE gchat_reaction_authors (id BIGINT AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL, emoji VARCHAR(64) NOT NULL, reactor_id VARCHAR(32) NOT NULL, UNIQUE KEY uniq_gchat_reactor (message_id, emoji, reactor_id)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_reaction_authors (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, peer_id BIGINT NOT NULL, emoji VARCHAR(32) NULL, custom_emoji_id BIGINT NULL, reacted_at BIGINT NOT NULL, removed_at TIMESTAMP NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_calls (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, call_id BIGINT NULL, duration_s INT NULL, reason VARCHAR(32) NULL, video TINYINT(1) NOT NULL DEFAULT 0, UNIQUE KEY uniq_tg_call (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
@@ -393,6 +394,21 @@ async fn seed(pool: &MySqlPool) {
             .fetch_one(pool)
             .await
             .unwrap();
+    // ⚠ One picture whose bytes we HOLD and one we only know about. The second
+    // is the normal case for Google Chat and the one that must still render: the
+    // download URL is minted per render and expires, so the archive routinely
+    // knows a picture existed without having it. Drawing nothing would make that
+    // indistinguishable from a message that carried nothing.
+    sqlx::query(
+        "INSERT INTO gchat_attachments (message_id, name, mime, width, height, uuid, stored_path)
+         VALUES (?, 'holiday.jpg', 'image/jpeg', 800, 600, 'u-1', 'abc123'),
+                (?, 'lost.webp', 'image/webp', 1080, 745, 'u-2', NULL)",
+    )
+    .bind(m2)
+    .bind(m2)
+    .execute(pool)
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO gchat_reactions (message_id, emoji, cnt) VALUES (?, '❤️', 3)")
         .bind(m2)
         .execute(pool)
@@ -2588,4 +2604,49 @@ async fn a_gchat_quote_reply_points_at_the_message_it_answers() {
         (None, None, None),
         "nothing to point at, but the message still shows it answered something"
     );
+}
+
+/// ⚠ **THE VIEWER SAID GOOGLE CHAT HAD NO ATTACHMENTS, AND 326 MESSAGES CARRIED
+/// ONE.** The comment in `archive.rs` read "Google Chat export carries no
+/// attachments" — true of nothing except that the capture had never looked at
+/// index 10. Only 20 of the 326 are wordless, so the rest rendered as an
+/// ordinary message with a caption and no picture.
+///
+/// ⚠ **`available: false` IS THE POINT, not a degraded case.** The download URL
+/// is minted while the page renders, bound to a session and expiring, so the
+/// archive routinely knows a picture existed without holding it. Drawing nothing
+/// for those would restore exactly the bug above.
+#[tokio::test]
+async fn a_gchat_picture_is_shown_even_when_its_bytes_are_not_held() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let page = archive::messages_page(&pool, Origin::Gchat, "gc1", None, 100, PageDir::Older)
+        .await
+        .unwrap();
+    let hey = page
+        .messages
+        .iter()
+        .find(|m| m.body.as_deref() == Some("hey"))
+        .expect("m2");
+    assert_eq!(hey.attachments.len(), 2, "both, held or not");
+
+    let held = &hey.attachments[0];
+    assert_eq!(held.file_name.as_deref(), Some("holiday.jpg"));
+    assert!(
+        held.available,
+        "stored_path is set, so the bytes are servable"
+    );
+    assert!(held.is_image);
+
+    let known = &hey.attachments[1];
+    assert_eq!(known.file_name.as_deref(), Some("lost.webp"));
+    assert!(
+        !known.available,
+        "no bytes — but the archive still says a picture was here"
+    );
+    // ⚠ Nothing to ask for: fetching needs a URL the client mints while
+    // rendering, which this app never sees. `Some(_)` would offer the reader a
+    // button that cannot work.
+    assert!(known.fetch.is_none());
 }

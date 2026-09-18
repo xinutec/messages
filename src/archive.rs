@@ -507,6 +507,75 @@ async fn attach_signal_replies(
     Ok(())
 }
 
+/// The pictures and videos a Google Chat message carried.
+///
+/// ⚠ **THE COMMENT HERE USED TO SAY "GOOGLE CHAT EXPORT CARRIES NO ATTACHMENTS",
+/// AND IT WAS NEVER TRUE.** The capture read six indices of a 39-element record
+/// and attachments are at index 10; 326 messages carry one, and only 20 of those
+/// are wordless — the other 306 rendered as an ordinary message with a caption
+/// and no picture, which is why nobody noticed for as long as this archive has
+/// existed.
+///
+/// ⚠ **`available` IS THE HONEST HALF.** The bytes are not Google Chat's to
+/// re-serve: the download URL is minted per render, session-bound and expiring,
+/// so what is held is whatever a harvest managed to read at the time. A row with
+/// no `stored_path` still draws — as a picture this archive KNOWS ABOUT and does
+/// not have, which is a different statement from a blank message and the whole
+/// reason the metadata was worth importing separately from the files.
+///
+/// ⚠ **THE ID IS THIS TABLE'S OWN, AND THE ROUTE IS WHAT KEEPS IT APART.** Every
+/// origin's attachments have independent AUTO_INCREMENTs, so id 42 exists in
+/// several and means a different picture in each. This app already had the
+/// answer — Telegram is served by `/api/telegram-media/{id}`, its own route —
+/// and the rule is stated where the frontend picks one: the origin is known
+/// there, so the decision is made once, rather than by prefixing ids and taking
+/// them apart again on the server. A first attempt here negated the id to carry
+/// the origin in its sign, which is that same mistake wearing a disguise and
+/// gives exactly two namespaces for four origins.
+async fn attach_gchat_attachments(
+    pool: &MySqlPool,
+    msgs: &mut [Message],
+    ids: &[i64],
+) -> Result<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let placeholders = vec!["?"; ids.len()].join(",");
+    let sql = format!(
+        "SELECT id, message_id, name, mime, stored_path
+           FROM gchat_attachments WHERE message_id IN ({placeholders})
+          ORDER BY id",
+    );
+    // A fixed template with a computed count of `?` and every value bound.
+    let mut q = sqlx::query(AssertSqlSafe(sql));
+    for id in ids {
+        q = q.bind(id);
+    }
+    for r in q.fetch_all(pool).await? {
+        let mid: i64 = r.try_get("message_id")?;
+        let mid = mid.to_string();
+        let mime: Option<String> = r.try_get("mime")?;
+        let stored_path: Option<String> = r.try_get("stored_path")?;
+        let att = Attachment {
+            id: r.try_get::<i64, _>("id")?.to_string(),
+            is_image: is_image(mime.as_deref()),
+            content_type: mime,
+            file_name: r.try_get("name")?,
+            // Google Chat's record carries no byte count — only pixel
+            // dimensions — so this is NULL rather than a guess from the file.
+            size: None,
+            available: stored_path.is_some(),
+            // Nothing a reader could ask for: fetching needs a URL the client
+            // mints while rendering, which this app never sees.
+            fetch: None,
+        };
+        if let Some(m) = msgs.iter_mut().find(|m| m.id == mid) {
+            m.attachments.push(att);
+        }
+    }
+    Ok(())
+}
+
 /// Resolve Google Chat's quote-replies for one page.
 ///
 /// ⚠ **THIS ORIGIN WAS REPORTED AS HAVING NO REPLIES AT ALL, AND THAT WAS A
@@ -1004,6 +1073,30 @@ pub async fn attachment_blob(
 ) -> Result<Option<(Option<String>, String)>> {
     let row = sqlx::query(
         "SELECT content_type, stored_path FROM attachments WHERE id = ? AND stored_path IS NOT NULL",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    match row {
+        Some(r) => Ok(Some((
+            r.try_get("content_type")?,
+            r.try_get("stored_path")?,
+        ))),
+        None => Ok(None),
+    }
+}
+
+/// The bytes held for one Google Chat attachment.
+///
+/// Its own function for its own route, exactly as Telegram has — see
+/// [`attach_gchat_attachments`] for why sharing Signal's would be wrong.
+pub async fn gchat_attachment_blob(
+    pool: &MySqlPool,
+    id: i64,
+) -> Result<Option<(Option<String>, String)>> {
+    let row = sqlx::query(
+        "SELECT mime AS content_type, stored_path FROM gchat_attachments
+          WHERE id = ? AND stored_path IS NOT NULL",
     )
     .bind(id)
     .fetch_optional(pool)
@@ -1723,7 +1816,7 @@ async fn gchat_messages(
             deleted: false,
             edited: false,
             reactions: Vec::new(),
-            attachments: Vec::new(), // Google Chat export carries no attachments
+            attachments: Vec::new(), // filled below, from gchat_attachments
             edits: Vec::new(),
             link_images: Vec::new(), // both filled for the whole page in messages_page
             link_offers: Vec::new(),
@@ -1733,6 +1826,7 @@ async fn gchat_messages(
     }
 
     attach_gchat_replies(pool, group_id, &mut msgs, &quoted).await?;
+    attach_gchat_attachments(pool, &mut msgs, &ids).await?;
 
     if !ids.is_empty() {
         let placeholders = vec!["?"; ids.len()].join(",");

@@ -106,6 +106,7 @@ pub fn router(state: AppState) -> Router {
         // the effect of. IRC only; see `api::send`.
         .route("/conversations/{origin}/{id}/send", post(api::send))
         .route("/attachments/{id}", get(api::attachment))
+        .route("/gchat-attachments/{id}", get(api::gchat_attachment))
         .route("/telegram-media/{id}", get(api::telegram_media))
         .route("/telegram-media/{id}/state", get(api::telegram_media_state))
         .route(

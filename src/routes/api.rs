@@ -103,6 +103,43 @@ pub struct LinkImageState {
     pub content_type: Option<String>,
 }
 
+/// GET /api/gchat-attachments/{id} → stream a Google Chat picture from the PVC.
+///
+/// ⚠ **ITS OWN ROUTE, LIKE TELEGRAM'S, AND NOT A SHARED ID SPACE.** Each origin's
+/// attachments carry an independent AUTO_INCREMENT, so id 42 exists in three
+/// tables and means three different pictures. Serving them through one endpoint
+/// would need the id to carry its origin — and the first attempt at that negated
+/// the id to put the origin in its sign, which yields exactly two namespaces for
+/// four origins and hides the ambiguity inside an integer. The frontend knows the
+/// origin already; the route is where that knowledge belongs.
+pub async fn gchat_attachment(
+    State(app): State<AppState>,
+    AuthUser(_user): AuthUser,
+    Path(id): Path<i64>,
+) -> Result<Response, AppError> {
+    let Some((content_type, stored_path)) = archive::gchat_attachment_blob(&app.pool, id).await?
+    else {
+        return Err(AppError::NotFound);
+    };
+    // Same contract as Signal's below: reaching here means the archive CLAIMS the
+    // bytes exist, so a read failure is a mount or a removal rather than an
+    // attachment that was never fetched, and it is logged as such.
+    let Some(name) = std::path::Path::new(&stored_path).file_name() else {
+        tracing::warn!("gchat attachment {id}: stored_path names no file: {stored_path:?}");
+        return Err(AppError::NotFound);
+    };
+    let path = std::path::Path::new(&app.cfg.attachments_dir).join(name);
+    let bytes = tokio::fs::read(&path).await.map_err(|e| {
+        tracing::warn!(
+            "gchat attachment {id}: archive says stored, but reading {} failed: {e}",
+            path.display()
+        );
+        AppError::NotFound
+    })?;
+    let ct = content_type.unwrap_or_else(|| "application/octet-stream".to_string());
+    Ok(([(axum::http::header::CONTENT_TYPE, ct)], bytes).into_response())
+}
+
 /// GET /api/attachments/{id} → stream a Signal attachment blob from the PVC.
 /// Only serves files whose bytes were downloaded; resolves by basename under
 /// the configured attachments dir, so a stored path can't escape the mount.
