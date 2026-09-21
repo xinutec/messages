@@ -19,14 +19,45 @@ import { expectIconFontLoaded, expectNoTextOverlaps } from "@xinutec/ui-harness"
  *  "scrolled fine". */
 async function scrollThread(page: Page, top: number | "bottom"): Promise<void> {
   await page.locator(".thread").waitFor();
-  const moved = await page.evaluate((to) => {
+  // ⚠ **SETTING scrollTop ONCE IS NOT SCROLLING — THE COMPONENT SCROLLS ITSELF
+  // AND CAN DO IT AFTER US.** Opening a thread jumps to the newest message. This
+  // ran as soon as `.thread` existed, and on a loaded machine that jump landed
+  // SECOND: the gate caught it on 2026-09-21 (three gates, load 10.2 on 10 cores)
+  // as a day header 635.6875px above where it belonged. That number is not noise
+  // — measured against this fixture, it is the offset at scrollTop 2042, the
+  // BOTTOM. The page was never at 400.
+  //
+  // So the position is re-applied until it survives three consecutive frames.
+  // Re-applying is not papering over the jump: a reader scrolling up after the
+  // thread settles does exactly this. An app that kept yanking would run the
+  // frame budget out and leave the caller's assertion to fail, which is the
+  // outcome worth having.
+  const settled = await page.evaluate(async (to) => {
     const t = document.querySelector(".thread");
     if (!t) return null;
-    t.scrollTop = to === "bottom" ? t.scrollHeight : to;
-    return t.scrollTop;
+    // "bottom" is scrollHeight MINUS the visible height; scrollTop can never
+    // reach scrollHeight, so comparing against it would never hold.
+    const want = () => (to === "bottom" ? t.scrollHeight - t.clientHeight : to);
+    const frame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
+    let held = 0;
+    for (let i = 0; i < 120 && held < 3; i++) {
+      if (Math.abs(t.scrollTop - want()) > 2) {
+        t.scrollTop = want();
+        held = 0;
+      } else {
+        held++;
+      }
+      await frame();
+    }
+    return { at: t.scrollTop, want: want(), held };
   }, top);
-  if (moved === null) {
+  if (settled === null) {
     throw new Error("scrollThread: .thread is not in the DOM — nothing was scrolled");
+  }
+  if (settled.held < 3) {
+    throw new Error(
+      `scrollThread: asked for ${settled.want}, left at ${settled.at} — something keeps scrolling it`,
+    );
   }
 }
 
