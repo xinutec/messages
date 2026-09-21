@@ -18,11 +18,7 @@ import {
  * The at-risk spots here: the three-button origin filter row (All / Signal /
  * Google Chat) crowding at 412px, and a message's meta line (sender + time +
  * "edited") and reaction chips overflowing or overlapping the body.
- *
- * There is no service worker in this app, but block it anyway for parity with
- * the fleet's layout specs — SW-controlled fetches would bypass page.route.
  */
-test.use({ serviceWorkers: "block" });
 
 const ME = { user_id: "test", display_name: "Test User" };
 
