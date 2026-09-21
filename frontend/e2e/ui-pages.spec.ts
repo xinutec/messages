@@ -307,6 +307,41 @@ test("a failed conversation search says so rather than \"no matches\" @ phone wi
   await expect(page.getByText("No matches in this conversation.")).toHaveCount(0);
 });
 
+/// ⚠ **THE DATE GOES TO THE SERVER AS MILLISECONDS, AND THE SERVER CONVERTS** —
+/// Signal counts milliseconds, Google Chat MICROseconds, Telegram and IRC whole
+/// seconds (#1562). This asserts the request the page actually makes, because a
+/// frontend that minted its own cursor would be right for one origin and wrong
+/// for three, and the thread would come back empty rather than erroring.
+///
+/// ⚠ And midnight is LOCAL. `Date.parse("2025-03-04")` is midnight UTC, so west
+/// of Greenwich the reader lands on the evening BEFORE the day they picked —
+/// a bug that appears for some readers, in some months.
+test("picking a date asks the server for that day @ phone width", async ({ page }, testInfo) => {
+  await mockApi(page);
+  const asked: string[] = [];
+  await page.route("**/messages**", (r) => {
+    asked.push(r.request().url());
+    return r.fulfill({ json: THREAD });
+  });
+  await page.goto("/conversation/signal/dm:a");
+  await page.locator(".msg .body").first().waitFor();
+
+  await page.locator('.thread-head input[type="date"]').fill("2025-03-04");
+  await page.waitForFunction(() => location.search.includes("on="));
+
+  const expected = String(new Date(2025, 2, 4).getTime());
+  expect(page.url()).toContain(`on=${expected}`);
+  // Both halves of the landing carry it: `older` for context before the day and
+  // `at` for the day itself. One without the other lands at a different place
+  // than it reads from.
+  const withOn = asked.filter((u) => u.includes(`on=${expected}`));
+  expect(withOn.some((u) => u.includes("dir=older"))).toBe(true);
+  expect(withOn.some((u) => u.includes("dir=at"))).toBe(true);
+
+  await expectNoTextOverlaps(page, testInfo);
+  await expectNoHorizontalOverflow(page, testInfo);
+});
+
 test("a deleted message: hidden by default @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   await page.goto("/conversation/signal/dm:a");

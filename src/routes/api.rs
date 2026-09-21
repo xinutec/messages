@@ -63,6 +63,18 @@ pub struct MessagesQuery {
     /// string. Reading backwards is what this endpoint did for its whole life,
     /// so it is the answer that cannot surprise a caller.
     dir: Option<String>,
+    /// Land on the first message of this day: epoch MILLISECONDS for midnight,
+    /// in whatever timezone the reader is in. Converted to the origin's own unit
+    /// by `cursor_for_day`, so a caller never has to know that Google Chat
+    /// counts microseconds and Telegram counts seconds.
+    ///
+    /// ⚠ Takes precedence over `cursor`, and that is not arbitrary: the reader
+    /// asked for a date, which is a new destination, while `cursor` is where
+    /// they already were. Honouring the stale one would ignore the click.
+    ///
+    /// ⚠ It sets the cursor and leaves `dir` alone, so the caller composes a
+    /// landing out of `older` + `at` exactly as it does for a search hit.
+    on: Option<i64>,
 }
 
 /// GET /api/conversations/{origin}/{id}/messages → one page, oldest→newest.
@@ -82,6 +94,15 @@ pub async fn messages(
         Some("newer") => archive::PageDir::Newer,
         Some("at") => archive::PageDir::AtAndNewer,
         _ => archive::PageDir::Older,
+    };
+    // ⚠ `on` MINTS A CURSOR AND NOTHING ELSE — it deliberately does not force a
+    // direction. A landing wants BOTH halves around the point (`thread.ts`
+    // fetches `older` and `at` with the same cursor so the reader gets context
+    // before the day as well as on it), and forcing `at` here would leave the
+    // backward half asking for a different place than the forward one.
+    let cursor = match q.on {
+        Some(ms) => archive::parse_cursor(&archive::cursor_for_day(origin, ms)),
+        None => cursor,
     };
     let page = archive::messages_page(&app.pool, origin, &id, cursor, limit, dir).await?;
     Ok(Json(page))

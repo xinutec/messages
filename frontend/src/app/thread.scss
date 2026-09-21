@@ -69,8 +69,51 @@
   }
   .find {
     flex: 0 0 auto;
-    margin-left: auto;
   }
+  // The date control sits before the search button and pushes both to the right.
+  // ⚠ The native input is kept NARROW and unstyled-by-default: at its intrinsic
+  // width it is about 130px, which at 412px leaves a long conversation name no
+  // room at all and was the first thing the phone render showed.
+  .go-to-date {
+    flex: 0 0 auto;
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.15rem;
+    cursor: pointer;
+    input[type='date'] {
+      // Wide enough for the picker affordance, not for the whole dd/mm/yyyy.
+      width: 1.6rem;
+      border: 0;
+      background: none;
+      color: transparent;
+      font: inherit;
+      cursor: pointer;
+      // Firefox and Safari draw their own indicator; Chromium's is the only one
+      // that can be targeted, and hiding the TEXT while keeping the indicator is
+      // what makes the control icon-sized.
+      &::-webkit-datetime-edit,
+      &::-webkit-inner-spin-button,
+      &::-webkit-clear-button {
+        display: none;
+      }
+      &::-webkit-calendar-picker-indicator {
+        opacity: 0;
+        width: 1.6rem;
+        cursor: pointer;
+      }
+    }
+  }
+}
+
+// Visually hidden but read aloud — the date input's own label.
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 // Searching inside the open conversation. Sits under the sticky head and above

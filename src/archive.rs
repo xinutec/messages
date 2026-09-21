@@ -136,6 +136,37 @@ pub fn us_to_ms(us: i64) -> i64 {
     us / 1000
 }
 
+/// A cursor that lands on the first message of a given DAY, in whatever unit the
+/// origin counts in.
+///
+/// ⚠ **THE CURSOR COULD ALWAYS EXPRESS A DATE — ONLY THE CALLER COULD NOT MINT
+/// ONE** (#1562). `encode_cursor` takes a NATIVE timestamp, and the four origins
+/// disagree about what that is: Signal milliseconds, Google Chat MICROseconds,
+/// Telegram and IRC whole seconds. A frontend building its own would have to
+/// carry all four conventions and would be wrong for three of them the moment it
+/// got one right — which is the same class of bug as the cursor comments in
+/// `search` guard against.
+///
+/// ⚠ **`id = 0`, WHICH IS A FLOOR AND NOT A REAL ROW.** The paging predicate is
+/// `ts > ? OR (ts = ? AND id >= ?)`, so a zero id admits every message in that
+/// first second rather than skipping the ones whose id happens to sort lower.
+/// Any id above the smallest real one would silently drop messages from the
+/// landing second, and only on days whose first message had a low id.
+///
+/// `day_start_ms` is midnight UTC for the chosen day, in epoch milliseconds —
+/// the unit the whole API speaks outside this function.
+pub fn cursor_for_day(origin: Origin, day_start_ms: i64) -> String {
+    let native = match origin {
+        Origin::Signal => day_start_ms,
+        // The ONLY origin that multiplies rather than divides. Getting this
+        // backwards lands in 1970 and the page comes back empty, which reads as
+        // "nothing was said that day".
+        Origin::Gchat => day_start_ms * 1000,
+        Origin::Telegram | Origin::Irc => day_start_ms / 1000,
+    };
+    encode_cursor(native, 0)
+}
+
 /// Google Chat stores no kind at all, only a boolean, so the two-valued enum
 /// the reader works in is DERIVED here rather than read from a column. Signal
 /// and IRC both carry theirs, which is why only this origin needs a function.

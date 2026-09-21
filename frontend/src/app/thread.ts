@@ -297,13 +297,17 @@ export class Thread {
     // parameter on the first scroll, and treating that clear as a navigation
     // would reload the thread out from under the reader who caused it.
     let landedAt: string | null = this.route.snapshot.queryParamMap.get('at');
+    let landedOn: string | null = this.route.snapshot.queryParamMap.get('on');
     this.route.queryParamMap.pipe(takeUntilDestroyed()).subscribe((pm) => {
       const at = pm.get('at');
-      if (at == null || at === landedAt) {
-        landedAt = at;
-        return;
-      }
+      const on = pm.get('on');
+      // ⚠ Both landings re-run on CHANGE only. Picking the same date twice is
+      // not a navigation, and treating the `commitFromParam` clear as one would
+      // reload the thread out from under the reader who scrolled.
+      const movedTo = (at != null && at !== landedAt) || (on != null && on !== landedOn);
       landedAt = at;
+      landedOn = on;
+      if (!movedTo) return;
       const o = this.origin();
       const i = this.id();
       if (o != null && i != null) void this.loadThread(o, i);
@@ -393,11 +397,21 @@ export class Thread {
    *  on 2026-09-08 and found by looking at a phone. `at` includes the cursor's
    *  own row, so the two halves concatenate with no gap and no duplicate.
    */
-  private async loadAround(origin: Origin, id: string, at: string): Promise<boolean> {
+  private async loadAround(
+    origin: Origin,
+    id: string,
+    /** A cursor from a search hit or a reply, OR a day to land on. ⚠ The day is
+     *  passed through as `on` rather than turned into a cursor here: the four
+     *  origins disagree about what a timestamp is, and that conversion lives in
+     *  one place on the server (#1562). */
+    where: { at: string } | { onDay: number },
+  ): Promise<boolean> {
     const half = Math.floor(PAGE / 2);
+    const at = 'at' in where ? where.at : undefined;
+    const on = 'onDay' in where ? where.onDay : undefined;
     const [older, newer] = await Promise.all([
-      firstValueFrom(this.api.messages(origin, id, at, half, 'older')),
-      firstValueFrom(this.api.messages(origin, id, at, half, 'at')),
+      firstValueFrom(this.api.messages(origin, id, at, half, 'older', on)),
+      firstValueFrom(this.api.messages(origin, id, at, half, 'at', on)),
     ]);
 
     // ⚠ **DO THE TWO HALVES ACTUALLY MEET?** The server treats a cursor it
@@ -503,6 +517,28 @@ export class Thread {
     return d.state === 'sent' || d.state === 'delivered';
   }
 
+  /** Jump to a date the reader picks.
+   *
+   *  ⚠ **MIDNIGHT LOCAL, NOT `Date.parse` OF THE `yyyy-mm-dd`.** A bare date
+   *  string parses as midnight UTC, so west of Greenwich the reader lands on the
+   *  evening BEFORE the day they asked for — and the bug only appears for some
+   *  users, in some months, which is how it survives a look. The parts are split
+   *  and handed to the local-time `Date` constructor instead.
+   *
+   *  The value goes into `?on` and the load path does the rest; the conversion to
+   *  each origin's own unit is the SERVER's, so nothing here knows that Google
+   *  Chat counts microseconds. */
+  protected jumpToDate(value: string): void {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!m) return;
+    const ms = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { on: String(ms), at: null, from: null },
+      queryParamsHandling: 'merge',
+    });
+  }
+
   /** Open or close the in-thread search, clearing what it found. */
   protected toggleSearch(): void {
     const open = !this.searchOpen();
@@ -570,13 +606,18 @@ export class Thread {
     this.threadError.set(false);
     this.loadingThread.set(true);
     const at = this.route.snapshot.queryParamMap.get('at');
+    const onDay = Number(this.route.snapshot.queryParamMap.get('on')) || null;
     const from = Number(this.route.snapshot.queryParamMap.get('from')) || null;
     try {
       // `?at` — a search hit's opaque cursor. It means "put me here", where
       // `?from` means "I was here", so it wins on load and the two never
       // meaningfully coexist: `commitFromParam` takes over and writes `from` as
       // soon as the reader scrolls.
-      if (at != null && (await this.loadAround(origin, id, at))) return;
+      if (at != null && (await this.loadAround(origin, id, { at }))) return;
+      // `?on` — a DATE the reader picked. Same landing, and the same precedence
+      // over `?from` for the same reason: it is where they asked to go rather
+      // than where they were.
+      if (onDay != null && (await this.loadAround(origin, id, { onDay }))) return;
       const first = await firstValueFrom(this.api.messages(origin, id, undefined, PAGE));
       let msgs = first.messages;
       let hasMore = first.has_more;

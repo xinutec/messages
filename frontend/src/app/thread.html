@@ -8,6 +8,16 @@
          that box is DISPLAY:NONE at phone width whenever a conversation is open
          (app.scss) — the one moment searching this conversation is what you
          want is the one moment it is off screen. -->
+    <!-- ⚠ A NATIVE date input, not a Material datepicker: it needs no date
+         adapter and no extra dependency, and on a phone it opens the OS picker
+         the reader already knows. Labelled rather than placeholdered — an empty
+         `type=date` renders as `dd/mm/yyyy` with no hint of what it jumps to. -->
+    <label class="go-to-date">
+      <mat-icon aria-hidden="true">event</mat-icon>
+      <span class="sr-only">Jump to a date</span>
+      <input type="date" aria-label="Jump to a date"
+             (change)="jumpToDate($any($event.target).value)" />
+    </label>
     <button mat-icon-button class="find" (click)="toggleSearch()"
             [attr.aria-label]="searchOpen() ? 'Close search' : 'Search this conversation'">
       <mat-icon>{{ searchOpen() ? 'close' : 'search' }}</mat-icon>

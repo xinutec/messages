@@ -2921,3 +2921,85 @@ async fn a_scope_with_no_match_is_empty_not_global() {
             .collect::<Vec<_>>()
     );
 }
+
+// ---- jumping to a date ------------------------------------------------------
+
+/// ⚠ **THE FOUR ORIGINS DISAGREE ABOUT WHAT A TIMESTAMP IS**, which is the whole
+/// of #1562: the cursor could always express a date, but only in the unit that
+/// origin counts in. A caller minting its own would carry all four conventions
+/// and be wrong for three of them the moment it got one right.
+#[test]
+fn a_day_cursor_is_minted_in_each_origins_own_unit() {
+    // 2026-01-02T00:00:00Z, the fixture's day, in the unit the API speaks.
+    let ms = 1_767_312_000_000i64;
+    assert_eq!(
+        archive::cursor_for_day(Origin::Signal, ms),
+        "1767312000000_0"
+    );
+    // ⚠ The only one that MULTIPLIES. Getting this backwards lands in 1970 and
+    // the page comes back empty, which reads as "nothing was said that day".
+    assert_eq!(
+        archive::cursor_for_day(Origin::Gchat, ms),
+        "1767312000000000_0"
+    );
+    assert_eq!(
+        archive::cursor_for_day(Origin::Telegram, ms),
+        "1767312000_0"
+    );
+    assert_eq!(archive::cursor_for_day(Origin::Irc, ms), "1767312000_0");
+}
+
+/// ⚠ **`id = 0` IS A FLOOR, NOT A ROW.** The paging predicate admits
+/// `ts = cursor_ts AND id >= cursor_id`, so any id above the smallest real one
+/// silently drops messages from the landing second — and only on days whose
+/// first message happens to have a low id, which is exactly the kind of bug that
+/// survives a casual look.
+#[test]
+fn a_day_cursor_admits_the_whole_first_second() {
+    let (ts, id) = archive::parse_cursor(&archive::cursor_for_day(Origin::Irc, 1_767_312_000_000))
+        .expect("round-trips");
+    assert_eq!(ts, 1_767_312_000);
+    assert_eq!(id, 0, "a floor under every real id");
+}
+
+/// The landing itself, against the real fixture: asking for a day returns that
+/// day's messages reading FORWARDS, not the ones before it.
+#[tokio::test]
+async fn a_day_lands_on_that_day_and_reads_forwards() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    // The IRC fixture spans 2020; its conversations are the only ones with real
+    // dates rather than epoch-1970 milliseconds.
+    let day_ms = 1_577_836_800_000i64; // 2020-01-01T00:00:00Z
+    let cursor = archive::parse_cursor(&archive::cursor_for_day(Origin::Irc, day_ms));
+    let id = sqlx::query_scalar::<_, i32>(
+        "SELECT id FROM irc_conversations WHERE target = '#chan' AND is_status = 0",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let page = archive::messages_page(
+        &pool,
+        Origin::Irc,
+        &id.to_string(),
+        cursor,
+        100,
+        PageDir::AtAndNewer,
+    )
+    .await
+    .unwrap();
+    assert!(!page.messages.is_empty(), "the day has messages");
+    assert!(
+        page.messages.iter().all(|m| m.ts >= day_ms),
+        "nothing from BEFORE the day asked for"
+    );
+    // Ascending, like every page this API returns.
+    let mut sorted = page.messages.iter().map(|m| m.ts).collect::<Vec<_>>();
+    sorted.sort_unstable();
+    assert_eq!(
+        page.messages.iter().map(|m| m.ts).collect::<Vec<_>>(),
+        sorted,
+        "oldest first"
+    );
+}

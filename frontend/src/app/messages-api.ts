@@ -74,10 +74,16 @@ export class MessagesApi {
     cursor?: string,
     limit = 100,
     dir?: 'older' | 'newer' | 'at',
+    /** Midnight of the day to land on, in epoch ms. ⚠ The SERVER converts this
+     *  to the origin's own unit — Signal counts milliseconds, Google Chat
+     *  MICROseconds, Telegram and IRC whole seconds — so no caller has to carry
+     *  four conventions and be wrong about three of them (#1562). */
+    on?: number,
   ): Observable<MessagesPage> {
     const params: Record<string, string> = { limit: String(limit) };
     if (cursor != null) params['cursor'] = cursor;
     if (dir != null) params['dir'] = dir;
+    if (on != null) params['on'] = String(on);
     return this.http.get<MessagesPage>(
       `/api/conversations/${origin}/${encodeURIComponent(id)}/messages`,
       { params },
