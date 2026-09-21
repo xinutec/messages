@@ -49,13 +49,22 @@ them, so check before trusting it.
   (created on boot, `src/db.rs`).
 - `frontend/` — Angular (login gate → conversation list with origin filter →
   thread view with reactions / edited / deleted markers, and a composer on IRC).
-  An outgoing **Telegram** message says whether it has been `read`, from the
-  `telegram_read_marks` the feed captures — ⚠ **and says nothing when the archive
-  cannot tell.** `read` is a three-state field: capture began 2026-09-17 and
-  Telegram keeps no history of reading, so a conversation nobody has touched since
-  has no mark and every message in it stays silent rather than claiming to be
-  unread. Drawing our own late start as somebody's behaviour is the one mistake
-  this field exists to avoid.
+  An outgoing **Telegram or Signal** message says how far it got — `sent`,
+  `delivered`, `read` — and ⚠ **says nothing when the archive cannot tell.**
+  `delivery` is a three-state field for that reason: Telegram's read marks start
+  2026-09-17 and Signal's receipts 2026-09-18, and neither service keeps a
+  history of reading, so nothing will ever fill the years before. Drawing our own
+  late start as somebody's behaviour is the one mistake this field exists to
+  avoid.
+  The two origins report DIFFERENT SHAPES through it. Telegram sends a
+  conversation-wide high-water mark: it can say read or not-read and names
+  nobody, and `delivered` is simply not a thing it reports. Signal sends a
+  receipt per message per person with the time they read it — so the tag names
+  the reader on hover, and in a **group** it counts (`read by 2`) rather than
+  saying `read`, because a receipt list is who HAS read it and never the
+  membership. A receipt authored by me is dropped: reading a thread on a linked
+  device syncs a read of my own messages too, and left in it would show a message
+  as read by the person who sent it.
   A message that answered another shows it as a quote above itself, and clicking
   the quote goes to what it answered. **Two of the four origins record the
   association at all** — Signal quotes by TIMESTAMP and Telegram by message id —

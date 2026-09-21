@@ -7,11 +7,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { Thread } from './thread';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
-import { Message, MessagesPage, ReplyTo } from './models';
+import { Conversation, Message, MessagesPage, ReplyTo } from './models';
 import { MAX_RESTORE_PAGES } from './thread-window';
 
 function msg(id: string, ts: number): Message {
-  return { id, ts, sender: 's', is_outgoing: false, kind: 'message', body: 'b', deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [], reply_to: null, read: null };
+  return { id, ts, sender: 's', is_outgoing: false, kind: 'message', body: 'b', deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [], reply_to: null, delivery: null };
 }
 
 function makeApi() {
@@ -1225,5 +1225,104 @@ describe('marking the message that was landed on', () => {
   it('marks nothing when the thread was opened without a hit', async () => {
     const { thread } = await opened([msg('1', 100), msg('2', 200)]);
     expect(thread.landedId()).toBeNull();
+  });
+});
+
+/** ⚠ **THE TAG IS A CLAIM ABOUT SOMEBODY ELSE, so every case here is about what
+ *  it REFUSES to say.** Read state arrives from two origins with different
+ *  shapes: Telegram's is a position in the conversation and names nobody,
+ *  Signal's is a per-person receipt with a time. Rendering both through one tag
+ *  is only safe while the group case stays counted rather than absolute — "read"
+ *  in a group of six, from two receipts, would be an invention. */
+describe('the delivery tag', () => {
+  function outgoing(id: string, delivery: Message['delivery']): Message {
+    return { ...msg(id, 1000), is_outgoing: true, delivery };
+  }
+
+  async function render(messages: Message[], conversations: Conversation[] = []) {
+    const { thread, ref, fixture } = setup();
+    const api = TestBed.inject(MessagesApi) as unknown as {
+      messages: ReturnType<typeof vi.fn>;
+      conversations: ReturnType<typeof vi.fn>;
+    };
+    api.conversations.mockReturnValue(of(conversations));
+    api.messages.mockReturnValue(page(messages));
+    TestBed.inject(MessagesStore).refresh();
+    ref.setInput('origin', 'signal');
+    ref.setInput('id', 'dm:a');
+    fixture.detectChanges();
+    for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    return (id: string) => root.querySelector(`.msg[data-id="${id}"] .tag.delivery`);
+  }
+
+  const dm: Conversation = {
+    origin: 'signal', id: 'dm:a', name: 'Alice', kind: 'dm',
+    network: null, message_count: 1, last_ts: 1000,
+  };
+
+  it('says nothing at all when the archive cannot tell', async () => {
+    // ⚠ The case the whole three-state shape exists for: capture began after
+    // these were sent, and no amount of re-reading will fill it in. A tag here
+    // would report our own start date as somebody's phone being off.
+    const tag = await render([outgoing('a', null)]);
+    expect(tag('a')).toBeNull();
+  });
+
+  it('shows each rung of the ladder, dimmed until somebody has read it', async () => {
+    const tag = await render([
+      outgoing('s', { state: 'sent', read_by: [] }),
+      outgoing('d', { state: 'delivered', read_by: [] }),
+      outgoing('r', { state: 'read', read_by: [] }),
+    ]);
+    expect(tag('s')?.textContent?.trim()).toBe('sent');
+    expect(tag('d')?.textContent?.trim()).toBe('delivered');
+    expect(tag('r')?.textContent?.trim()).toBe('read');
+    // Sent and delivered are both "not read yet", which is what the dimming says.
+    expect(tag('s')?.classList.contains('unread')).toBe(true);
+    expect(tag('d')?.classList.contains('unread')).toBe(true);
+    expect(tag('r')?.classList.contains('unread')).toBe(false);
+  });
+
+  it('names the reader and the time in the title, where the origin records it', async () => {
+    const at = new Date(2026, 8, 20, 14, 5).getTime();
+    const tag = await render([outgoing('r', { state: 'read', read_by: [{ who: 'Alice', at }] })], [dm]);
+    const title = tag('r')?.getAttribute('title') ?? '';
+    expect(title).toContain('Alice');
+    // The time comes with the name: "who read it" without "when" is half the
+    // fact Signal sends, and the only half Telegram could already give.
+    expect(title).toMatch(/\d/);
+  });
+
+  it('carries an EMPTY title when the origin names nobody', async () => {
+    // ⚠ Telegram's read mark is a position, not a person. Asserted as the empty
+    // string rather than skipped: a title reading "undefined" would look fine on
+    // screen and wrong on hover, which is exactly the kind of thing nobody
+    // notices until somebody hovers.
+    const bare = await render([outgoing('t', { state: 'read', read_by: [] })], [dm]);
+    expect(bare('t')?.getAttribute('title')).toBe('');
+  });
+
+  it('counts readers in a group and never says plain "read"', async () => {
+    const group: Conversation = { ...dm, kind: 'group', name: 'Grp' };
+    const two = [
+      { who: 'Alice', at: 1100 },
+      { who: 'Bob', at: 1200 },
+    ];
+    const tag = await render([outgoing('g', { state: 'read', read_by: two })], [group]);
+    expect(tag('g')?.textContent?.trim()).toBe('read by 2');
+  });
+
+  it('counts rather than asserts when the conversation is not loaded yet', async () => {
+    // A deep link renders the thread before the list arrives. The unknown case
+    // takes the form that cannot overclaim.
+    const tag = await render([outgoing('g', { state: 'read', read_by: [{ who: 'Alice', at: 1100 }] })]);
+    expect(tag('g')?.textContent?.trim()).toBe('read by 1');
+  });
+
+  it('says plain "read" in a DM, where one reader IS everybody', async () => {
+    const tag = await render([outgoing('r', { state: 'read', read_by: [{ who: 'Alice', at: 1100 }] })], [dm]);
+    expect(tag('r')?.textContent?.trim()).toBe('read');
   });
 });

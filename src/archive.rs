@@ -213,6 +213,65 @@ pub struct Reaction {
     pub who: Vec<String>,
 }
 
+/// How far an outgoing message got, as far as the archive can tell.
+///
+/// ⚠ **A LADDER, AND EVERY ORIGIN CLIMBS ONLY AS HIGH AS IT CAN SPEAK.** Telegram
+/// reports a conversation-wide high-water mark and nothing else, so it can say
+/// `Sent` or `Read` and never `Delivered` — the state simply does not exist in
+/// what it sends. Signal reports a per-message, per-person event and reaches all
+/// four. A reader must not read the absence of `Delivered` on a Telegram message
+/// as "it never arrived"; it means the question was never answerable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub enum DeliveryState {
+    /// Left here, and nothing has come back about it yet.
+    Sent,
+    /// Their device has it. Signal only.
+    Delivered,
+    /// Somebody opened the conversation past it.
+    Read,
+    /// View-once media they actually opened. Signal only, and it sits ABOVE
+    /// `Read` because it cannot happen without it.
+    ///
+    /// ⚠ **NO ROW HAS EVER CARRIED THIS**, checked 2026-09-21: `signal_receipts`
+    /// holds only `delivery` and `read`. It is in the ladder because the capture
+    /// path already stores the kind, and a state that arrives one day into a
+    /// three-valued reader would be silently flattened into `Read`.
+    Viewed,
+}
+
+/// One person, and when they read it.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct ReadBy {
+    pub who: String,
+    /// Epoch milliseconds, as SIGNAL reported it — this is when they read it,
+    /// not when we heard about it.
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub at: i64,
+}
+
+/// What happened to a message we sent.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct Delivery {
+    pub state: DeliveryState,
+    /// Who read it and when, for the origin that records people rather than a
+    /// position.
+    ///
+    /// ⚠ **EMPTY IS NOT "NOBODY", AND A FULL LIST IS NOT "EVERYONE".** Telegram
+    /// leaves this empty always — it names no one. Signal names only those who
+    /// have sent a receipt, so in a GROUP this is who has read it so far and
+    /// never the membership; there is no row anywhere saying who has not. The
+    /// reader is careful to say "read by" rather than "read" when it could be
+    /// taken as a claim about a whole group.
+    pub read_by: Vec<ReadBy>,
+}
+
 /// Whether an attachment's bytes can be ASKED for, and whether they have been.
 ///
 /// ⚠ `None` is Signal's case and means "there is nothing to ask" — its blobs are
@@ -363,18 +422,16 @@ pub struct Message {
     /// Telegram. Always `None` for Google Chat and IRC, neither of which has
     /// the association at all.
     pub reply_to: Option<ReplyTo>,
-    /// Whether the other side has read this message.
+    /// How far this message got, for the origins that report it.
     ///
-    /// ⚠ **THREE STATES, AND `None` IS NOT "UNREAD".** `Some(true)` is read,
-    /// `Some(false)` is sent-and-not-yet-read, and `None` means the archive
-    /// CANNOT SAY — which covers every incoming message, every origin but
-    /// Telegram, and any conversation no read mark has been captured for yet.
-    ///
-    /// The distinction is load-bearing because capture started 2026-09-17 and
-    /// Telegram keeps no history of reading: a conversation nobody has touched
-    /// since has no mark at all, and drawing that as "unread" would be inventing
-    /// a fact about somebody's behaviour out of our own late start.
-    pub read: Option<bool>,
+    /// ⚠ **`None` IS "THE ARCHIVE CANNOT SAY", NEVER "UNDELIVERED".** It covers
+    /// every INCOMING message, Google Chat and IRC entirely, and — the case this
+    /// field exists for — anything sent before capture began. Telegram's read
+    /// marks start 2026-09-17 and Signal's receipts 2026-09-18; neither service
+    /// keeps a history of reading, so nothing will ever fill the years before
+    /// those dates. Drawing our own late start as somebody's behaviour is the
+    /// mistake this three-state shape is here to make impossible.
+    pub delivery: Option<Delivery>,
 }
 
 /// A link the reader can ask us to fetch a picture for.
@@ -1634,7 +1691,7 @@ async fn signal_messages(
             link_images: Vec::new(), // both filled for the whole page in messages_page
             link_offers: Vec::new(),
             reply_to: None,
-            read: None,
+            delivery: None,
         });
     }
 
@@ -1731,8 +1788,116 @@ async fn signal_messages(
     }
 
     attach_signal_replies(pool, thread_id, &mut msgs, &quotes).await?;
+    attach_signal_read(pool, &mut msgs).await?;
 
     Ok(Fetched::new(msgs, keys, dir))
+}
+
+/// What became of the outgoing messages on this page, person by person.
+///
+/// ⚠ **SIGNAL IS THE ONLY ORIGIN HERE THAT NAMES A PERSON AND A TIME.** A receipt
+/// is `(target_ts, author_uuid, kind, when_ts)` — per message, per recipient, with
+/// the moment Signal says it happened rather than the moment we heard. Telegram
+/// gives one moving position per conversation and no names at all, which is why
+/// `attach_telegram_read` is a comparison and this is a join.
+///
+/// ⚠ **A RECEIPT FROM MYSELF SAYS NOTHING ABOUT THE RECIPIENT, and there are real
+/// rows like that.** Reading a thread on a linked device syncs a read of
+/// EVERYTHING in it, my own messages included — 2 such rows in one DM alone. Left
+/// in, a message nobody had opened would show as read by the person who sent it.
+/// `r.author_uuid <> m.sender_uuid` drops them: the author of my message is me, so
+/// a receipt from the message's own sender is self-addressed by construction, and
+/// no separate "who am I" lookup is needed to know it.
+///
+/// ⚠ **NO RECEIPT MEANS "SENT" ONLY AFTER CAPTURE BEGAN — otherwise it means
+/// NOTHING.** Receipt capture started 2026-09-18; the 659 outgoing messages before
+/// it have no rows and never will, because Signal keeps no server-side history to
+/// re-walk. So the floor is read from the data (`MIN(observed_at)`) and anything
+/// older is left `None`. Calling those "sent, never delivered" would report this
+/// archive's start date as a fact about other people's phones.
+async fn attach_signal_read(pool: &MySqlPool, msgs: &mut [Message]) -> Result<()> {
+    let ids: Vec<i64> = msgs
+        .iter()
+        .filter(|m| m.is_outgoing)
+        .filter_map(|m| m.id.parse().ok())
+        .collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    // When this archive started listening. A scalar per page over a small,
+    // append-only table; it is a fixed historical instant, not a moving one.
+    let floor_ms: Option<i64> =
+        sqlx::query_scalar("SELECT UNIX_TIMESTAMP(MIN(observed_at)) * 1000 FROM signal_receipts")
+            .fetch_optional(pool)
+            .await?
+            .flatten();
+
+    let placeholders = vec!["?"; ids.len()].join(",");
+    // `sql` is a fixed template with a computed count of `?` placeholders and no
+    // interpolated data; all values are bound. Safe to assert.
+    let sql = format!(
+        "SELECT m.id AS id, r.kind AS kind, r.when_ts AS when_ts,
+                COALESCE(ct.profile_name, r.author_uuid) AS who
+         FROM signal_receipts r
+         JOIN messages m ON m.server_ts = r.target_ts
+         LEFT JOIN contacts ct ON ct.uuid = r.author_uuid
+         WHERE m.id IN ({placeholders}) AND r.author_uuid <> m.sender_uuid
+         ORDER BY r.when_ts",
+    );
+    let mut q = sqlx::query(AssertSqlSafe(sql));
+    for id in &ids {
+        q = q.bind(id);
+    }
+    let mut best: HashMap<String, DeliveryState> = HashMap::new();
+    let mut read_by: HashMap<String, Vec<ReadBy>> = HashMap::new();
+    for row in q.fetch_all(pool).await? {
+        let id: i64 = row.try_get("id")?;
+        let id = id.to_string();
+        let kind: String = row.try_get("kind")?;
+        let state = match kind.as_str() {
+            "delivery" => DeliveryState::Delivered,
+            "read" => DeliveryState::Read,
+            "viewed" => DeliveryState::Viewed,
+            // The ENUM has three members; a fourth would be a schema change this
+            // build has not seen, and guessing which rung it belongs on is how a
+            // new state gets silently flattened into an old one.
+            other => bail!("signal_receipts.kind holds an unknown kind: {other:?}"),
+        };
+        let slot = best.entry(id.clone()).or_insert(DeliveryState::Sent);
+        *slot = (*slot).max(state);
+        if state >= DeliveryState::Read {
+            // Ordered by `when_ts`, so each person lands in the order they read
+            // it. A second receipt from the same person — a read and then a view
+            // of the same message — would name them twice, so the first stands.
+            let who: String = row.try_get("who")?;
+            let entry = read_by.entry(id).or_default();
+            if !entry.iter().any(|r| r.who == who) {
+                entry.push(ReadBy {
+                    who,
+                    at: row.try_get("when_ts")?,
+                });
+            }
+        }
+    }
+    for m in msgs.iter_mut().filter(|m| m.is_outgoing) {
+        match best.get(&m.id) {
+            Some(state) => {
+                m.delivery = Some(Delivery {
+                    state: *state,
+                    read_by: read_by.remove(&m.id).unwrap_or_default(),
+                });
+            }
+            // Nothing came back. Only meaningful if we were listening at the time.
+            None if floor_ms.is_some_and(|f| m.ts >= f) => {
+                m.delivery = Some(Delivery {
+                    state: DeliveryState::Sent,
+                    read_by: Vec::new(),
+                });
+            }
+            None => {}
+        }
+    }
+    Ok(())
 }
 
 async fn gchat_messages(
@@ -1821,7 +1986,7 @@ async fn gchat_messages(
             link_images: Vec::new(), // both filled for the whole page in messages_page
             link_offers: Vec::new(),
             reply_to: None,
-            read: None,
+            delivery: None,
         });
     }
 
@@ -1993,7 +2158,7 @@ async fn irc_messages(
             link_images: Vec::new(), // both filled for the whole page in messages_page
             link_offers: Vec::new(),
             reply_to: None,
-            read: None,
+            delivery: None,
             attachments: Vec::new(), // nor these
         });
     }
@@ -2196,7 +2361,7 @@ async fn telegram_messages(
             edits: Vec::new(),
             link_offers: Vec::new(),
             reply_to: None,
-            read: None,
+            delivery: None,
         });
     }
 
@@ -2347,7 +2512,19 @@ async fn attach_telegram_read(
     for (i, msg_id) in msg_ids.iter().enumerate() {
         // Only the messages that are MINE have a "have they read it" to answer.
         if msgs[i].is_outgoing {
-            msgs[i].read = Some(*msg_id <= mark);
+            let state = if *msg_id <= mark {
+                DeliveryState::Read
+            } else {
+                DeliveryState::Sent
+            };
+            // ⚠ `read_by` stays EMPTY, and that is Telegram's shape rather than a
+            // gap to fill later. `updateReadHistoryOutbox` carries a peer and a
+            // position; it names nobody, so there is no list to put here even in
+            // a group, where the mark means "somebody has read this far".
+            msgs[i].delivery = Some(Delivery {
+                state,
+                read_by: Vec::new(),
+            });
         }
     }
     Ok(())

@@ -248,10 +248,15 @@
   .tag {
     font-style: italic;
   }
-  // Read state, on your own messages only. Quieter than `edited` and `deleted`:
-  // those mark something that HAPPENED to the message, this is ambient status and
-  // sits on nearly every outgoing bubble once a conversation is active.
-  .tag.read {
+  // How far it got, on your own messages only. Quieter than `edited` and
+  // `deleted`: those mark something that HAPPENED to the message, this is ambient
+  // status and sits on nearly every outgoing bubble once a conversation is active.
+  //
+  // ⚠ Named for the field rather than for `read`, which it was called while
+  // Telegram was the only origin that could fill it. Signal reports `sent` and
+  // `delivered` through the same tag, and a rule called `.read` styling the word
+  // "sent" is the kind of drift nobody reads twice.
+  .tag.delivery {
     font-style: normal;
     &.unread {
       opacity: 0.55;

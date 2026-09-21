@@ -50,14 +50,17 @@
                 @if (m.deleted && isRevealed(m.id)) {
                   <span class="tag">deleted</span>
                 }
-                <!-- ⚠ Drawn only when the archive can actually SAY. `read` is null
-                     for every incoming message, every origin but Telegram, and any
-                     conversation no mark has been captured for — capture began
-                     2026-09-17 and Telegram keeps no history of reading, so a quiet
-                     conversation has no mark at all. A tick is a claim about
-                     somebody else's behaviour, and this one is never guessed. -->
-                @if (m.read !== null) {
-                  <span class="tag read" [class.unread]="!m.read">{{ m.read ? 'read' : 'sent' }}</span>
+                <!-- ⚠ Drawn only when the archive can actually SAY. `delivery` is
+                     null for every incoming message, for Google Chat and IRC
+                     entirely, and for anything sent before capture began —
+                     Telegram's marks start 2026-09-17, Signal's receipts
+                     2026-09-18, and neither service keeps a history to go back
+                     for. A tick is a claim about somebody else's behaviour, and
+                     this one is never guessed.
+                     The title names who and when, which only Signal records. -->
+                @if (m.delivery; as d) {
+                  <span class="tag delivery" [class.unread]="deliveryPending(d)"
+                        [title]="readers(d)">{{ deliveryLabel(d) }}</span>
                 }
               </div>
               <!-- What this message answered. Drawn ABOVE the body and above the

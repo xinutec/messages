@@ -11,8 +11,8 @@
 //! them too. NEVER point it at the real signal DB.
 
 use messages::archive::{
-    self, ConversationKind, EXCERPT_CHARS, MessageKind, Origin, PageDir, call_text, encode_cursor,
-    escape_like, excerpt, kind_from_is_dm, parse_cursor, us_to_ms,
+    self, ConversationKind, DeliveryState, EXCERPT_CHARS, MessageKind, Origin, PageDir, call_text,
+    encode_cursor, escape_like, excerpt, kind_from_is_dm, parse_cursor, us_to_ms,
 };
 
 // ---- pure units (no DB) -----------------------------------------------------
@@ -247,6 +247,7 @@ async fn seed(pool: &MySqlPool) {
     // Throwaway DB: start from a clean slate every run.
     for t in [
         "reactions",
+        "signal_receipts",
         "attachments",
         "messages",
         "conversations",
@@ -272,6 +273,7 @@ async fn seed(pool: &MySqlPool) {
     let ddl = [
         "CREATE TABLE conversations (thread_id VARCHAR(80) PRIMARY KEY, type ENUM('dm','group') NOT NULL, name VARCHAR(255) NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE contacts (uuid VARCHAR(64) PRIMARY KEY, phone VARCHAR(32) NULL, profile_name VARCHAR(255) NULL) DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE signal_receipts (id BIGINT AUTO_INCREMENT PRIMARY KEY, target_ts BIGINT NOT NULL, author_uuid VARCHAR(64) NOT NULL, kind ENUM('delivery','read','viewed') NOT NULL, when_ts BIGINT NOT NULL, observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uniq_signal_receipt (target_ts, author_uuid, kind)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, thread_id VARCHAR(80) NOT NULL, sender_uuid VARCHAR(64) NOT NULL, server_ts BIGINT NOT NULL, body TEXT NULL, quote_target_ts BIGINT NULL, is_outgoing TINYINT(1) NOT NULL DEFAULT 0, deleted TINYINT(1) NOT NULL DEFAULT 0, edited TINYINT(1) NOT NULL DEFAULT 0, edit_of_ts BIGINT NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, thread_id VARCHAR(80) NOT NULL, target_ts BIGINT NOT NULL, author_uuid VARCHAR(64) NOT NULL, emoji VARCHAR(32) NULL, reaction_ts BIGINT NOT NULL, removed TINYINT(1) NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE attachments (id BIGINT AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL, content_type VARCHAR(255) NULL, file_name VARCHAR(512) NULL, size_bytes BIGINT NULL, stored_path VARCHAR(1024) NULL) DEFAULT CHARSET=utf8mb4",
@@ -368,6 +370,48 @@ async fn seed(pool: &MySqlPool) {
          ('dm:tie','alice',1500,'tie c',0,0,0),
          ('dm:tie','alice',1500,'tie d',0,0,0)",
     ).execute(pool).await.unwrap();
+
+    // A thread that exists for the RECEIPTS, because Signal's are the one read
+    // state in this archive that names a person and a time. Kept apart from
+    // `dm:alice` so the ordering and pagination cases above keep the four
+    // messages they count.
+    //
+    // ⚠ **THE FLOOR IS THE POINT.** `observed_at` is pinned to 1970-01-01
+    // 00:00:01, so `MIN(observed_at)` — when this archive started listening —
+    // is 1000ms, and `before we listened` at 900 sits just under it. Without a
+    // message on the wrong side of that line, "no receipt" and "we were not
+    // there" look identical and a reader could report our start date as
+    // somebody's phone being off.
+    sqlx::query(
+        "INSERT INTO conversations (thread_id, type, name) VALUES ('dm:receipts','dm','Receipts')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO messages (thread_id, sender_uuid, server_ts, body, is_outgoing, deleted, edited) VALUES
+         ('dm:receipts','me',900,'before we listened',1,0,0),
+         ('dm:receipts','me',1200,'read by her',1,0,0),
+         ('dm:receipts','alice',1250,'her words',0,0,0),
+         ('dm:receipts','me',1300,'delivered only',1,0,0),
+         ('dm:receipts','me',1400,'nothing back',1,0,0)",
+    ).execute(pool).await.unwrap();
+    // ⚠ Two of these five are TRAPS, and both have real counterparts in the live
+    // archive. `(1200,'me','read')` is my own linked device syncing a read of a
+    // thread, my own messages included — it must not make me one of the people
+    // who read my message. `(1250,'me','read')` is the same event against a
+    // message ALICE sent, where "has it been read" is not a question about her.
+    sqlx::query(
+        "INSERT INTO signal_receipts (target_ts, author_uuid, kind, when_ts, observed_at) VALUES
+         (1200,'alice','delivery',1210,FROM_UNIXTIME(1)),
+         (1200,'alice','read',1220,FROM_UNIXTIME(1)),
+         (1200,'me','read',1230,FROM_UNIXTIME(1)),
+         (1250,'me','read',1260,FROM_UNIXTIME(1)),
+         (1300,'alice','delivery',1310,FROM_UNIXTIME(1))",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
 
     // Google Chat: a DM (Bob) with 2 messages + an aggregated reaction, and an
     // empty group (no messages → last_ts None).
@@ -723,6 +767,7 @@ async fn conversations_normalise_and_sort_across_origins() {
             "group:g1".to_string(),
             "dm:alice".to_string(),
             "dm:tie".to_string(),
+            "dm:receipts".to_string(),
             "gc2".to_string(),
             "-77".to_string(),
         ],
@@ -2491,27 +2536,48 @@ async fn telegram_read_state_is_mine_only_and_silent_without_a_mark() {
     let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 100, PageDir::Older)
         .await
         .unwrap();
-    let read_of = |body: &str| {
+    let state_of = |body: &str| {
         page.messages
             .iter()
             .find(|m| m.body.as_deref() == Some(body))
             .unwrap_or_else(|| panic!("no message {body:?}"))
-            .read
+            .delivery
+            .as_ref()
+            .map(|d| d.state)
     };
 
     // Mine, at or before the mark (11): read.
-    assert_eq!(read_of("ook hoi"), Some(true));
+    assert_eq!(state_of("ook hoi"), Some(DeliveryState::Read));
 
     // ⚠ Mine, AFTER the mark: sent and not yet read. This is also the assertion
     // that pins WHICH mark is read — the fixture's inbox mark is 16, so a reader
-    // asking the wrong direction turns this one true.
-    assert_eq!(read_of("telegram touched this"), Some(false));
+    // asking the wrong direction turns this one read.
+    assert_eq!(state_of("telegram touched this"), Some(DeliveryState::Sent));
 
-    // ⚠ Theirs — `None`, not `false`. "Have they read this?" is not a question
+    // ⚠ Theirs — `None`, not `Sent`. "Have they read this?" is not a question
     // about a message they sent, and answering it with the mark meant for my own
     // messages would report their own words back as unread.
-    assert_eq!(read_of("hoi"), None);
-    assert_eq!(read_of("same second"), None);
+    assert_eq!(state_of("hoi"), None);
+    assert_eq!(state_of("same second"), None);
+
+    // ⚠ **`Delivered` IS UNREACHABLE HERE, and that is Telegram rather than a
+    // bug.** A read mark is a position in the conversation; nothing in it says a
+    // message ARRIVED, so the rung between sent and read has no evidence behind
+    // it. Signal fills it because Signal sends a delivery receipt.
+    assert!(
+        page.messages
+            .iter()
+            .all(|m| m.delivery.as_ref().map(|d| d.state) != Some(DeliveryState::Delivered)),
+        "Telegram cannot report delivery"
+    );
+
+    // And it names nobody, in either state.
+    assert!(
+        page.messages
+            .iter()
+            .all(|m| m.delivery.as_ref().is_none_or(|d| d.read_by.is_empty())),
+        "a read mark carries a position, never a person"
+    );
 }
 
 /// The other half: a conversation with no mark says nothing at all, rather than
@@ -2533,27 +2599,106 @@ async fn a_conversation_with_no_read_mark_reports_nothing() {
     .unwrap();
     assert!(!page.messages.is_empty(), "the channel has a message");
     assert!(
-        page.messages.iter().all(|m| m.read.is_none()),
+        page.messages.iter().all(|m| m.delivery.is_none()),
         "no mark → no claim, in either direction"
     );
 }
 
-/// The origins Telegram's read marks say nothing about.
+/// The origins that report nothing, and it is not a gap to be filled.
+///
+/// ⚠ **SIGNAL IS NO LONGER ONE OF THEM** — it was, until receipt capture landed,
+/// and this case asserted its silence. Google Chat and IRC stay: neither carries
+/// per-message read state at all, so there is nothing to capture rather than
+/// something not yet captured.
 #[tokio::test]
 async fn the_other_origins_report_no_read_state() {
     let Some(pool) = seeded_pool().await else {
         return;
     };
-    for (origin, id) in [(Origin::Signal, "dm:alice"), (Origin::Gchat, "gc1")] {
+    for (origin, id) in [(Origin::Gchat, "gc1")] {
         let page = archive::messages_page(&pool, origin, id, None, 100, PageDir::Older)
             .await
             .unwrap();
         assert!(!page.messages.is_empty(), "{origin:?} has messages");
         assert!(
-            page.messages.iter().all(|m| m.read.is_none()),
+            page.messages.iter().all(|m| m.delivery.is_none()),
             "{origin:?} records no read state"
         );
     }
+}
+
+// ---- Signal: who read it, and when ------------------------------------------
+
+/// ⚠ **THE LADDER, AND THE TWO WAYS IT LIES IF NOBODY CHECKS.** Signal is the one
+/// origin here that reports a message ARRIVING separately from it being READ, and
+/// the one that names the person. Both are easy to lose: flatten the kinds and
+/// `delivered` becomes `read`; skip the self-filter and my own linked device
+/// becomes a person who read my message.
+#[tokio::test]
+async fn signal_receipts_climb_the_ladder_and_name_the_reader() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let page = archive::messages_page(
+        &pool,
+        Origin::Signal,
+        "dm:receipts",
+        None,
+        100,
+        PageDir::Older,
+    )
+    .await
+    .unwrap();
+    let msg = |body: &str| {
+        page.messages
+            .iter()
+            .find(|m| m.body.as_deref() == Some(body))
+            .unwrap_or_else(|| panic!("no message {body:?}"))
+    };
+    let state_of = |body: &str| msg(body).delivery.as_ref().map(|d| d.state);
+
+    // Delivered AND read: the top rung wins, and it is not the last row seen.
+    assert_eq!(state_of("read by her"), Some(DeliveryState::Read));
+
+    // ⚠ The rung Telegram cannot reach. Delivered, not read — and emphatically
+    // not `Read`, which is what a reader that treats any receipt as a read would
+    // report.
+    assert_eq!(state_of("delivered only"), Some(DeliveryState::Delivered));
+
+    // Nothing came back, but we WERE listening.
+    assert_eq!(state_of("nothing back"), Some(DeliveryState::Sent));
+
+    // ⚠ **We were not listening yet, so there is nothing to say.** This is the
+    // assertion that keeps the archive's own start date out of a claim about
+    // somebody's phone: at 900 it predates the first `observed_at` (1000).
+    assert_eq!(state_of("before we listened"), None);
+
+    // Hers. "Has it been read" is not a question about a message she sent, even
+    // though a receipt targeting it exists — it is my own device's read sync.
+    assert_eq!(state_of("her words"), None);
+
+    // ⚠ **NAMED, AND MY OWN READ SYNC IS NOT ONE OF THE NAMES.** The fixture
+    // carries `(1200,'me','read')` beside Alice's; including it would say I read
+    // my own message, which is true and says nothing about whether she did.
+    let read_by: Vec<_> = msg("read by her")
+        .delivery
+        .as_ref()
+        .unwrap()
+        .read_by
+        .iter()
+        .map(|r| (r.who.as_str(), r.at))
+        .collect();
+    assert_eq!(read_by, [("Alice", 1220)], "her read, at her timestamp");
+
+    // A delivery names nobody: it says the device has it, not that a person saw it.
+    assert!(
+        msg("delivered only")
+            .delivery
+            .as_ref()
+            .unwrap()
+            .read_by
+            .is_empty()
+    );
 }
 
 /// ⚠ **GOOGLE CHAT WAS REPORTED AS HAVING NO REPLIES, AND THE REPORT WAS WRONG.**

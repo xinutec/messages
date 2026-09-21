@@ -1,6 +1,6 @@
-import { ApplicationRef, Component, DestroyRef, ElementRef, computed, effect, inject, input, signal, viewChild } from '@angular/core';
+import { ApplicationRef, Component, DestroyRef, ElementRef, LOCALE_ID, computed, effect, inject, input, signal, viewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { DatePipe } from '@angular/common';
+import { DatePipe, formatDate } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -13,7 +13,7 @@ import { LogScope, chatLogHtml, formatChatLog } from './copy-log';
 import { MAX_RESTORE_PAGES, PAGE, ThreadWindow } from './thread-window';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
-import { Conversation, LinkOffer, Message, Origin, Attachment, Reaction, ReplyTo } from './models';
+import { Conversation, Delivery, LinkOffer, Message, Origin, Attachment, Reaction, ReplyTo } from './models';
 
 /** How often an open, visible thread asks whether anything is newer.
  *
@@ -52,6 +52,7 @@ export class Thread {
   private router = inject(Router);
   private route = inject(ActivatedRoute);
   private appRef = inject(ApplicationRef);
+  private locale = inject(LOCALE_ID);
   private host = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private readonly messagesEl = viewChild<ElementRef<HTMLElement>>('messagesEl');
 
@@ -410,6 +411,39 @@ export class Thread {
     const named = r.who.join(', ');
     const unnamed = r.count - r.who.length;
     return unnamed > 0 ? `${named} and ${unnamed} more` : named;
+  }
+
+  /**
+   * The tag on an outgoing message: how far it got.
+   *
+   * ⚠ **"read" ALONE WOULD BE A CLAIM ABOUT A WHOLE GROUP, and Signal never makes
+   * one.** A receipt arrives from each person who sent it; nothing anywhere says
+   * who has NOT. So the bare word is used only where it can mean everyone — a DM,
+   * or Telegram, whose mark is a position in the conversation rather than a
+   * person. Where the archive is naming individuals, so does the tag: `read by 2`.
+   * A conversation whose kind is not loaded yet (a deep link straight into a
+   * thread) takes the counted form, which is the one that cannot overclaim.
+   */
+  protected deliveryLabel(d: Delivery): string {
+    if (d.state !== 'read' && d.state !== 'viewed') return d.state;
+    if (!d.read_by.length || this.conversation()?.kind === 'dm') return d.state;
+    return `${d.state} by ${d.read_by.length}`;
+  }
+
+  /** Who read it and when — empty for Telegram, which names nobody.
+   *
+   *  ⚠ `formatDate` with the app's LOCALE_ID, NOT `toLocaleString()`. The two
+   *  follow different settings (see app.config.ts) and this sits beside a
+   *  `| date` clock in the same meta line, where a disagreement would show. */
+  protected readers(d: Delivery): string {
+    return d.read_by
+      .map((r) => `${r.who} ${formatDate(r.at, 'short', this.locale)}`)
+      .join(', ');
+  }
+
+  /** Dimmed until somebody has actually read it. */
+  protected deliveryPending(d: Delivery): boolean {
+    return d.state === 'sent' || d.state === 'delivered';
   }
 
   jumpToReply(r: ReplyTo): void {

@@ -29,7 +29,7 @@ function msgs(n: number): Message[] {
     deleted: false,
     edited: false,
     reactions: [],
-    attachments: [], link_images: [], link_offers: [], edits: [], reply_to: null, read: null,
+    attachments: [], link_images: [], link_offers: [], edits: [], reply_to: null, delivery: null,
   }));
 }
 

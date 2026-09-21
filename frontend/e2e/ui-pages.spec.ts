@@ -63,7 +63,7 @@ const THREAD = {
   messages: [
     { id: "1", ts: Date.UTC(2026, 0, 1, 12, 0), sender: "Alice Andersson", is_outgoing: false,
       body: "Morning! Did the referral letter come through yet? The clinic said they'd post it but it's been almost two weeks now.",
-      deleted: false, edited: true, reply_to: null, read: null, reactions: [{ emoji: "👍", count: 3, who: ["Bob Bytecode", "Dana", "Test User"] }, { emoji: "❤️", count: 2, who: [] }, { emoji: "🎉", count: 1, who: ["Dana"] }],
+      deleted: false, edited: true, reply_to: null, delivery: null, reactions: [{ emoji: "👍", count: 3, who: ["Bob Bytecode", "Dana", "Test User"] }, { emoji: "❤️", count: 2, who: [] }, { emoji: "🎉", count: 1, who: ["Dana"] }],
       attachments: [], link_images: [], link_offers: [], edits: [] },
     // ⚠ A reply quote whose excerpt is the FULL 120 characters the backend will
     // send, on an OUTGOING bubble — the narrowest one, since `.out` is pushed
@@ -71,7 +71,12 @@ const THREAD = {
     // construction, and if the clipping ever stops working it spills past the
     // right edge here first.
     { id: "2", ts: Date.UTC(2026, 0, 1, 12, 4), sender: "Test User", is_outgoing: true,
-      body: "Not yet — chasing them this afternoon.", deleted: false, edited: false, reactions: [], read: true,
+      body: "Not yet — chasing them this afternoon.", deleted: false, edited: false, reactions: [],
+      // ⚠ TWO readers on the NARROWEST bubble — `.out` is pushed right, so its
+      // meta line has the least room for a sender, a clock and a delivery tag.
+      // The same message is rendered through a DM route and a GROUP route below,
+      // where it has to word itself differently.
+      delivery: { state: "read", read_by: [{ who: "Alice Andersson", at: Date.UTC(2026, 0, 1, 12, 6) }, { who: "Bob Bytecode", at: Date.UTC(2026, 0, 1, 12, 8) }] },
       reply_to: { id: "1", cursor: "1_1", ts: Date.UTC(2026, 0, 1, 12, 0), sender: "Alice Andersson",
         excerpt: "Morning! Did the referral letter come through yet? The clinic said they'd post it but it's been almost two weeks n…",
         deleted: false },
@@ -79,14 +84,14 @@ const THREAD = {
     // An UNRESOLVED quote: the archive holds no such message, so it renders as
     // text with no control. Its line is the longest of the two wordings.
     { id: "3", ts: Date.UTC(2026, 0, 1, 12, 9), sender: "Alice Andersson", is_outgoing: false,
-      body: "Thankyouuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu", deleted: false, edited: false, reactions: [], read: null,
+      body: "Thankyouuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu", deleted: false, edited: false, reactions: [], delivery: null,
       reply_to: { id: null, cursor: null, ts: Date.UTC(2025, 5, 3, 8, 30), sender: null, excerpt: null, deleted: false },
       attachments: [], link_images: [], link_offers: [], edits: [] },
     // A deleted message with BOTH halves behind the reveal: words and a stored
     // image. The attachment-only shape is the one that renders no `.body` at
     // all, so it is the one a careless selector misses.
     { id: "4", ts: Date.UTC(2026, 0, 1, 12, 11), sender: "Alice Andersson", is_outgoing: false,
-      body: "something said and then taken back", deleted: true, edited: false, reactions: [], reply_to: null, read: null,
+      body: "something said and then taken back", deleted: true, edited: false, reactions: [], reply_to: null, delivery: null,
       attachments: [{ id: "a2", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true }], link_images: [], link_offers: [], edits: [] },
     // ⚠ A SERVICE EVENT, which this app drew for three origins and never for
     // Telegram — the page query filtered them out. It arrives as `action`, so it
@@ -94,13 +99,13 @@ const THREAD = {
     // one that can overflow a phone.
     { id: "5", ts: Date.UTC(2026, 0, 1, 12, 20), sender: "Alice Andersson", is_outgoing: false,
       kind: "action", body: "made a 55-minute video call", deleted: false, edited: false,
-      reactions: [], reply_to: null, read: null,
+      reactions: [], reply_to: null, delivery: null,
       attachments: [], link_images: [], link_offers: [], edits: [] },
     // ⚠ Reaction chips that KNOW WHO, with enough names that the hover text is
     // long — the chip must stay chip-sized regardless, since `who` lives in a
     // title attribute and must never widen the row.
     { id: "6", ts: Date.UTC(2026, 0, 1, 12, 24), sender: "Alice Andersson", is_outgoing: false,
-      body: "Six of us are in.", deleted: false, edited: false, reply_to: null, read: null,
+      body: "Six of us are in.", deleted: false, edited: false, reply_to: null, delivery: null,
       reactions: [{ emoji: "👍", count: 6, who: ["Alice Andersson", "Bob Bytecode", "Test User", "Dana", "Erin Example"] },
                   { emoji: "🎉", count: 1, who: ["Dana"] }],
       attachments: [], link_images: [], link_offers: [], edits: [] },
@@ -124,7 +129,10 @@ const LONG_THREAD = {
     deleted: false,
     edited: false,
     reply_to: null,
-    read: i % 2 === 1 ? false : null,
+    // ⚠ Every rung gets laid out at least once. `delivered` is the longest
+    // single word the tag can hold, and it only exists since Signal's receipts
+    // landed — a fixture pinned to read/unread would never render it.
+    delivery: i % 2 === 1 ? { state: ["sent", "delivered", "read"][(i >> 1) % 3], read_by: [] } : null,
     reactions: [],
     attachments: [], link_images: [], link_offers: [], edits: [],
   })),
@@ -212,6 +220,30 @@ test("who reacted is a hover, and the chip still says the count @ phone width", 
   // A reaction the origin cannot attribute gets no hover at all — empty is "not
   // recorded", and an empty tooltip would read as "nobody".
   await expect(page.getByText("❤️ 2")).toHaveAttribute("title", "");
+});
+
+/// ⚠ **THE SAME MESSAGE, THE SAME TWO RECEIPTS, AND THE TAG MUST NOT WORD ITSELF
+/// THE SAME WAY.** Signal names whoever sent a receipt and there is no row
+/// anywhere saying who did NOT — so in a DM two receipts are everybody, and in a
+/// group of unknown size they are two people. A tag that said plain `read` in
+/// both would be inventing the rest of the group, which is the same class of
+/// mistake as reporting our own capture start as somebody's phone being off.
+test("a group counts its readers; a DM says read @ phone width", async ({ page }, testInfo) => {
+  await mockApi(page);
+  const tag = () => page.locator('.msg[data-id="2"] .tag.delivery');
+
+  await page.goto("/conversation/signal/dm:a");
+  await tag().waitFor();
+  await expect(tag()).toHaveText("read");
+  // Who and when live in the hover, like the reaction chips — so naming two
+  // people cannot widen the meta line on a phone.
+  await expect(tag()).toHaveAttribute("title", /Alice Andersson.*Bob Bytecode/);
+
+  await page.goto("/conversation/signal/grp:x");
+  await tag().waitFor();
+  await expect(tag()).toHaveText("read by 2");
+  await expectNoTextOverlaps(page, testInfo);
+  await expectNoHorizontalOverflow(page, testInfo);
 });
 
 test("a deleted message: hidden by default @ phone width", async ({ page }, testInfo) => {
