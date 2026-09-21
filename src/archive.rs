@@ -514,7 +514,7 @@ async fn attach_signal_replies(
     let placeholders = vec!["?"; targets.len()].join(",");
     let sql = format!(
         "SELECT m.id AS id, m.server_ts AS ts, m.body AS body, m.deleted AS deleted,
-                COALESCE(ct.profile_name, m.sender_uuid) AS sender
+                COALESCE(ct.display_name, m.sender_uuid) AS sender
          FROM messages m
          LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
          WHERE m.thread_id = ? AND m.edit_of_ts IS NULL
@@ -1406,7 +1406,7 @@ pub async fn irc_target(pool: &MySqlPool, conversation_id: &str) -> Result<Optio
 /// the account is deleted.
 ///
 /// ⚠ The fallback is the ID AS TEXT, never a blank — the same choice the Signal
-/// query has always made with `COALESCE(profile_name, author_uuid)`. A reaction
+/// query has always made with `COALESCE(display_name, author_uuid)`. A reaction
 /// by somebody unnameable is still a reaction by somebody, and an empty string
 /// would read as the archive not knowing there was a reactor at all.
 async fn telegram_reactors(
@@ -1604,7 +1604,7 @@ async fn signal_messages(
     let sql = match dir {
         PageDir::Older => {
             r"SELECT m.id AS id, m.server_ts AS ts,
-                 COALESCE(ct.profile_name, m.sender_uuid) AS sender,
+                 COALESCE(ct.display_name, m.sender_uuid) AS sender,
                  m.is_outgoing AS is_outgoing, m.body AS body,
                  m.deleted AS deleted, m.edited AS edited,
                  m.quote_target_ts AS quote_target_ts
@@ -1618,7 +1618,7 @@ async fn signal_messages(
         }
         PageDir::Newer => {
             r"SELECT m.id AS id, m.server_ts AS ts,
-                 COALESCE(ct.profile_name, m.sender_uuid) AS sender,
+                 COALESCE(ct.display_name, m.sender_uuid) AS sender,
                  m.is_outgoing AS is_outgoing, m.body AS body,
                  m.deleted AS deleted, m.edited AS edited,
                  m.quote_target_ts AS quote_target_ts
@@ -1632,7 +1632,7 @@ async fn signal_messages(
         }
         PageDir::AtAndNewer => {
             r"SELECT m.id AS id, m.server_ts AS ts,
-                 COALESCE(ct.profile_name, m.sender_uuid) AS sender,
+                 COALESCE(ct.display_name, m.sender_uuid) AS sender,
                  m.is_outgoing AS is_outgoing, m.body AS body,
                  m.deleted AS deleted, m.edited AS edited,
                  m.quote_target_ts AS quote_target_ts
@@ -1744,7 +1744,7 @@ async fn signal_messages(
         // than as an error.
         let sql = format!(
             "SELECT r.target_ts, r.emoji,
-                    COALESCE(ct.profile_name, r.author_uuid) AS who
+                    COALESCE(ct.display_name, r.author_uuid) AS who
              FROM reactions r
              LEFT JOIN contacts ct ON ct.uuid = r.author_uuid
              WHERE r.thread_id = ? AND r.removed = 0 AND r.emoji IS NOT NULL
@@ -1837,7 +1837,7 @@ async fn attach_signal_read(pool: &MySqlPool, msgs: &mut [Message]) -> Result<()
     // interpolated data; all values are bound. Safe to assert.
     let sql = format!(
         "SELECT m.id AS id, r.kind AS kind, r.when_ts AS when_ts,
-                COALESCE(ct.profile_name, r.author_uuid) AS who
+                COALESCE(ct.display_name, r.author_uuid) AS who
          FROM signal_receipts r
          JOIN messages m ON m.server_ts = r.target_ts
          LEFT JOIN contacts ct ON ct.uuid = r.author_uuid
@@ -2600,7 +2600,7 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
 
     let srows = sqlx::query(
         r"SELECT m.id AS id, m.thread_id AS cid, c.name AS cname, m.server_ts AS ts,
-                 COALESCE(ct.profile_name, m.sender_uuid) AS sender, m.body AS body,
+                 COALESCE(ct.display_name, m.sender_uuid) AS sender, m.body AS body,
                  m.deleted AS deleted
           FROM messages m
           LEFT JOIN conversations c ON c.thread_id = m.thread_id

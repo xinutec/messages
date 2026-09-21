@@ -272,7 +272,11 @@ async fn seed(pool: &MySqlPool) {
     }
     let ddl = [
         "CREATE TABLE conversations (thread_id VARCHAR(80) PRIMARY KEY, type ENUM('dm','group') NOT NULL, name VARCHAR(255) NULL) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE contacts (uuid VARCHAR(64) PRIMARY KEY, phone VARCHAR(32) NULL, profile_name VARCHAR(255) NULL) DEFAULT CHARSET=utf8mb4",
+        // ⚠ `display_name`, not `profile_name`. What signal-cli resolves is a
+        // DISPLAY name — the contact name it has for somebody, falling back to
+        // their profile name — and the column it lands in was renamed in the
+        // archive's v40 migration to stop saying otherwise.
+        "CREATE TABLE contacts (uuid VARCHAR(64) PRIMARY KEY, phone VARCHAR(32) NULL, display_name VARCHAR(255) NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE signal_receipts (id BIGINT AUTO_INCREMENT PRIMARY KEY, target_ts BIGINT NOT NULL, author_uuid VARCHAR(64) NOT NULL, kind ENUM('delivery','read','viewed') NOT NULL, when_ts BIGINT NOT NULL, observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uniq_signal_receipt (target_ts, author_uuid, kind)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, thread_id VARCHAR(80) NOT NULL, sender_uuid VARCHAR(64) NOT NULL, server_ts BIGINT NOT NULL, body TEXT NULL, quote_target_ts BIGINT NULL, is_outgoing TINYINT(1) NOT NULL DEFAULT 0, deleted TINYINT(1) NOT NULL DEFAULT 0, edited TINYINT(1) NOT NULL DEFAULT 0, edit_of_ts BIGINT NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, thread_id VARCHAR(80) NOT NULL, target_ts BIGINT NOT NULL, author_uuid VARCHAR(64) NOT NULL, emoji VARCHAR(32) NULL, reaction_ts BIGINT NOT NULL, removed TINYINT(1) NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
@@ -320,7 +324,7 @@ async fn seed(pool: &MySqlPool) {
 
     // Signal: a DM (Alice) with 4 messages + reactions, and a group with 1.
     sqlx::query("INSERT INTO conversations (thread_id, type, name) VALUES ('dm:alice','dm','Alice'),('group:g1','group','Grp')").execute(pool).await.unwrap();
-    sqlx::query("INSERT INTO contacts (uuid, profile_name) VALUES ('alice','Alice'),('me','Me')")
+    sqlx::query("INSERT INTO contacts (uuid, display_name) VALUES ('alice','Alice'),('me','Me')")
         .execute(pool)
         .await
         .unwrap();
