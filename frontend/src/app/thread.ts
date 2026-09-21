@@ -5,15 +5,19 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
+import { MatListModule } from '@angular/material/list';
+import { FormsModule } from '@angular/forms';
 
-import { firstValueFrom } from 'rxjs';
+import { Subject, catchError, firstValueFrom, of, switchMap } from 'rxjs';
 
 import { attachmentName, attachmentNoun } from './attachment';
 import { LogScope, chatLogHtml, formatChatLog } from './copy-log';
 import { MAX_RESTORE_PAGES, PAGE, ThreadWindow } from './thread-window';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
-import { Conversation, Delivery, LinkOffer, Message, Origin, Attachment, Reaction, ReplyTo } from './models';
+import { Conversation, Delivery, LinkOffer, Message, Origin, Attachment, Reaction, ReplyTo, SearchHit } from './models';
 
 /** How often an open, visible thread asks whether anything is newer.
  *
@@ -44,7 +48,16 @@ const MEDIA_WATCH_LIMIT_MS = 15 * 60 * 1000;
   // `copy` is on the host because it BUBBLES from wherever the selection is —
   // the browser does the selecting, we only rewrite what leaves.
   host: { class: 'thread', '(scroll)': 'onScroll()', '(copy)': 'onCopy($event)' },
-  imports: [DatePipe, MatButtonModule, MatIconModule, MatProgressBarModule],
+  imports: [
+    DatePipe,
+    FormsModule,
+    MatButtonModule,
+    MatFormFieldModule,
+    MatIconModule,
+    MatInputModule,
+    MatListModule,
+    MatProgressBarModule,
+  ],
 })
 export class Thread {
   private api = inject(MessagesApi);
@@ -157,6 +170,24 @@ export class Thread {
     return c ? this.store.title(c) : 'Conversation';
   });
 
+  /** Searching WITHIN this conversation.
+   *
+   * ⚠ **THE SHELL'S SEARCH BOX IS UNREACHABLE FROM HERE ON A PHONE**, which is
+   * why this exists rather than a scope toggle up there. `app.scss` hides
+   * `.list` — and the search field inside it — whenever a conversation is open
+   * below 768px, so the one moment you want to search the thread you are reading
+   * is the one moment that box is off screen.
+   */
+  readonly searchOpen = signal(false);
+  readonly searchQuery = signal('');
+  readonly searchHits = signal<SearchHit[] | null>(null);
+  readonly searchBusy = signal(false);
+  /** ⚠ Distinct from "no hits", for the reason `app.ts` spells out: an empty
+   *  list is a CLAIM that the words are not in this conversation, and a failed
+   *  request must not be able to make it. */
+  readonly searchFailed = signal(false);
+  private threadSearch$ = new Subject<string>();
+
   /** All fetched messages, ascending by ts. Retained in full (text is cheap);
    *  only a window of them is ever rendered. */
   // dev-lint: allow-component-list — `messages` is an infinite-scroll pagination
@@ -215,6 +246,32 @@ export class Thread {
   });
 
   constructor() {
+    // ⚠ **`switchMap`, so a slow answer cannot land after a newer one** — the
+    // same shape the shell's search uses. Typing two queries quickly otherwise
+    // shows the first one's hits under the second one's words.
+    this.threadSearch$
+      .pipe(
+        switchMap((q) => {
+          const o = this.origin();
+          const id = this.id();
+          // Nothing to scope to means nothing to search: the thread search is
+          // only ever offered on a routed conversation, and widening to a global
+          // search here would answer a different question than the one asked.
+          if (o == null || id == null) return of<SearchHit[]>([]);
+          return this.api.search(q, { origin: o, id }).pipe(
+            catchError(() => {
+              this.searchFailed.set(true);
+              return of<SearchHit[]>([]);
+            }),
+          );
+        }),
+        takeUntilDestroyed(),
+      )
+      .subscribe((hits) => {
+        this.searchHits.set(hits);
+        this.searchBusy.set(false);
+      });
+
     // (Re)load whenever the routed conversation changes — deep link, switching
     // conversations (Angular reuses this instance, just updates the inputs),
     // Back/forward.
@@ -444,6 +501,43 @@ export class Thread {
   /** Dimmed until somebody has actually read it. */
   protected deliveryPending(d: Delivery): boolean {
     return d.state === 'sent' || d.state === 'delivered';
+  }
+
+  /** Open or close the in-thread search, clearing what it found. */
+  protected toggleSearch(): void {
+    const open = !this.searchOpen();
+    this.searchOpen.set(open);
+    if (!open) {
+      this.searchQuery.set('');
+      this.searchHits.set(null);
+      this.searchFailed.set(false);
+    }
+  }
+
+  protected runThreadSearch(): void {
+    const q = this.searchQuery().trim();
+    if (!q) {
+      this.searchHits.set(null);
+      return;
+    }
+    this.searchBusy.set(true);
+    this.searchFailed.set(false);
+    this.threadSearch$.next(q);
+  }
+
+  /** Go to a hit, using the same landing a global search result uses.
+   *
+   *  ⚠ **`?at=` RATHER THAN A SCROLL.** Only a window of a long conversation is
+   *  in the DOM, so a hit from last year is not there to scroll to — and
+   *  `scrollToTs` answers with the NEAREST rendered message, which would present
+   *  the wrong one as the right one. The cursor makes the server fetch around it
+   *  and the `landed` marker says which it reached. */
+  protected openHit(h: SearchHit): void {
+    this.toggleSearch();
+    void this.router.navigate(['/conversation', h.origin, h.conversation_id], {
+      queryParams: { at: h.cursor, from: null },
+      queryParamsHandling: 'merge',
+    });
   }
 
   jumpToReply(r: ReplyTo): void {

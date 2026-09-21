@@ -2594,11 +2594,67 @@ async fn attach_telegram_edits(
     Ok(())
 }
 
-pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchHit>> {
+/// Where a search looks: everywhere, or inside one conversation.
+///
+/// ⚠ **SCOPING IS NOT A FILTER APPLIED AFTERWARDS.** Narrowing by fetching the
+/// global result and keeping the matching rows would be bounded by `limit`
+/// BEFORE the conversation is considered — a term that is common elsewhere and
+/// rare here would come back empty while the messages sat in the archive. The
+/// scope goes into the SQL, and the origins it cannot match are not queried at
+/// all.
+///
+/// ⚠ **AND IT MAKES THE SLOW ORIGIN FAST.** The global IRC search is a 10s scan
+/// of 3.7M rows because `LIKE '%term%'` cannot use an index (see below).
+/// `conversation_id` IS indexed, so a scoped search reads one conversation's
+/// rows instead of every row — the opposite of the usual "filtering costs extra".
+#[derive(Debug, Clone, Copy)]
+pub enum SearchScope<'a> {
+    Everywhere,
+    Conversation { origin: Origin, id: &'a str },
+}
+
+impl SearchScope<'_> {
+    /// Whether this origin has anything to contribute to the result.
+    fn covers(&self, origin: Origin) -> bool {
+        match self {
+            SearchScope::Everywhere => true,
+            SearchScope::Conversation { origin: o, .. } => *o == origin,
+        }
+    }
+
+    /// The conversation id, when this origin is the scoped one.
+    fn id_for(&self, origin: Origin) -> Option<&str> {
+        match self {
+            SearchScope::Everywhere => None,
+            SearchScope::Conversation { origin: o, id } if *o == origin => Some(id),
+            SearchScope::Conversation { .. } => None,
+        }
+    }
+}
+
+pub async fn search(
+    pool: &MySqlPool,
+    q: &str,
+    limit: i64,
+    scope: SearchScope<'_>,
+) -> Result<Vec<SearchHit>> {
     let like = escape_like(q);
     let mut hits = Vec::new();
 
-    let srows = sqlx::query(
+    // ⚠ Two literals and a match, not a built string — the same shape
+    // `signal_messages` uses for its page direction, and for the same reason:
+    // the property being guarded (no interpolation anywhere) survives a reader
+    // checking it by eye. Repeated for each origin below.
+    let sql = if scope.id_for(Origin::Signal).is_some() {
+        r"SELECT m.id AS id, m.thread_id AS cid, c.name AS cname, m.server_ts AS ts,
+                 COALESCE(ct.display_name, m.sender_uuid) AS sender, m.body AS body,
+                 m.deleted AS deleted
+          FROM messages m
+          LEFT JOIN conversations c ON c.thread_id = m.thread_id
+          LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
+          WHERE m.body LIKE ? AND m.thread_id = ?
+          ORDER BY m.server_ts DESC LIMIT ?"
+    } else {
         r"SELECT m.id AS id, m.thread_id AS cid, c.name AS cname, m.server_ts AS ts,
                  COALESCE(ct.display_name, m.sender_uuid) AS sender, m.body AS body,
                  m.deleted AS deleted
@@ -2606,12 +2662,18 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
           LEFT JOIN conversations c ON c.thread_id = m.thread_id
           LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
           WHERE m.body LIKE ?
-          ORDER BY m.server_ts DESC LIMIT ?",
-    )
-    .bind(&like)
-    .bind(limit)
-    .fetch_all(pool)
-    .await?;
+          ORDER BY m.server_ts DESC LIMIT ?"
+    };
+    let srows = if scope.covers(Origin::Signal) {
+        // dev-lint: allow-sqlx — `sql` is one of the two literals directly above.
+        let mut q = sqlx::query(sql).bind(&like);
+        if let Some(id) = scope.id_for(Origin::Signal) {
+            q = q.bind(id);
+        }
+        q.bind(limit).fetch_all(pool).await?
+    } else {
+        Vec::new()
+    };
     for r in srows {
         let deleted: i8 = r.try_get("deleted")?;
         let id: i64 = r.try_get("id")?;
@@ -2631,18 +2693,31 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
         });
     }
 
-    let grows = sqlx::query(
+    let sql = if scope.id_for(Origin::Gchat).is_some() {
+        r"SELECT m.id AS id, m.group_id AS cid, g.name AS cname, m.ts_us AS ts_us,
+                 m.sender_name AS sender, m.text AS body
+          FROM gchat_messages m
+          LEFT JOIN gchat_conversations g ON g.group_id = m.group_id
+          WHERE m.text LIKE ? AND m.group_id = ?
+          ORDER BY m.ts_us DESC LIMIT ?"
+    } else {
         r"SELECT m.id AS id, m.group_id AS cid, g.name AS cname, m.ts_us AS ts_us,
                  m.sender_name AS sender, m.text AS body
           FROM gchat_messages m
           LEFT JOIN gchat_conversations g ON g.group_id = m.group_id
           WHERE m.text LIKE ?
-          ORDER BY m.ts_us DESC LIMIT ?",
-    )
-    .bind(&like)
-    .bind(limit)
-    .fetch_all(pool)
-    .await?;
+          ORDER BY m.ts_us DESC LIMIT ?"
+    };
+    let grows = if scope.covers(Origin::Gchat) {
+        // dev-lint: allow-sqlx — `sql` is one of the two literals directly above.
+        let mut q = sqlx::query(sql).bind(&like);
+        if let Some(id) = scope.id_for(Origin::Gchat) {
+            q = q.bind(id);
+        }
+        q.bind(limit).fetch_all(pool).await?
+    } else {
+        Vec::new()
+    };
     for r in grows {
         let ts_us: i64 = r.try_get("ts_us")?;
         let id: i64 = r.try_get("id")?;
@@ -2664,19 +2739,36 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
 
     // Telegram. Only what was said, as the list and the page do, and the id is
     // numeric so the hit carries it as text the way the URL will.
-    let trows = sqlx::query(
+    let sql = if scope.id_for(Origin::Telegram).is_some() {
+        r"SELECT m.id AS id, m.conversation_id AS cid, t.name AS cname,
+                 m.sent_at AS sent_at, m.sender_name AS sender, m.text AS body,
+                 m.deleted AS deleted
+          FROM telegram_messages m
+          LEFT JOIN telegram_conversations t ON t.id = m.conversation_id
+          WHERE m.kind = 'message' AND m.text LIKE ? AND m.conversation_id = ?
+          ORDER BY m.sent_at DESC LIMIT ?"
+    } else {
         r"SELECT m.id AS id, m.conversation_id AS cid, t.name AS cname,
                  m.sent_at AS sent_at, m.sender_name AS sender, m.text AS body,
                  m.deleted AS deleted
           FROM telegram_messages m
           LEFT JOIN telegram_conversations t ON t.id = m.conversation_id
           WHERE m.kind = 'message' AND m.text LIKE ?
-          ORDER BY m.sent_at DESC LIMIT ?",
-    )
-    .bind(&like)
-    .bind(limit)
-    .fetch_all(pool)
-    .await?;
+          ORDER BY m.sent_at DESC LIMIT ?"
+    };
+    let trows = if scope.covers(Origin::Telegram) {
+        // dev-lint: allow-sqlx — `sql` is one of the two literals directly above.
+        let mut q = sqlx::query(sql).bind(&like);
+        // ⚠ Bound as a STRING against a BIGINT column. MariaDB coerces it, and
+        // the id arrives from the URL as text; parsing it here would turn a
+        // malformed id into a 500 where the query simply matches nothing.
+        if let Some(id) = scope.id_for(Origin::Telegram) {
+            q = q.bind(id);
+        }
+        q.bind(limit).fetch_all(pool).await?
+    } else {
+        Vec::new()
+    };
     for r in trows {
         let sent_at: i64 = r.try_get("sent_at")?;
         let id: i64 = r.try_get("id")?;
@@ -2727,7 +2819,34 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
     // index, which searches WORDS: `nix` would stop matching `nixos`. That is a
     // decision about what search means rather than how it runs, so it is
     // Pippijn's, and it is filed as **#882**.
-    let irows = sqlx::query(
+    //
+    // ⚠ **SCOPED, THIS IS THE ONE THAT GETS DRAMATICALLY FASTER.** The 10s floor
+    // above is one pass over 3.7M rows because `LIKE '%term%'` cannot use an
+    // index. `conversation_id` IS indexed, so adding it narrows the scan to one
+    // conversation's rows before the substring test runs — the scoped query does
+    // strictly less work than the global one it refines.
+    //
+    // The `is_status` exclusion stays even when scoped: it is cheap, and a
+    // reader who deep-links the status log should get the same nothing the list
+    // gives them rather than a search that quietly disagrees with the UI.
+    let sql = if scope.id_for(Origin::Irc).is_some() {
+        r"SELECT m.conversation_id AS cid, c.target AS cname,
+                 TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) AS ts_s,
+                 m.nick AS sender, m.text AS body, m.id AS id
+          FROM (
+              SELECT conversation_id, sent_at, id, nick, text
+                FROM irc_messages
+               WHERE kind IN ('message', 'action')
+                 AND conversation_id = ?
+                 AND text LIKE ?
+                 AND conversation_id NOT IN (
+                     SELECT id FROM irc_conversations WHERE is_status = 1
+                 )
+               ORDER BY sent_at DESC, id DESC LIMIT ?
+          ) m
+          LEFT JOIN irc_conversations c ON c.id = m.conversation_id
+          ORDER BY m.sent_at DESC, m.id DESC"
+    } else {
         r"SELECT m.conversation_id AS cid, c.target AS cname,
                  TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) AS ts_s,
                  m.nick AS sender, m.text AS body, m.id AS id
@@ -2742,12 +2861,20 @@ pub async fn search(pool: &MySqlPool, q: &str, limit: i64) -> Result<Vec<SearchH
                ORDER BY sent_at DESC, id DESC LIMIT ?
           ) m
           LEFT JOIN irc_conversations c ON c.id = m.conversation_id
-          ORDER BY m.sent_at DESC, m.id DESC",
-    )
-    .bind(&like)
-    .bind(limit)
-    .fetch_all(pool)
-    .await?;
+          ORDER BY m.sent_at DESC, m.id DESC"
+    };
+    // ⚠ The scoped literal binds the id FIRST, matching the order its `?` appear
+    // in the statement rather than the order the other origins use.
+    let irows = if scope.covers(Origin::Irc) {
+        // dev-lint: allow-sqlx — `sql` is one of the two literals directly above.
+        let mut q = sqlx::query(sql);
+        if let Some(id) = scope.id_for(Origin::Irc) {
+            q = q.bind(id);
+        }
+        q.bind(&like).bind(limit).fetch_all(pool).await?
+    } else {
+        Vec::new()
+    };
     for r in irows {
         let cid: i32 = r.try_get("cid")?;
         let ts_s: i64 = r.try_get("ts_s")?;

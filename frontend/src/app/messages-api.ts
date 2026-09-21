@@ -100,7 +100,21 @@ export class MessagesApi {
     );
   }
 
-  search(q: string): Observable<SearchHit[]> {
-    return this.http.get<SearchHit[]>('/api/search', { params: { q } });
+  /** Search everywhere, or inside one conversation.
+   *
+   *  ⚠ **BOTH `origin` AND `id` OR NEITHER.** The server refuses half a scope
+   *  rather than widening to a global search, so a caller that sends one without
+   *  the other gets a 404 instead of answers from everywhere that look like the
+   *  scope silently not working. */
+  search(q: string, scope?: { origin: Origin; id: string }): Observable<SearchHit[]> {
+    // ⚠ Typed as a flat record rather than a ternary of two object literals:
+    // the union gives the unscoped branch `origin?: undefined`, which HttpClient's
+    // params type rejects outright.
+    const params: Record<string, string> = { q };
+    if (scope) {
+      params['origin'] = scope.origin;
+      params['id'] = scope.id;
+    }
+    return this.http.get<SearchHit[]>('/api/search', { params });
   }
 }

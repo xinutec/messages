@@ -91,6 +91,9 @@ pub async fn messages(
 pub struct SearchQuery {
     q: String,
     limit: Option<i64>,
+    /// Narrow to one conversation. BOTH are required together — see the handler.
+    origin: Option<String>,
+    id: Option<String>,
 }
 
 /// What became of a link: `offered`, `wanted`, `ok`, `not_image` or `failed`,
@@ -331,7 +334,15 @@ pub async fn request_link_image(
     }))
 }
 
-/// GET /api/search?q= → substring search across all three origins.
+/// GET /api/search?q= → substring search across all four origins,
+/// or inside one conversation with `&origin=&id=`.
+///
+/// ⚠ **HALF A SCOPE IS REFUSED, NOT IGNORED.** `?origin=irc` without an id, or an
+/// origin this app has never heard of, would otherwise silently widen to a
+/// global search — the caller asked to look in one place and got answers from
+/// everywhere, which reads as the scope not working rather than as a bad
+/// request. `Origin::parse` is the same one the routing uses, so a typo cannot
+/// mean "everywhere" here and "not found" there.
 pub async fn search(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
@@ -342,7 +353,17 @@ pub async fn search(
     if q.is_empty() {
         return Ok(Json(Vec::new()));
     }
-    Ok(Json(archive::search(&app.pool, q, limit).await?))
+    let scope = match (sq.origin.as_deref(), sq.id.as_deref()) {
+        (None, None) => archive::SearchScope::Everywhere,
+        (Some(o), Some(id)) if !id.is_empty() => {
+            let Some(origin) = archive::Origin::parse(o) else {
+                return Err(AppError::NotFound);
+            };
+            archive::SearchScope::Conversation { origin, id }
+        }
+        _ => return Err(AppError::NotFound),
+    };
+    Ok(Json(archive::search(&app.pool, q, limit, scope).await?))
 }
 
 /// A message to put on IRC, as Pippijn.

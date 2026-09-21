@@ -4,7 +4,55 @@
       <mat-icon>arrow_back</mat-icon>
     </button>
     <h2>{{ headTitle() }}</h2>
+    <!-- ⚠ Here rather than as a scope toggle on the shell's search box, because
+         that box is DISPLAY:NONE at phone width whenever a conversation is open
+         (app.scss) — the one moment searching this conversation is what you
+         want is the one moment it is off screen. -->
+    <button mat-icon-button class="find" (click)="toggleSearch()"
+            [attr.aria-label]="searchOpen() ? 'Close search' : 'Search this conversation'">
+      <mat-icon>{{ searchOpen() ? 'close' : 'search' }}</mat-icon>
+    </button>
   </div>
+
+  @if (searchOpen()) {
+    <div class="thread-search">
+      <form (ngSubmit)="runThreadSearch()">
+        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+          <mat-icon matPrefix>search</mat-icon>
+          <input matInput name="tq" placeholder="Search this conversation"
+                 [ngModel]="searchQuery()" (ngModelChange)="searchQuery.set($event)" />
+        </mat-form-field>
+      </form>
+      @if (searchBusy()) {
+        <mat-progress-bar mode="indeterminate" />
+      }
+      @if (searchHits(); as hits) {
+        <mat-action-list>
+          <!-- Tracked by index for the reason app.html gives: nothing in a hit is
+               unique, and this list is replaced wholesale by each search. -->
+          @for (h of hits; track $index) {
+            <button mat-list-item lines="2" (click)="openHit(h)">
+              <!-- ⚠ A retraction is FOUND without being spelled out, the same
+                   rule the global result list follows: search matches text its
+                   sender withdrew, and printing it here hands it over unasked. -->
+              <span matListItemTitle [class.deleted]="h.deleted"
+                >{{ h.sender }}: {{ h.deleted ? '(deleted)' : h.snippet }}</span
+              >
+              <span matListItemLine>{{ h.ts | date: 'medium' }}</span>
+            </button>
+          } @empty {
+            <!-- Only when the search actually RAN. "No matches" is a claim about
+                 this conversation; a failed request must not be able to make it. -->
+            @if (searchFailed()) {
+              <p class="error">Couldn't search. <button mat-button (click)="runThreadSearch()">Retry</button></p>
+            } @else if (!searchBusy()) {
+              <p class="empty">No matches in this conversation.</p>
+            }
+          }
+        </mat-action-list>
+      }
+    </div>
+  }
 
   @if (loadingThread()) {
     <mat-progress-bar mode="indeterminate" />

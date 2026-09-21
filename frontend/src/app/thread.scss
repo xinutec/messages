@@ -57,6 +57,49 @@
   h2 {
     margin: 0;
     font: var(--mat-sys-title-medium);
+    // ⚠ The title has to YIELD, now that a button sits after it. A long
+    // conversation name ("Saturday climbing & bouldering logistics crew") would
+    // otherwise push the search button off the right edge at phone width, where
+    // the head is already carrying a back arrow.
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .find {
+    flex: 0 0 auto;
+    margin-left: auto;
+  }
+}
+
+// Searching inside the open conversation. Sits under the sticky head and above
+// the messages, so the thread stays where it was and comes back unchanged when
+// the panel closes.
+.thread-search {
+  position: sticky;
+  top: 3rem; // exactly the head's height, so the two never overlap
+  z-index: 2;
+  background: var(--mat-sys-surface);
+  padding: 0.5rem 0.5rem 0;
+  mat-form-field {
+    width: 100%;
+  }
+  // The hit list is bounded and scrolls on its own: unbounded, a common word in
+  // a 14,000-message conversation pushes the thread entirely off screen.
+  mat-action-list {
+    max-height: 50vh;
+    overflow-y: auto;
+  }
+  .empty {
+    opacity: 0.6;
+    padding: 0 0.5rem 0.5rem;
+  }
+  // A retracted hit reads as one, the same italic-and-dimmed the list and the
+  // thread body use for the same thing.
+  .deleted {
+    font-style: italic;
+    opacity: 0.7;
   }
 }
 

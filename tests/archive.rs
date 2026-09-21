@@ -275,7 +275,7 @@ async fn seed(pool: &MySqlPool) {
         // ⚠ `display_name`, not `profile_name`. What signal-cli resolves is a
         // DISPLAY name — the contact name it has for somebody, falling back to
         // their profile name — and the column it lands in was renamed in the
-        // archive's v40 migration to stop saying otherwise.
+        // archive's v41 migration to stop saying otherwise.
         "CREATE TABLE contacts (uuid VARCHAR(64) PRIMARY KEY, phone VARCHAR(32) NULL, display_name VARCHAR(255) NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE signal_receipts (id BIGINT AUTO_INCREMENT PRIMARY KEY, target_ts BIGINT NOT NULL, author_uuid VARCHAR(64) NOT NULL, kind ENUM('delivery','read','viewed') NOT NULL, when_ts BIGINT NOT NULL, observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uniq_signal_receipt (target_ts, author_uuid, kind)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, thread_id VARCHAR(80) NOT NULL, sender_uuid VARCHAR(64) NOT NULL, server_ts BIGINT NOT NULL, body TEXT NULL, quote_target_ts BIGINT NULL, is_outgoing TINYINT(1) NOT NULL DEFAULT 0, deleted TINYINT(1) NOT NULL DEFAULT 0, edited TINYINT(1) NOT NULL DEFAULT 0, edit_of_ts BIGINT NULL) DEFAULT CHARSET=utf8mb4",
@@ -984,7 +984,9 @@ async fn search_spans_origins_finds_deleted_newest_first() {
         return;
     };
 
-    let hits = archive::search(&pool, "findme", 50).await.unwrap();
+    let hits = archive::search(&pool, "findme", 50, archive::SearchScope::Everywhere)
+        .await
+        .unwrap();
     // Three of the fixture's six 'findme' rows. The other three are IRC and must
     // not surface: a server notice in #chan, a notice in the status log, and a
     // *message* in the status log — the newest row of all, and the one that
@@ -1016,7 +1018,9 @@ async fn search_spans_origins_finds_deleted_newest_first() {
     // means search has silently gone back to deciding this for itself, and a hit
     // with `deleted: false` means the flag stopped travelling and the reader will
     // print somebody's retraction in the list.
-    let gone = archive::search(&pool, "gone", 50).await.unwrap();
+    let gone = archive::search(&pool, "gone", 50, archive::SearchScope::Everywhere)
+        .await
+        .unwrap();
     assert_eq!(gone.len(), 1, "the deleted Signal message is findable");
     assert_eq!(gone[0].snippet, "gone");
     assert!(gone[0].deleted, "and the hit says it was retracted");
@@ -1046,7 +1050,9 @@ async fn search_applies_the_status_exclusion_before_the_limit() {
         return;
     };
 
-    let hits = archive::search(&pool, "findme", 1).await.unwrap();
+    let hits = archive::search(&pool, "findme", 1, archive::SearchScope::Everywhere)
+        .await
+        .unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(
         (hits[0].origin, hits[0].snippet.as_str()),
@@ -1645,7 +1651,10 @@ async fn a_search_hit_carries_a_cursor_the_pager_accepts() {
         return;
     };
 
-    for hit in archive::search(&pool, "findme", 50).await.unwrap() {
+    for hit in archive::search(&pool, "findme", 50, archive::SearchScope::Everywhere)
+        .await
+        .unwrap()
+    {
         let cursor = archive::parse_cursor(&hit.cursor)
             .unwrap_or_else(|| panic!("{:?} hit minted an unparseable cursor", hit.origin));
 
@@ -1816,7 +1825,10 @@ async fn a_landing_contains_the_message_it_landed_on() {
         return;
     };
 
-    for hit in archive::search(&pool, "findme", 50).await.unwrap() {
+    for hit in archive::search(&pool, "findme", 50, archive::SearchScope::Everywhere)
+        .await
+        .unwrap()
+    {
         let cursor = parse_cursor(&hit.cursor).expect("a parseable cursor");
         let older = archive::messages_page(
             &pool,
@@ -2190,7 +2202,9 @@ async fn a_telegram_search_hit_lands_on_its_own_message() {
         eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
         return;
     };
-    let hits = archive::search(&pool, "third go", 20).await.unwrap();
+    let hits = archive::search(&pool, "third go", 20, archive::SearchScope::Everywhere)
+        .await
+        .unwrap();
     let hit = hits
         .iter()
         .find(|h| h.origin == Origin::Telegram)
@@ -2798,4 +2812,112 @@ async fn a_gchat_picture_is_shown_even_when_its_bytes_are_not_held() {
     // rendering, which this app never sees. `Some(_)` would offer the reader a
     // button that cannot work.
     assert!(known.fetch.is_none());
+}
+
+// ---- searching inside one conversation --------------------------------------
+
+/// ⚠ **THE SCOPE IS IN THE SQL, AND THIS IS THE CASE THAT PROVES IT MATTERS.**
+/// The obvious implementation — search globally, then keep the hits whose
+/// conversation matches — is bounded by `limit` BEFORE the conversation is
+/// considered. A term that is common elsewhere and rare here comes back EMPTY
+/// while the messages sit in the archive, and the reader is told there is
+/// nothing rather than that the tool gave up.
+///
+/// `limit = 1` makes that concrete: globally, 'findme' matches three rows and
+/// the newest is IRC's, so a client-side filter asking for Google Chat gets that
+/// one IRC row and discards it.
+#[tokio::test]
+async fn a_scoped_search_is_not_a_global_search_filtered_afterwards() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+
+    // The global answer at limit 1: one IRC hit, the newest of the three.
+    let global = archive::search(&pool, "findme", 1, archive::SearchScope::Everywhere)
+        .await
+        .unwrap();
+    assert_eq!(global.len(), 1);
+    assert_eq!(global[0].origin, Origin::Irc, "newest wins globally");
+
+    // The same limit, scoped to Google Chat, still finds gchat's row — because
+    // the limit was applied to gchat's rows and not to everybody's.
+    let scoped = archive::search(
+        &pool,
+        "findme",
+        1,
+        archive::SearchScope::Conversation {
+            origin: Origin::Gchat,
+            id: "gc1",
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        scoped.len(),
+        1,
+        "the hit a client-side filter would have lost"
+    );
+    assert_eq!(scoped[0].origin, Origin::Gchat);
+    assert_eq!(scoped[0].conversation_id, "gc1");
+}
+
+/// ⚠ **THE OTHER ORIGINS ARE NOT QUERIED AT ALL**, which is the half that makes
+/// a scoped IRC search FASTER than the global one rather than slower: the global
+/// query is a 10s substring scan of 3.7M rows because `LIKE '%term%'` cannot use
+/// an index, and `conversation_id` can.
+#[tokio::test]
+async fn a_scope_admits_only_its_own_origin() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    for (origin, id, expect_any) in [
+        (Origin::Gchat, "gc1", true),
+        // A real conversation of the WRONG origin: the id exists, just not here.
+        (Origin::Gchat, "dm:alice", false),
+        (Origin::Signal, "group:g1", true),
+    ] {
+        let hits = archive::search(
+            &pool,
+            "findme",
+            50,
+            archive::SearchScope::Conversation { origin, id },
+        )
+        .await
+        .unwrap();
+        assert!(
+            hits.iter()
+                .all(|h| h.origin == origin && h.conversation_id == id),
+            "{origin:?}/{id} leaked a hit from elsewhere"
+        );
+        assert_eq!(!hits.is_empty(), expect_any, "{origin:?}/{id}");
+    }
+}
+
+/// A conversation that holds the term nowhere answers with nothing, rather than
+/// falling back to the global result — the failure that would make the whole
+/// feature look like it worked while doing nothing.
+#[tokio::test]
+async fn a_scope_with_no_match_is_empty_not_global() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let hits = archive::search(
+        &pool,
+        "findme",
+        50,
+        archive::SearchScope::Conversation {
+            origin: Origin::Signal,
+            id: "dm:alice",
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        hits.is_empty(),
+        "dm:alice has no 'findme'; got {} hit(s) from {:?}",
+        hits.len(),
+        hits.iter()
+            .map(|h| h.conversation_id.as_str())
+            .collect::<Vec<_>>()
+    );
 }

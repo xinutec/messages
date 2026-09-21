@@ -246,6 +246,67 @@ test("a group counts its readers; a DM says read @ phone width", async ({ page }
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
+/// ⚠ **THE SHELL'S SEARCH BOX IS `display: none` AT PHONE WIDTH WITH A THREAD
+/// OPEN** (`app.scss` hides `.list`), so the one moment searching the
+/// conversation you are reading is what you want is the one moment that box is
+/// off screen. This is the whole reason the thread carries its own — and a test
+/// that only checked the feature "works" on a desktop viewport would have missed
+/// that it was unreachable where it matters.
+test("searching a conversation is reachable with the thread open @ phone width", async ({ page }, testInfo) => {
+  await mockApi(page);
+  await page.route("**/api/search**", (r) =>
+    r.fulfill({
+      json: [
+        { origin: "signal", conversation_id: "dm:a", conversation_name: "Alice Andersson",
+          ts: Date.UTC(2025, 4, 3, 14, 2), sender: "Alice Andersson",
+          snippet: "a phrase that appears nowhere in the thread", deleted: false, cursor: "c1" },
+        { origin: "signal", conversation_id: "dm:a", conversation_name: "Alice Andersson",
+          ts: Date.UTC(2024, 8, 9, 9, 30), sender: "Test User",
+          snippet: "something withdrawn", deleted: true, cursor: "c2" },
+      ],
+    }),
+  );
+  await page.goto("/conversation/signal/dm:a");
+  await page.locator(".msg .body").first().waitFor();
+
+  // The shell's box really is gone — asserted, so this test cannot quietly
+  // become "there are two search boxes and I found the other one".
+  await expect(page.getByPlaceholder("Search messages")).toBeHidden();
+
+  await page.getByRole("button", { name: "Search this conversation" }).click();
+  const box = page.getByPlaceholder("Search this conversation");
+  await box.fill("referral");
+  await box.press("Enter");
+  // ⚠ Scoped to the panel. The thread's own bodies contain these words too, so
+  // an unscoped locator passes by matching the MESSAGE rather than the hit —
+  // green for the wrong reason, which is the failure this file exists to avoid.
+  const panel = page.locator(".thread-search");
+  await panel.getByText("a phrase that appears nowhere", { exact: false }).waitFor();
+
+  // ⚠ A retraction is FOUND without being handed over: the row says who and
+  // when, and the words stay withheld. Same rule as the global result list.
+  await expect(panel.getByText("Test User: (deleted)")).toBeVisible();
+  await expect(panel.getByText("something withdrawn")).toHaveCount(0);
+
+  await expectNoTextOverlaps(page, testInfo);
+  await expectNoHorizontalOverflow(page, testInfo);
+});
+
+/// "No matches" is a CLAIM about this conversation, so a failed request must not
+/// be able to make it — the same distinction the shell's search draws.
+test("a failed conversation search says so rather than \"no matches\" @ phone width", async ({ page }) => {
+  await mockApi(page);
+  await page.route("**/api/search**", (r) => r.fulfill({ status: 500, body: "" }));
+  await page.goto("/conversation/signal/dm:a");
+  await page.locator(".msg .body").first().waitFor();
+  await page.getByRole("button", { name: "Search this conversation" }).click();
+  const box = page.getByPlaceholder("Search this conversation");
+  await box.fill("anything");
+  await box.press("Enter");
+  await expect(page.getByText("Couldn't search.")).toBeVisible();
+  await expect(page.getByText("No matches in this conversation.")).toHaveCount(0);
+});
+
 test("a deleted message: hidden by default @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   await page.goto("/conversation/signal/dm:a");
