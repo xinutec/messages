@@ -3,7 +3,7 @@
 /**
  * How far an outgoing message got, as far as the archive can tell.
  *
- * ⚠ **A LADDER, AND EVERY ORIGIN CLIMBS ONLY AS HIGH AS IT CAN SPEAK.** Telegram
+ * ⚠ A LADDER, AND EVERY ORIGIN CLIMBS ONLY AS HIGH AS IT CAN SPEAK. Telegram
  * reports a conversation-wide high-water mark and nothing else, so it can say
  * `Sent` or `Read` and never `Delivered` — the state simply does not exist in
  * what it sends. Signal reports a per-message, per-person event and reaches all

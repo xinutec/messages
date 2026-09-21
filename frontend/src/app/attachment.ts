@@ -1,6 +1,6 @@
 // What to call an attachment.
 //
-// ⚠ **TWO PLACES PRINT THIS AND THEY MUST AGREE.** The thread renders it
+// ⚠ TWO PLACES PRINT THIS AND THEY MUST AGREE. The thread renders it
 // (`thread.html`) and `copy-log.ts` writes it to the clipboard. While each
 // composed its own label they drifted, and the drift was invisible from either
 // side alone: a stored-less image with no filename read `image/jpeg (not

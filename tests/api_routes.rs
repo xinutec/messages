@@ -5,7 +5,7 @@
 //! auth extractor in front of every route that needs one. `routes/api.rs` had no
 //! test exercising it through an HTTP request until 2026-09-03.
 //!
-//! ⚠ **These deliberately touch no archive table.** `tests/archive.rs` DROPs and
+//! ⚠ These deliberately touch no archive table. `tests/archive.rs` DROPs and
 //! recreates them, and cargo runs test binaries in parallel against the one
 //! database, so a fixture here would race its DDL. Every case below is decided
 //! before the handler reaches the archive — an unknown origin, a non-IRC send, an
@@ -95,7 +95,7 @@ async fn signed_in(pool: &MySqlPool) -> String {
     .expect("create session")
 }
 
-/// ⚠ **THE POSITIVE HALF of `/healthz/deep`, and it needs a real database.**
+/// ⚠ THE POSITIVE HALF of `/healthz/deep`, and it needs a real database.
 /// `tests/deep_health.rs` proves the 503 against a pool pointed at nothing,
 /// which is reachable anywhere — but a test suite that only ever sees the
 /// failure would pass just as well against an endpoint that is always 503, and
@@ -156,7 +156,7 @@ async fn a_real_session_gets_in() {
 /// An unknown origin is a 404, not a 400: the URL names a conversation that does
 /// not exist. Signed in, so this cannot pass for the 401 reason.
 ///
-/// ⚠ **The name here has to be one that will never become real.** This test said
+/// ⚠ The name here has to be one that will never become real. This test said
 /// `telegram` until Telegram became an origin, at which point it went on passing
 /// for a different reason — the conversation genuinely did not exist — and stopped
 /// testing unknown-origin rejection at all. A test that survives the thing it
@@ -177,8 +177,8 @@ async fn an_unknown_origin_is_not_found() {
     );
 }
 
-/// ⚠ **Signal and Telegram cannot be sent to, and that is a DECISION rather than
-/// a gap.** `signal-cli-rest-api` is a linked device in the same namespace and
+/// ⚠ Signal and Telegram cannot be sent to, and that is a DECISION rather than
+/// a gap. `signal-cli-rest-api` is a linked device in the same namespace and
 /// could send; what stops it is that an IRC echo is confirmable against irssi's
 /// log where a Signal echo would be the only evidence the message existed.
 ///

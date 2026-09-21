@@ -198,7 +198,7 @@ test("open thread — meta + reactions + attachment: lays out cleanly @ phone wi
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
-/// ⚠ **WHO REACTED LIVES IN A `title`, WHICH MUST NOT CHANGE THE CHIP'S SIZE.**
+/// ⚠ WHO REACTED LIVES IN A `title`, WHICH MUST NOT CHANGE THE CHIP'S SIZE.
 /// The names can be far longer than the chip — five of them here — and putting
 /// them anywhere that reflows would push the reaction row past the right edge of
 /// a phone. The layout assertions above already catch the spill; this one pins
@@ -222,8 +222,8 @@ test("who reacted is a hover, and the chip still says the count @ phone width", 
   await expect(page.getByText("❤️ 2")).toHaveAttribute("title", "");
 });
 
-/// ⚠ **THE SAME MESSAGE, THE SAME TWO RECEIPTS, AND THE TAG MUST NOT WORD ITSELF
-/// THE SAME WAY.** Signal names whoever sent a receipt and there is no row
+/// ⚠ THE SAME MESSAGE, THE SAME TWO RECEIPTS, AND THE TAG MUST NOT WORD ITSELF
+/// THE SAME WAY. Signal names whoever sent a receipt and there is no row
 /// anywhere saying who did NOT — so in a DM two receipts are everybody, and in a
 /// group of unknown size they are two people. A tag that said plain `read` in
 /// both would be inventing the rest of the group, which is the same class of
@@ -246,8 +246,8 @@ test("a group counts its readers; a DM says read @ phone width", async ({ page }
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
-/// ⚠ **THE SHELL'S SEARCH BOX IS `display: none` AT PHONE WIDTH WITH A THREAD
-/// OPEN** (`app.scss` hides `.list`), so the one moment searching the
+/// ⚠ THE SHELL'S SEARCH BOX IS `display: none` AT PHONE WIDTH WITH A THREAD
+/// OPEN (`app.scss` hides `.list`), so the one moment searching the
 /// conversation you are reading is what you want is the one moment that box is
 /// off screen. This is the whole reason the thread carries its own — and a test
 /// that only checked the feature "works" on a desktop viewport would have missed
@@ -307,7 +307,7 @@ test("a failed conversation search says so rather than \"no matches\" @ phone wi
   await expect(page.getByText("No matches in this conversation.")).toHaveCount(0);
 });
 
-/// ⚠ **THE DATE GOES TO THE SERVER AS MILLISECONDS, AND THE SERVER CONVERTS** —
+/// ⚠ THE DATE GOES TO THE SERVER AS MILLISECONDS, AND THE SERVER CONVERTS —
 /// Signal counts milliseconds, Google Chat MICROseconds, Telegram and IRC whole
 /// seconds (#1562). This asserts the request the page actually makes, because a
 /// frontend that minted its own cursor would be right for one origin and wrong
@@ -342,7 +342,7 @@ test("picking a date asks the server for that day @ phone width", async ({ page 
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
-/// ⚠ **THE TEXT ALWAYS COMES FROM THE BODY; AN ENTITY ONLY SAYS WHERE.** This
+/// ⚠ THE TEXT ALWAYS COMES FROM THE BODY; AN ENTITY ONLY SAYS WHERE. This
 /// renders bold, a link, a spoiler and an unknown kind in one message and checks
 /// the visible text is exactly what was sent — no markup built from sender data,
 /// nothing added, nothing lost. Telegram's offsets are UTF-16 and so are
@@ -387,7 +387,7 @@ test("telegram formatting renders from the body, never from the entity @ phone w
   await expect(bodyEl.locator(".fmt-spoiler")).toHaveText("secret");
   // The link is a real anchor pointing at what the text says.
   await expect(bodyEl.locator("a")).toHaveAttribute("href", "https://example.com/x");
-  // ⚠ **A SPOILER MUST BE COVERED, NOT INVISIBLE.** The first version styled the
+  // ⚠ A SPOILER MUST BE COVERED, NOT INVISIBLE. The first version styled the
   // cover `background: currentColor` beside `color: transparent` — and
   // `currentColor` IS this element's colour, so the cover went transparent with
   // the text and the spoiler rendered as a blank GAP. The markup and every
@@ -500,7 +500,7 @@ test("the composer stays above the Android keyboard @ phone width", async ({ pag
   // What was typed is still there, and still the value being edited.
   await expect(input).toHaveValue("half a sentence, still being typed");
 
-  // ⚠ **SCOPED TO THE COMPOSER, and it has to be from 2026-09-10.** Shrinking
+  // ⚠ SCOPED TO THE COMPOSER, and it has to be from 2026-09-10. Shrinking
   // the viewport now scrolls the thread to keep the newest message visible (the
   // test below), and a scrolled thread pins the day pill over whatever message
   // is beneath it — by design: `.day` is a floating label, and thread.scss says

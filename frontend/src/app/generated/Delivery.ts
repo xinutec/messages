@@ -10,7 +10,7 @@ export type Delivery = { state: DeliveryState,
  * Who read it and when, for the origin that records people rather than a
  * position.
  *
- * ⚠ **EMPTY IS NOT "NOBODY", AND A FULL LIST IS NOT "EVERYONE".** Telegram
+ * ⚠ EMPTY IS NOT "NOBODY", AND A FULL LIST IS NOT "EVERYONE". Telegram
  * leaves this empty always — it names no one. Signal names only those who
  * have sent a receipt, so in a GROUP this is who has read it so far and
  * never the membership; there is no row anywhere saying who has not. The

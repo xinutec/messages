@@ -6,7 +6,7 @@
 // either end so the scrollbar keeps roughly the right shape. Scrolling towards
 // an edge reveals the nearest collapsed run, or asks the caller to fetch.
 //
-// ⚠ **The estimates do not have to be right.** Spacer heights are averages, so
+// ⚠ The estimates do not have to be right. Spacer heights are averages, so
 // the scrollbar's geometry is approximate on purpose. What the user sees is kept
 // exact by a different mechanism: every mutation re-anchors the viewport on the
 // message that was at the top of it. Correcting the estimates would not remove
@@ -164,7 +164,7 @@ export class ThreadWindow {
         needOlder = true;
       }
     }
-    // ⚠ **THE MIRROR OF `needOlder`, and it did not exist until #1401.** The
+    // ⚠ THE MIRROR OF `needOlder`, and it did not exist until #1401. The
     // window could only ever grow backwards, because the only route by which
     // newer messages reached the thread was `pollNewer` asking for the NEWEST
     // page. That is fine for a window anchored to the present and useless for
@@ -220,7 +220,7 @@ export class ThreadWindow {
     this.hostHeight = h;
     this.hostScrollHeight = sh;
     if (resized) return;
-    // ⚠ **GROWTH BELOW A READER AT THE END IS NOT THE READER LEAVING IT.** An
+    // ⚠ GROWTH BELOW A READER AT THE END IS NOT THE READER LEAVING IT. An
     // image loading under the newest message pushes the bottom away, `atBottom`
     // answers false for a moment, and a scroll event landing in that moment used
     // to record them as having wandered off — after which the observer politely

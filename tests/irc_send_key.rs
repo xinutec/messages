@@ -35,7 +35,7 @@ fn cfg(keys: &Path, work: &Path) -> IrcSend {
     }
 }
 
-/// ⚠ **THE SECOND START IS THE ONE THAT FAILED.** `work_dir` is a k8s emptyDir:
+/// ⚠ THE SECOND START IS THE ONE THAT FAILED. `work_dir` is a k8s emptyDir:
 /// wiped when the pod goes, kept when the container merely restarts. The key is
 /// written and then tightened to 0400, so a restart met a file it owned and could
 /// not open for writing — EACCES — and nothing in the pod ever cleared it.

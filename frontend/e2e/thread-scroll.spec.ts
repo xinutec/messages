@@ -188,7 +188,7 @@ test("scrolling to the bottom of a landing fetches forwards", async ({ page }) =
   await expect(page.locator('[data-id="fwd0_0"]')).toBeAttached();
   expect(forwardPages).toBe(1);
 
-  // ⚠ **The hit is MARKED, and only the hit.** Landing on the right message is
+  // ⚠ The hit is MARKED, and only the hit. Landing on the right message is
   // not the same as showing which one: `scrollToTs` puts it flush under the
   // sticky header where, unmarked, it looks exactly like its neighbours —
   // measured on a phone against a 2013 hit in a channel where a dozen lines
@@ -201,7 +201,7 @@ test("scrolling to the bottom of a landing fetches forwards", async ({ page }) =
   // decide. Nothing here calls fetchNewer. `.thread` IS the scroll container —
   // the component sets it as its own host class and binds `(scroll)` there.
   //
-  // ⚠ **UP, THEN DOWN, REPEATEDLY — and each half is load-bearing.** `step()`
+  // ⚠ UP, THEN DOWN, REPEATEDLY — and each half is load-bearing. `step()`
   // reveals what the window collapsed below before it asks for more, exactly as
   // the top does, so the first arrival at the bottom spends itself on the
   // reveal. And a second `scrollTop = scrollHeight` from a position already at

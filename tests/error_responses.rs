@@ -23,7 +23,7 @@ async fn each_error_carries_the_status_the_frontend_branches_on() {
     assert_eq!(body_of(AppError::NotFound).await.0, StatusCode::NOT_FOUND);
 }
 
-/// ⚠ **An unexpected error must not describe itself to the caller.** `Other`
+/// ⚠ An unexpected error must not describe itself to the caller. `Other`
 /// wraps anything at all — a sqlx failure naming a table and a column, a reqwest
 /// error naming an internal host, a message from the irssi box. The detail
 /// belongs in the log; the response gets a fixed string. This is the test that

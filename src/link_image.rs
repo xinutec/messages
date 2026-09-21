@@ -1,7 +1,7 @@
 //! Deciding, from a fetched page alone, whether a link in a message is a
 //! picture we can serve ourselves.
 //!
-//! ⚠ **NOTHING HERE KNOWS A HOST, A PATH OR A PRODUCT URL.** The rule is that a
+//! ⚠ NOTHING HERE KNOWS A HOST, A PATH OR A PRODUCT URL. The rule is that a
 //! server which can be inlined says so itself, in the response:
 //!
 //!   * it NAMES ITS PRODUCT in the cookies it sets — Nextcloud and ownCloud set
@@ -24,8 +24,8 @@ use url::Url;
 
 /// Which reader made a decision.
 ///
-/// ⚠ **A VERDICT IS ONLY AS GOOD AS THE READER THAT MADE IT, and storing one
-/// without saying which reader made it makes a bug permanent.** On 2026-09-11
+/// ⚠ A VERDICT IS ONLY AS GOOD AS THE READER THAT MADE IT, and storing one
+/// without saying which reader made it makes a bug permanent. On 2026-09-11
 /// this reader fetched `…?x=1024&amp;y=1024&amp;token=…` literally, so the
 /// server saw parameters named `amp;token`, answered 404, and the link was
 /// recorded "not a picture" for ever — the control disappeared from the
@@ -73,7 +73,7 @@ impl LinkState {
 
 /// Whether a link may still be asked for.
 ///
-/// ⚠ **ONE PREDICATE, BECAUSE TWO WOULD DRIFT.** Serving a page uses it to
+/// ⚠ ONE PREDICATE, BECAUSE TWO WOULD DRIFT. Serving a page uses it to
 /// decide whether to draw a control, and the request endpoint uses it to decide
 /// whether a hash resolves to an address. If they disagree by so much as a state,
 /// the reader gets a button that answers 404 — which is exactly what a first cut
@@ -114,7 +114,7 @@ impl Advert {
     /// Why this page is not an inlineable picture, in the words of what was
     /// missing.
     ///
-    /// ⚠ **A REFUSAL WITH NO REASON BECOMES PERMANENT AND UNEXPLAINABLE.** That
+    /// ⚠ A REFUSAL WITH NO REASON BECOMES PERMANENT AND UNEXPLAINABLE. That
     /// sentence was already in this codebase, about the failure path, and was not
     /// applied to the refusal that actually fires: a link decided "not a picture"
     /// was stored with a NULL note, so when the verdict was wrong — a URL this
@@ -203,7 +203,7 @@ fn meta_property(html: &str, property: &str) -> Option<String> {
 
 /// The five entities an HTML attribute may carry, decoded.
 ///
-/// ⚠ **`&amp;` IS THE WHOLE OF WHY THIS EXISTS, and it cost a wrong verdict.**
+/// ⚠ `&amp;` IS THE WHOLE OF WHY THIS EXISTS, and it cost a wrong verdict.
 /// An `og:image` with a query string arrives as
 /// `…/preview?x=1024&amp;y=1024&amp;token=…`, because that is how an attribute
 /// spells an ampersand. Fetched raw, the server reads parameters called `amp;y`

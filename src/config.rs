@@ -9,7 +9,7 @@ use sqlx::mysql::MySqlConnectOptions;
 
 /// Split `ALLOWED_USERS` into the ids that may use the app.
 ///
-/// ⚠ **The empty-entry filter is a security property, not tidiness.** A stray
+/// ⚠ The empty-entry filter is a security property, not tidiness. A stray
 /// comma, or the variable set but blank, otherwise yields a list containing the
 /// empty string — and an empty entry matches a caller presenting an empty user
 /// id. Trimming and dropping empties means every way of configuring nothing
@@ -74,8 +74,8 @@ pub struct Config {
 
 /// How to reach the irssi that holds Pippijn's IRC connections.
 ///
-/// ⚠ **Optional on purpose, and that is a safety property rather than a
-/// convenience.** This app is a reader everywhere else; sending is the one
+/// ⚠ Optional on purpose, and that is a safety property rather than a
+/// convenience. This app is a reader everywhere else; sending is the one
 /// capability that acts as a person on networks other people are on. If the key
 /// is not mounted the app still boots and still serves the archive — it just
 /// refuses to send. The alternative, failing to start, would take a working

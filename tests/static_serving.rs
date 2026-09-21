@@ -1,4 +1,4 @@
-//! **A missing FILE must 404, not be handed the page.**
+//! A missing FILE must 404, not be handed the page.
 //!
 //! #1478, measured across the fleet 2026-09-08: `GET /media/nope.woff2` came
 //! back `200 text/html` — the SPA shell, to a browser that asked for a font. It

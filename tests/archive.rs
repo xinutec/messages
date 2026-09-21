@@ -23,7 +23,7 @@ fn us_to_ms_truncates_to_millis() {
     assert_eq!(us_to_ms(1_584_389_732_190_514), 1_584_389_732_190);
 }
 
-/// ⚠ **A CALL IS DRAWN `* Dana <body>`, so the body must be a VERB PHRASE.**
+/// ⚠ A CALL IS DRAWN `* Dana <body>`, so the body must be a VERB PHRASE.
 /// The first version of this said "a call" and rendered as `* Dana a call`.
 /// Every other service label the ingester writes is already phrased this way —
 /// "added a member", "joined Telegram" — and the calls were the exception only
@@ -177,7 +177,7 @@ fn an_excerpt_is_one_line_and_never_splits_a_character() {
     let over = "a".repeat(EXCERPT_CHARS + 1);
     assert_eq!(excerpt(Some(&over)), Some(format!("{exact}…")));
 
-    // ⚠ **The truncation is by CHARACTER.** These bodies are mostly emoji and
+    // ⚠ The truncation is by CHARACTER. These bodies are mostly emoji and
     // non-Latin text, where a byte-offset slice panics mid-codepoint — the
     // archive's Telegram half would have taken the app down on its first long
     // quote. Each of these is multi-byte, so a byte-based cut lands inside one.
@@ -296,8 +296,8 @@ async fn seed(pool: &MySqlPool) {
         // No trigger here: production maintains this from `signal`'s migrations
         // v11-v14, and this suite seeds it from the rows instead (see `seed`).
         "CREATE TABLE irc_conversation_stats (conversation_id INT NOT NULL PRIMARY KEY, cnt BIGINT NOT NULL DEFAULT 0, last_sent_at DATETIME NULL) DEFAULT CHARSET=utf8mb4",
-        // ⚠ **TELEGRAM'S TABLES ARE THE `signal` REPO'S, AND THIS IS A SECOND COPY
-        // OF THEM.** So are the gchat and IRC ones above; the difference worth
+        // ⚠ TELEGRAM'S TABLES ARE THE `signal` REPO'S, AND THIS IS A SECOND COPY
+        // OF THEM. So are the gchat and IRC ones above; the difference worth
         // stating is what that copy is FOR. It is not only a fixture: dev-lint
         // reads the CREATE TABLEs in this file to know which tables the queries in
         // `src/` may name, so a table missing here is reported as a table nothing
@@ -386,7 +386,7 @@ async fn seed(pool: &MySqlPool) {
     // `dm:alice` so the ordering and pagination cases above keep the four
     // messages they count.
     //
-    // ⚠ **THE FLOOR IS THE POINT.** `observed_at` is pinned to 1970-01-01
+    // ⚠ THE FLOOR IS THE POINT. `observed_at` is pinned to 1970-01-01
     // 00:00:01, so `MIN(observed_at)` — when this archive started listening —
     // is 1000ms, and `before we listened` at 900 sits just under it. Without a
     // message on the wrong side of that line, "no receipt" and "we were not
@@ -987,7 +987,7 @@ async fn gchat_messages_convert_us_and_self() {
         (hey.reactions[0].emoji.as_str(), hey.reactions[0].count),
         ("❤️", 3)
     );
-    // ⚠ **THREE REACTED, TWO ARE NAMED, AND THE COUNT STAYS THREE.** Google Chat
+    // ⚠ THREE REACTED, TWO ARE NAMED, AND THE COUNT STAYS THREE. Google Chat
     // gives a reaction as `[emoji, count]` and never who; the names come from a
     // second capture that has not reached every message. Deriving the count from
     // the names would under-report every reaction that capture has not covered —
@@ -1034,7 +1034,7 @@ async fn search_spans_origins_finds_deleted_newest_first() {
     );
     assert_eq!(hits[2].conversation_id, "group:g1");
 
-    // ⚠ **A RETRACTED MESSAGE IS FINDABLE, AND SAYS SO.** It was filtered out in
+    // ⚠ A RETRACTED MESSAGE IS FINDABLE, AND SAYS SO. It was filtered out in
     // SQL until 2026-09-04, while a thread sent the same text and hid it behind a
     // click: one concept, two policies. Both halves matter here — an empty result
     // means search has silently gone back to deciding this for itself, and a hit
@@ -1467,8 +1467,8 @@ async fn the_echo_takes_its_timestamp_from_the_log_line() {
 
 // ---- the send guard, through the real router --------------------------------
 
-/// ⚠ **THIS LIVES HERE RATHER THAN IN `tests/api_routes.rs`, AND THAT IS THE
-/// CHEAPER HALF OF A REAL CHOICE.** The guard needs a row in
+/// ⚠ THIS LIVES HERE RATHER THAN IN `tests/api_routes.rs`, AND THAT IS THE
+/// CHEAPER HALF OF A REAL CHOICE. The guard needs a row in
 /// `irc_conversations`, and `api_routes.rs` deliberately touches no archive
 /// table: `seed` below DROPs and recreates them, and cargo runs test binaries in
 /// parallel against the one database named by `MESSAGES_TEST_DATABASE_URL`, so a
@@ -1479,7 +1479,7 @@ async fn the_echo_takes_its_timestamp_from_the_log_line() {
 /// first. The cost of being here is that one HTTP-level test sits among the
 /// query-layer ones, which this comment is paying.
 ///
-/// ⚠ **THE FILED REASON WAS HALF OF IT.** #1392 said the guard was uncovered for
+/// ⚠ THE FILED REASON WAS HALF OF IT. #1392 said the guard was uncovered for
 /// want of a row. True and insufficient: `routes/api.rs::send` reads
 /// `let Some(sender) = app.irc` BEFORE it looks the conversation up, and
 /// `api_routes.rs` builds its state with `irc_send: None`, so every send case
@@ -1581,8 +1581,8 @@ async fn send_to(pool: &MySqlPool, conversation_id: i32) -> axum::http::StatusCo
 
 /// The status log is refused, and an ordinary conversation is NOT.
 ///
-/// ⚠ **BOTH HALVES, because the first alone passes against a handler that 404s
-/// every send.** That is not a hypothetical failure: a one-sided test is exactly
+/// ⚠ BOTH HALVES, because the first alone passes against a handler that 404s
+/// every send. That is not a hypothetical failure: a one-sided test is exactly
 /// what would have let a broken send path read as a working guard. The second
 /// half asserts only "not 404" — it goes on to attempt a real ssh to a closed
 /// port and fails there, which is the distinction being drawn: refused BY THE
@@ -1618,7 +1618,7 @@ async fn sending_to_the_status_log_is_refused_and_to_a_conversation_is_not() {
 
 // ---- what a leading slash means (no DB) -------------------------------------
 
-/// ⚠ **`/me` WENT OUT AS FOUR LITERAL CHARACTERS**, measured 2026-08-14: typed
+/// ⚠ `/me` WENT OUT AS FOUR LITERAL CHARACTERS, measured 2026-08-14: typed
 /// into the composer it reached `#linux` as the text `/me …` rather than as an
 /// action. The send path hands the composer's words to irssi as DATA that never
 /// reaches a command parser — that is what makes `/exec` and an embedded newline
@@ -1654,7 +1654,7 @@ fn a_leading_slash_means_an_action_an_escape_or_nothing() {
     assert_eq!(parse_slash("ordinary words"), ("ordinary words", false));
 }
 
-/// **A hit must be able to say WHERE it is, not only what it says.**
+/// A hit must be able to say WHERE it is, not only what it says.
 ///
 /// #1401: clicking a search result opens the conversation at its NEWEST page,
 /// and the hit may be years back. Landing on it needs a position, and the
@@ -1702,7 +1702,7 @@ async fn a_search_hit_carries_a_cursor_the_pager_accepts() {
     }
 }
 
-/// **Walking FORWARD returns the same messages as walking back, and no others.**
+/// Walking FORWARD returns the same messages as walking back, and no others.
 ///
 /// #1401: the thread's loaded window is anchored to the newest message, so the
 /// only direction it can grow is backwards. Landing on a 2005 search hit needs
@@ -1724,7 +1724,7 @@ async fn paging_forward_mirrors_reading_the_whole_conversation() {
     // spells a conversation id its own way, and picking the wrong one gives an
     // empty page, which reads as "the fixture is small" rather than as a typo.
     //
-    // ⚠ **`dm:tie` is the row that makes this test bite.** Its four messages all
+    // ⚠ `dm:tie` is the row that makes this test bite. Its four messages all
     // share `server_ts = 1500`, so the ONLY thing ordering them is the id
     // tie-break — which is the half of the comparison a forward query gets wrong
     // by copying the backward one. Without it, flipping `m.id > ?` to `m.id < ?`
@@ -1828,7 +1828,7 @@ async fn a_page_addresses_both_of_its_ends() {
     );
 }
 
-/// **A landing must contain the message it landed on.**
+/// A landing must contain the message it landed on.
 ///
 /// ⚠ THE BUG THIS EXISTS FOR, shipped 2026-09-08 and found by looking at a real
 /// phone. `messages_page` is strict in BOTH directions — `Older` is `< cursor`
@@ -1902,7 +1902,7 @@ async fn a_landing_contains_the_message_it_landed_on() {
 
 // ---- an edited message is one message --------------------------------------
 
-/// ⚠ **A THREAD PER TEST, because these run in PARALLEL.** One shared thread id
+/// ⚠ A THREAD PER TEST, because these run in PARALLEL. One shared thread id
 /// had three tests deleting and re-inserting each other's rows, and the page came
 /// back with three messages where two were expected — a failure that reads
 /// exactly like the collapsing being wrong.
@@ -1940,7 +1940,7 @@ async fn seed_edits(pool: &MySqlPool, thread: &str) {
     }
 }
 
-/// ⚠ **AN EDIT IS A SEPARATE ROW, AND BOTH WERE DRAWN.** Signal sends a revision
+/// ⚠ AN EDIT IS A SEPARATE ROW, AND BOTH WERE DRAWN. Signal sends a revision
 /// carrying `edit_of_ts`, so a thread showed the same message twice — the old
 /// text where it was said, the new text minutes later, nothing saying they were
 /// one thing. 254 messages in the live archive are in that state.
@@ -2050,7 +2050,7 @@ async fn telegram_conversations_keep_their_kind_and_count_only_speech() {
 /// A page of a Telegram conversation: oldest-first, SERVICE EVENTS INCLUDED, and
 /// the two messages sharing a second both present and in a stable order.
 ///
-/// ⚠ **The service event used to be filtered out here, and that was the bug.**
+/// ⚠ The service event used to be filtered out here, and that was the bug.
 /// `kind = 'service'` excluded 73 events from the only thing that reads them —
 /// every call in the archive among them — so they were captured, stored, and
 /// then made invisible. They arrive as `Action`, the shape IRC already uses for
@@ -2100,7 +2100,7 @@ async fn a_telegram_page_is_speech_in_order_including_a_shared_second() {
         "both messages of the shared second, once each"
     );
 
-    // ⚠ **AND ONE MORE PAGE, WHICH IS WHERE THE SHARED SECOND ACTUALLY BITES.**
+    // ⚠ AND ONE MORE PAGE, WHICH IS WHERE THE SHARED SECOND ACTUALLY BITES.
     // This boundary sits ON 1700000060 with another row at the same second just
     // above it, so a cursor comparing only the timestamp would hand `ook hoi`
     // back a second time or drop `hoi` entirely. Adding the service event to the
@@ -2274,7 +2274,7 @@ async fn a_non_numeric_telegram_id_is_an_empty_page() {
     assert!(!page.has_more);
 }
 
-/// ⚠ **An edit date is not an edit to SHOW.** Telegram's `edit_hide` means "the
+/// ⚠ An edit date is not an edit to SHOW. Telegram's `edit_hide` means "the
 /// message should be shown as not modified to the user, even if an edit date is
 /// present"; it sets a date for its own reasons and its own apps honour the flag.
 /// This reader did not, and printed `edited` on a photo Telegram showed as
@@ -2313,8 +2313,8 @@ async fn a_hidden_telegram_edit_is_not_shown_as_edited() {
     assert!(by("third go").edited);
 }
 
-/// ⚠ **`attachments` means "bytes this archive holds for this message", and Telegram
-/// is now a second origin that has some.** It was Signal-only because Signal was the
+/// ⚠ `attachments` means "bytes this archive holds for this message", and Telegram
+/// is now a second origin that has some. It was Signal-only because Signal was the
 /// only origin with files, not because the field was Signal's — so Telegram's media
 /// arrives in the same field rather than a parallel one, and the copied-log namer,
 /// the is-image test and the not-stored marker all keep working without a second
@@ -2362,7 +2362,7 @@ async fn telegram_media_arrives_as_attachments_with_availability() {
     assert!(by("hoi").attachments.is_empty());
 }
 
-/// ⚠ **A request moves only what has NOT been fetched.** Against something already
+/// ⚠ A request moves only what has NOT been fetched. Against something already
 /// stored it would queue a re-download that overwrites a good file; against something
 /// already `wanted` it would restart its place in the queue every time a reader
 /// tapped twice. Both would look like success, which is why the call reports whether
@@ -2508,7 +2508,7 @@ async fn a_telegram_reply_resolves_and_refuses_to_point_at_a_service_event() {
     let r = by_body("same second").expect("12 replies to 14");
     assert!(r.deleted && r.excerpt.is_none(), "deleted target, no words");
 
-    // ⚠ **A REPLY TO A SERVICE EVENT NOW RESOLVES, AND THE RULE DID NOT CHANGE.**
+    // ⚠ A REPLY TO A SERVICE EVENT NOW RESOLVES, AND THE RULE DID NOT CHANGE.
     // It used to read as unresolved because `kind = 'service'` kept the event off
     // every page, so an id would have been a quote clicking through to something
     // the reader could never be shown. The page returns service events now, so
@@ -2535,7 +2535,7 @@ async fn a_telegram_reply_resolves_and_refuses_to_point_at_a_service_event() {
     assert!(by_body("hoi").is_none(), "10 replied to nothing");
 }
 
-/// ⚠ **THIS TEST USED TO INCLUDE GOOGLE CHAT, AND THAT WAS THE BUG IT PROTECTED.**
+/// ⚠ THIS TEST USED TO INCLUDE GOOGLE CHAT, AND THAT WAS THE BUG IT PROTECTED.
 ///
 /// It was named `gchat_and_irc_carry_no_reply` and asserted that every Google
 /// Chat message had `reply_to: None` — which passed, because nothing read the
@@ -2563,7 +2563,7 @@ async fn irc_carries_no_reply() {
 
 // ---- who has read how far ---------------------------------------------------
 
-/// ⚠ **THREE STATES, and the third is the one worth protecting.** `None` means
+/// ⚠ THREE STATES, and the third is the one worth protecting. `None` means
 /// the archive cannot say, and it is not the same as unread: read-mark capture
 /// began 2026-09-17 and Telegram keeps no history of reading, so a conversation
 /// nobody has opened since has no mark at all. Drawing that as "not read" would
@@ -2600,8 +2600,8 @@ async fn telegram_read_state_is_mine_only_and_silent_without_a_mark() {
     assert_eq!(state_of("hoi"), None);
     assert_eq!(state_of("same second"), None);
 
-    // ⚠ **`Delivered` IS UNREACHABLE HERE, and that is Telegram rather than a
-    // bug.** A read mark is a position in the conversation; nothing in it says a
+    // ⚠ `Delivered` IS UNREACHABLE HERE, and that is Telegram rather than a
+    // bug. A read mark is a position in the conversation; nothing in it says a
     // message ARRIVED, so the rung between sent and read has no evidence behind
     // it. Signal fills it because Signal sends a delivery receipt.
     assert!(
@@ -2646,7 +2646,7 @@ async fn a_conversation_with_no_read_mark_reports_nothing() {
 
 /// The origins that report nothing, and it is not a gap to be filled.
 ///
-/// ⚠ **SIGNAL IS NO LONGER ONE OF THEM** — it was, until receipt capture landed,
+/// ⚠ SIGNAL IS NO LONGER ONE OF THEM — it was, until receipt capture landed,
 /// and this case asserted its silence. Google Chat and IRC stay: neither carries
 /// per-message read state at all, so there is nothing to capture rather than
 /// something not yet captured.
@@ -2669,7 +2669,7 @@ async fn the_other_origins_report_no_read_state() {
 
 // ---- Signal: who read it, and when ------------------------------------------
 
-/// ⚠ **THE LADDER, AND THE TWO WAYS IT LIES IF NOBODY CHECKS.** Signal is the one
+/// ⚠ THE LADDER, AND THE TWO WAYS IT LIES IF NOBODY CHECKS. Signal is the one
 /// origin here that reports a message ARRIVING separately from it being READ, and
 /// the one that names the person. Both are easy to lose: flatten the kinds and
 /// `delivered` becomes `read`; skip the self-filter and my own linked device
@@ -2708,7 +2708,7 @@ async fn signal_receipts_climb_the_ladder_and_name_the_reader() {
     // Nothing came back, but we WERE listening.
     assert_eq!(state_of("nothing back"), Some(DeliveryState::Sent));
 
-    // ⚠ **We were not listening yet, so there is nothing to say.** This is the
+    // ⚠ We were not listening yet, so there is nothing to say. This is the
     // assertion that keeps the archive's own start date out of a claim about
     // somebody's phone: at 900 it predates the first `observed_at` (1000).
     assert_eq!(state_of("before we listened"), None);
@@ -2717,7 +2717,7 @@ async fn signal_receipts_climb_the_ladder_and_name_the_reader() {
     // though a receipt targeting it exists — it is my own device's read sync.
     assert_eq!(state_of("her words"), None);
 
-    // ⚠ **NAMED, AND MY OWN READ SYNC IS NOT ONE OF THE NAMES.** The fixture
+    // ⚠ NAMED, AND MY OWN READ SYNC IS NOT ONE OF THE NAMES. The fixture
     // carries `(1200,'me','read')` beside Alice's; including it would say I read
     // my own message, which is true and says nothing about whether she did.
     let read_by: Vec<_> = msg("read by her")
@@ -2741,7 +2741,7 @@ async fn signal_receipts_climb_the_ladder_and_name_the_reader() {
     );
 }
 
-/// ⚠ **GOOGLE CHAT WAS REPORTED AS HAVING NO REPLIES, AND THE REPORT WAS WRONG.**
+/// ⚠ GOOGLE CHAT WAS REPORTED AS HAVING NO REPLIES, AND THE REPORT WAS WRONG.
 ///
 /// `thread_id` groups messages into topics and every DM message is its own
 /// topic, so a diff of topic-replies against topic-starters found nothing a
@@ -2791,13 +2791,13 @@ async fn a_gchat_quote_reply_points_at_the_message_it_answers() {
     );
 }
 
-/// ⚠ **THE VIEWER SAID GOOGLE CHAT HAD NO ATTACHMENTS, AND 326 MESSAGES CARRIED
-/// ONE.** The comment in `archive.rs` read "Google Chat export carries no
+/// ⚠ THE VIEWER SAID GOOGLE CHAT HAD NO ATTACHMENTS, AND 326 MESSAGES CARRIED
+/// ONE. The comment in `archive.rs` read "Google Chat export carries no
 /// attachments" — true of nothing except that the capture had never looked at
 /// index 10. Only 20 of the 326 are wordless, so the rest rendered as an
 /// ordinary message with a caption and no picture.
 ///
-/// ⚠ **`available: false` IS THE POINT, not a degraded case.** The download URL
+/// ⚠ `available: false` IS THE POINT, not a degraded case. The download URL
 /// is minted while the page renders, bound to a session and expiring, so the
 /// archive routinely knows a picture existed without holding it. Drawing nothing
 /// for those would restore exactly the bug above.
@@ -2838,7 +2838,7 @@ async fn a_gchat_picture_is_shown_even_when_its_bytes_are_not_held() {
 
 // ---- searching inside one conversation --------------------------------------
 
-/// ⚠ **THE SCOPE IS IN THE SQL, AND THIS IS THE CASE THAT PROVES IT MATTERS.**
+/// ⚠ THE SCOPE IS IN THE SQL, AND THIS IS THE CASE THAT PROVES IT MATTERS.
 /// The obvious implementation — search globally, then keep the hits whose
 /// conversation matches — is bounded by `limit` BEFORE the conversation is
 /// considered. A term that is common elsewhere and rare here comes back EMPTY
@@ -2883,7 +2883,7 @@ async fn a_scoped_search_is_not_a_global_search_filtered_afterwards() {
     assert_eq!(scoped[0].conversation_id, "gc1");
 }
 
-/// ⚠ **THE OTHER ORIGINS ARE NOT QUERIED AT ALL**, which is the half that makes
+/// ⚠ THE OTHER ORIGINS ARE NOT QUERIED AT ALL, which is the half that makes
 /// a scoped IRC search FASTER than the global one rather than slower: the global
 /// query is a 10s substring scan of 3.7M rows because `LIKE '%term%'` cannot use
 /// an index, and `conversation_id` can.
@@ -2946,7 +2946,7 @@ async fn a_scope_with_no_match_is_empty_not_global() {
 
 // ---- jumping to a date ------------------------------------------------------
 
-/// ⚠ **THE FOUR ORIGINS DISAGREE ABOUT WHAT A TIMESTAMP IS**, which is the whole
+/// ⚠ THE FOUR ORIGINS DISAGREE ABOUT WHAT A TIMESTAMP IS, which is the whole
 /// of #1562: the cursor could always express a date, but only in the unit that
 /// origin counts in. A caller minting its own would carry all four conventions
 /// and be wrong for three of them the moment it got one right.
@@ -2971,7 +2971,7 @@ fn a_day_cursor_is_minted_in_each_origins_own_unit() {
     assert_eq!(archive::cursor_for_day(Origin::Irc, ms), "1767312000_0");
 }
 
-/// ⚠ **`id = 0` IS A FLOOR, NOT A ROW.** The paging predicate admits
+/// ⚠ `id = 0` IS A FLOOR, NOT A ROW. The paging predicate admits
 /// `ts = cursor_ts AND id >= cursor_id`, so any id above the smallest real one
 /// silently drops messages from the landing second — and only on days whose
 /// first message happens to have a low id, which is exactly the kind of bug that
@@ -3026,7 +3026,7 @@ async fn a_day_lands_on_that_day_and_reads_forwards() {
     );
 }
 
-/// ⚠ **A RETRACTED FORMATTING RUN MUST NOT BE DRAWN.** Editing a Telegram
+/// ⚠ A RETRACTED FORMATTING RUN MUST NOT BE DRAWN. Editing a Telegram
 /// message replaces its entity list; the archive dates the old rows rather than
 /// deleting them, the same shape `telegram_reactions` uses. Without
 /// `removed_at IS NULL` the reader bolds text that is no longer bold — or, for a

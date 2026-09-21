@@ -1,7 +1,7 @@
 //! The fetch service: the one thing in this app that reaches the open internet,
 //! and the one thing that knows nothing else.
 //!
-//! ⚠ **IT HOLDS NO CREDENTIALS, NO DATABASE AND NO DISK.** That is the whole
+//! ⚠ IT HOLDS NO CREDENTIALS, NO DATABASE AND NO DISK. That is the whole
 //! design. It follows links strangers wrote into a chat years ago, so it is the
 //! component most likely to meet something hostile — and when it does, there is
 //! nothing behind it to take: the archive's credentials live in the web pod, the

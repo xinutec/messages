@@ -87,7 +87,7 @@
 // Grid cell for the routed Thread component (which is itself the scroll container).
 .pane {
   min-height: 0;
-  // ⚠ **AND `min-width: 0`, for the same reason in the other axis.** A grid
+  // ⚠ AND `min-width: 0`, for the same reason in the other axis. A grid
   // item's automatic minimum size is its MIN-CONTENT size, so a `1fr` track is
   // only as narrow as the widest unbreakable thing inside it — and a pane that
   // cannot be narrower than its content is a pane that pushes the viewport

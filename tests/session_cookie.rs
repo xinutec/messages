@@ -65,7 +65,7 @@ fn malformed_cookies_are_rejected_rather_than_panicking() {
     }
 }
 
-/// ⚠ **`rfind`, NOT `find` — and a `pending_login` payload is why.** That cookie
+/// ⚠ `rfind`, NOT `find` — and a `pending_login` payload is why. That cookie
 /// signs `"{timestamp}|{nonce}|{return_to}"`, where `return_to` is a URL path
 /// and may contain a dot. Splitting on the FIRST dot would cut the value in the
 /// wrong place and reject a login that is perfectly valid — silently, as a

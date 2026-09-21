@@ -1,18 +1,18 @@
 //! Client activity trace: what the browser sees and the API does not.
 //!
-//! **Why this exists, and it is not analytics.** The per-request trace already
+//! Why this exists, and it is not analytics. The per-request trace already
 //! logs every API call, and that was treated as sufficient across the fleet for
 //! a long time. It is not: a tap that hits a cache, a control that was disabled,
 //! a screen that rendered wrong — none of it reaches the server, so none of it
 //! can be diagnosed afterwards from a report like "I pressed it and nothing
 //! happened".
 //!
-//! The events fold into the **same** log stream as the API requests, so a
+//! The events fold into the same log stream as the API requests, so a
 //! session reads as one timeline: `client-event kind=nav path=/conversations`, then
 //! `client-event kind=tap label="Signal"`, then the `GET /api/conversations/…
 //! 200` the tap caused.
 //!
-//! **There is no storage here.** These are logs, not data. The endpoint moves
+//! There is no storage here. These are logs, not data. The endpoint moves
 //! the client's events into the backend log and forgets them.
 //!
 //! Ported from the `life` app, where this has run since 2026-07-17.
@@ -62,9 +62,9 @@ const MAX_LABEL: usize = 160;
 /// no Unicode category table — so these are named explicitly. Two reasons they
 /// matter here, and the second is the sharper one:
 ///
-/// - **Zero-width characters** (U+200B, U+FEFF, the word joiners) are invisible,
+/// - Zero-width characters (U+200B, U+FEFF, the word joiners) are invisible,
 ///   so a label made of them reads as empty while occupying the whole cap.
-/// - **Bidi overrides** (U+202A–202E, U+2066–2069) reorder the *rendering* of
+/// - Bidi overrides (U+202A–202E, U+2066–2069) reorder the *rendering* of
 ///   the text around them. A log line containing one can be made to display
 ///   something other than what it says — the Trojan Source trick, pointed at the
 ///   record rather than at source code.
@@ -85,7 +85,7 @@ fn is_deceptive_format(c: char) -> bool {
 
 /// Flatten a client-supplied label to a single harmless log field.
 ///
-/// **This is the security boundary of the endpoint, not tidiness.** A label is
+/// This is the security boundary of the endpoint, not tidiness. A label is
 /// verbatim UI text and it is written into a log line as `label=…`. A label
 /// containing a newline therefore forges *whole log lines* — including further
 /// `client-event` lines attributed to someone else, or lines that look like they

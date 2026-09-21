@@ -3,7 +3,7 @@
 /**
  * Whether a line was said or done.
  *
- * ⚠ **Two variants, and the IRC table has four.** Its column is
+ * ⚠ Two variants, and the IRC table has four. Its column is
  * `ENUM('message','action','event','notice')`, but every query restricts to
  * message and action — joins, parts and server notices are not conversation.
  * Widening this would be claiming the reader shows things it does not. Signal

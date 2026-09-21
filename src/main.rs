@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
     // still serves the archive and refuses every send. Failing to boot here
     // would take a working viewer down over something it does not need to read.
     //
-    // ⚠ **AN ERROR HERE IS THE SAME ANSWER AS NO KEY, and this used to be `?`.**
+    // ⚠ AN ERROR HERE IS THE SAME ANSWER AS NO KEY, and this used to be `?`.
     // The paragraph above was already the intent, and `config.rs` says it a
     // second time on `IrcSend` itself — but the code honoured it for only ONE of
     // the two ways sending can be unavailable. A key that is absent returned

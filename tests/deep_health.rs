@@ -1,7 +1,7 @@
 //! `/healthz/deep` — whether the ARCHIVE answers, not whether this process does.
 //!
-//! ⚠ **THE FAILING CASE NEEDS NO DATABASE, WHICH IS WHY IT IS THE ONE TESTED
-//! HERE.** A pool pointed at nothing is exactly the state this endpoint exists
+//! ⚠ THE FAILING CASE NEEDS NO DATABASE, WHICH IS WHY IT IS THE ONE TESTED
+//! HERE. A pool pointed at nothing is exactly the state this endpoint exists
 //! to report, so the unhappy path is reachable in any environment — including
 //! the sandbox that builds the package, where a test needing a live server would
 //! either be skipped or, worse, pass for the wrong reason.
@@ -68,7 +68,7 @@ async fn get(uri: &str) -> StatusCode {
     app.oneshot(req).await.unwrap().status()
 }
 
-/// ⚠ **503, AND THE NUMBER IS THE CONTRACT.** The fleet's front-door witness
+/// ⚠ 503, AND THE NUMBER IS THE CONTRACT. The fleet's front-door witness
 /// counts any 5xx as not serving and everything below 500 as serving, so an
 /// unreachable archive has to answer in that vocabulary. A 200 carrying
 /// `{"db":false}` would be green in every place that decides anything.
@@ -77,7 +77,7 @@ async fn an_unreachable_archive_is_a_server_error() {
     assert_eq!(get("/healthz/deep").await, StatusCode::SERVICE_UNAVAILABLE);
 }
 
-/// ⚠ **THE LIVENESS PATH MUST NOT FOLLOW IT DOWN.** `/healthz` is kubelet's
+/// ⚠ THE LIVENESS PATH MUST NOT FOLLOW IT DOWN. `/healthz` is kubelet's
 /// liveness target: if it learned to check the database, a database blip would
 /// become a crashloop — the pod killed for something a restart cannot fix, and
 /// the restarts adding load to whatever was already struggling.
@@ -89,7 +89,7 @@ async fn the_liveness_path_stays_up_when_the_archive_is_down() {
     assert_eq!(get("/healthz").await, StatusCode::OK);
 }
 
-/// ⚠ **UNAUTHENTICATED ON PURPOSE.** The front door probes it from outside any
+/// ⚠ UNAUTHENTICATED ON PURPOSE. The front door probes it from outside any
 /// session, so a 401 would make it unprobeable — and an endpoint the prober
 /// cannot read is indistinguishable from an app that is fine.
 ///

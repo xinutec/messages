@@ -1,7 +1,7 @@
 //! Sending one IRC message, as Pippijn, through the irssi that already holds his
 //! connections.
 //!
-//! ⚠ **THIS IS THE ONLY THING THE APP DOES THAT ANOTHER PERSON SEES.** Everything
+//! ⚠ THIS IS THE ONLY THING THE APP DOES THAT ANOTHER PERSON SEES. Everything
 //! else here is a read over an archive of conversations that already happened.
 //! What keeps that from being alarming is that almost none of the safety lives
 //! in this file:
@@ -11,7 +11,7 @@
 //!   * the key this presents is pinned on the far side to
 //!     `command="/home/irssi/bin/irc-send",restrict`, so a stolen key can send
 //!     an IRC message and cannot get a shell, read the logs, or forward a port;
-//!   * **who may be messaged is decided on the irssi host**, and by the live
+//!   * who may be messaged is decided on the irssi host, and by the live
 //!     state rather than a list: the plugin asks irssi whether it has a window
 //!     item open for the target, so what this app can say something to is
 //!     exactly what Pippijn could have typed into. A compromised app cannot
@@ -33,7 +33,7 @@
 //! exactly the importer's dedupe key, `(conversation, source_tag, file_date,
 //! line_no)`. The next import then finds it already present.
 //!
-//! ⚠ The fields that make up that key come from **irssi**, not from this app's
+//! ⚠ The fields that make up that key come from irssi, not from this app's
 //! belief about what it sent. Guessing the tag or the line number and getting it
 //! wrong would not lose the message — it would show it twice.
 
@@ -75,7 +75,7 @@ pub enum Outcome {
 
 /// What a leading slash means: the action, the escape, and nothing else.
 ///
-/// ⚠ **THIS EXISTS BECAUSE `/me` WENT OUT AS FOUR LITERAL CHARACTERS.** The send
+/// ⚠ THIS EXISTS BECAUSE `/me` WENT OUT AS FOUR LITERAL CHARACTERS. The send
 /// path hands the composer's text to irssi as DATA that never reaches a command
 /// parser — that is what makes `/exec` and an embedded newline harmless from a
 /// web request, and it is not up for negotiation. The cost was that `/me`, which
@@ -152,7 +152,7 @@ struct Reply {
 impl IrcSender {
     /// Copy the key somewhere ssh will accept it, or report that sending is off.
     ///
-    /// ⚠ **0400 IS NOT ACHIEVABLE ON THE SECRET VOLUME ITSELF**, which is why
+    /// ⚠ 0400 IS NOT ACHIEVABLE ON THE SECRET VOLUME ITSELF, which is why
     /// this copy exists. A secret volume's files are owned by *root* rather than
     /// by `runAsUser`, so mounting at 0400 makes them unreadable by this pod —
     /// and it does not surface as a permissions error: ssh reports "No ED25519
@@ -186,7 +186,7 @@ impl IrcSender {
             .await
             .with_context(|| format!("reading {}", src.display()))?;
 
-        // ⚠ **THE WORK DIR OUTLIVES THE CONTAINER, AND THE KEY IT HOLDS IS 0400.**
+        // ⚠ THE WORK DIR OUTLIVES THE CONTAINER, AND THE KEY IT HOLDS IS 0400.
         // It is a k8s emptyDir: wiped when the POD goes, kept when the container
         // merely restarts. `set_owner_only` below tightens this file to 0400 —
         // readable by its owner, writable by nobody — so the SECOND start of the
@@ -224,10 +224,10 @@ impl IrcSender {
     /// Ask irssi to say `text` to `target` on `network`, as a message or as an
     /// action (`/me`).
     ///
-    /// ⚠ **No shell, and no command line either.** `ssh host cmd args` is not an
+    /// ⚠ No shell, and no command line either. `ssh host cmd args` is not an
     /// exec: ssh joins its arguments with spaces and the far side's shell splits
     /// and expands them again. Here there is nothing to get wrong, because the
-    /// request travels on **stdin** as one JSON line and no command is proposed
+    /// request travels on stdin as one JSON line and no command is proposed
     /// at all — the far side runs its forced command regardless.
     pub async fn send(
         &self,
@@ -360,7 +360,7 @@ fn sent_at(file_date: &str, line: &str) -> Option<String> {
 
 /// Write the sent message into the archive so it can be shown at once.
 ///
-/// ⚠ **`INSERT IGNORE` on the importer's key, and both halves matter.** Ignore,
+/// ⚠ `INSERT IGNORE` on the importer's key, and both halves matter. Ignore,
 /// because the hourly import will read the very same line and must not fail on
 /// it; and the importer's exact key, because a row keyed differently is not a
 /// duplicate to the database — it is a second message, and the conversation

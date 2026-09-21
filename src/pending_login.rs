@@ -1,6 +1,6 @@
 //! The pending half of a Nextcloud login, carried in a signed cookie.
 //!
-//! **Why not the `state` parameter alone.** When the browser holds no Nextcloud
+//! Why not the `state` parameter alone. When the browser holds no Nextcloud
 //! session, NC's `oauth2/authorize` does not redirect back to us — it bounces to its
 //! own Login Flow, and drops every query parameter on the way:
 //!
@@ -9,7 +9,7 @@
 //!  → 303 …/login/flow?providedRedirectUri=&clientIdentifier=…
 //! ```
 //!
-//! After the sign-in it returns to the registered callback with `state=`, **empty**.
+//! After the sign-in it returns to the registered callback with `state=`, empty.
 //! A server that looks the pending login up by `state` therefore cannot complete a
 //! login from a cookie-less browser at all — found 2026-07-28 in the sibling
 //! fleetwatch service, whose Android WebView lost its NC cookie and could never sign

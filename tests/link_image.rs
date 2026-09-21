@@ -6,7 +6,7 @@
 //! server's own, because a hand-written head would only prove that the reader
 //! reads what I expected a head to look like.
 //!
-//! ⚠ **`.captured-html`, not `.html`, and that is not linter evasion.** The page
+//! ⚠ `.captured-html`, not `.html`, and that is not linter evasion. The page
 //! carries `width=device-width`, so DL-WEB-VIEWPORT-KEYBOARD reads it as one of
 //! our app shells relying on the keyboard default. It is not ours — it is
 //! evidence of what somebody else's server sends, and the one thing that must
@@ -20,7 +20,7 @@ const SHARE: &str = "https://cloud.example.org/nc/s/SHARETOKEN";
 /// The four cookies that live install actually set, in the order it set them —
 /// with the VALUES replaced, and the random per-install session cookie renamed.
 ///
-/// ⚠ **The shapes are the evidence; the values were never evidence at all.** The
+/// ⚠ The shapes are the evidence; the values were never evidence at all. The
 /// reader only ever looks at a cookie's NAME, so a real passphrase and a real
 /// session id sat here proving nothing — they came off a live response along with
 /// the rest of the capture, and this repository is public. Caught on review.

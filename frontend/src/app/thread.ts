@@ -81,7 +81,7 @@ export class Thread {
    *  an input to this component, so the decision is made once here rather than by
    *  prefixing ids and parsing them apart on the server. */
   protected attachmentUrl(a: Attachment): string {
-    // ⚠ **EXHAUSTIVE ON PURPOSE — the `else` that used to be here meant Signal.**
+    // ⚠ EXHAUSTIVE ON PURPOSE — the `else` that used to be here meant Signal.
     // Every origin's attachment ids come from its own AUTO_INCREMENT, so id 42
     // exists in three tables and names three different pictures; the route is
     // what keeps them apart. A trailing `: '/api/attachments/…'` silently gave a
@@ -246,7 +246,7 @@ export class Thread {
   });
 
   constructor() {
-    // ⚠ **`switchMap`, so a slow answer cannot land after a newer one** — the
+    // ⚠ `switchMap`, so a slow answer cannot land after a newer one — the
     // same shape the shell's search uses. Typing two queries quickly otherwise
     // shows the first one's hits under the second one's words.
     this.threadSearch$
@@ -286,7 +286,7 @@ export class Thread {
       else this.resetState();
     });
 
-    // ⚠ **`?at` CHANGING IS ALSO A RELOAD, and the effect above cannot see it.**
+    // ⚠ `?at` CHANGING IS ALSO A RELOAD, and the effect above cannot see it.
     // That effect keys on origin+id, and Angular reuses this component across
     // navigations — so clicking a search result for the conversation already on
     // screen changed only the query string, the key compared equal, and nothing
@@ -321,7 +321,7 @@ export class Thread {
     destroyRef.onDestroy(() => clearInterval(poll));
     destroyRef.onDestroy(() => {
       if (this.recheck != null) clearTimeout(this.recheck);
-      // ⚠ **AND THE `?from` DEBOUNCE, which navigates.** It was cleared only to
+      // ⚠ AND THE `?from` DEBOUNCE, which navigates. It was cleared only to
       // reschedule itself, never on destroy, so scrolling and leaving inside its
       // 300ms window left a timer that called `commitFromParam` on a dead
       // component — `router.navigate` relative to a route the reader had already
@@ -414,7 +414,7 @@ export class Thread {
       firstValueFrom(this.api.messages(origin, id, at, half, 'at', on)),
     ]);
 
-    // ⚠ **DO THE TWO HALVES ACTUALLY MEET?** The server treats a cursor it
+    // ⚠ DO THE TWO HALVES ACTUALLY MEET? The server treats a cursor it
     // cannot read as ABSENT, which is right for a backward page — it means
     // "start at the newest" — and means "everything after nothing" for a
     // forward one, which answers with the OLDEST page. So an `?at` from a
@@ -851,7 +851,7 @@ export class Thread {
     // don't poll a screen nobody is looking at — a backgrounded phone app would
     // otherwise keep asking forever.
     if (this.polling || this.loadingThread() || this.loadingOlder() || this.sending()) return;
-    // ⚠ **A FLOATING WINDOW MUST NOT BE POLLED.** See `floating`: the gap guard
+    // ⚠ A FLOATING WINDOW MUST NOT BE POLLED. See `floating`: the gap guard
     // below would fire on every tick and reload the thread, putting the reader
     // back in the present a few seconds after they landed on a 2005 message.
     // Following the conversation is for a reader who is AT it.
@@ -961,7 +961,7 @@ export class Thread {
    *  sent at all (IRC lines are newline-delimited and the far side refuses one),
    *  so the box is single-line and this only stops the form feeling odd. */
   onComposerKey(e: KeyboardEvent): void {
-    // ⚠ **ASK THE IME FIRST.** While a composition is in flight — a word still
+    // ⚠ ASK THE IME FIRST. While a composition is in flight — a word still
     // underlined under Android's predictive text, a swipe-typed word, anything
     // in a composing script — Enter means "accept that candidate", not "send".
     // Taking it ourselves sends half a word AND swallows the key the IME needed
@@ -1190,8 +1190,8 @@ export class Thread {
     // `ThreadWindow.noteScroll`.
     this.win.noteScroll();
     if (this.threadError() || !this.routed()) return;
-    // ⚠ **DEFERRED, NOT DROPPED — a scroll can be the only one there will ever
-    // be.** These two guards are right to skip the windowing: a scroll we caused
+    // ⚠ DEFERRED, NOT DROPPED — a scroll can be the only one there will ever
+    // be. These two guards are right to skip the windowing: a scroll we caused
     // ourselves, or one arriving mid-load, must not be read as the reader
     // moving. But the work that event asks for — fetch older, fetch newer, write
     // `?from` — still needs doing, and a PROGRAMMATIC scroll delivers exactly
@@ -1261,7 +1261,7 @@ export class Thread {
   fetchNewer(): void {
     const o = this.origin();
     const i = this.id();
-    // ⚠ **`floating` is checked HERE rather than at the scroll site**, and not
+    // ⚠ `floating` is checked HERE rather than at the scroll site, and not
     // only for tidiness: jsdom has no layout, so `step()` reports every rect as
     // zero and a unit test driving `onScroll` measures a fake — the engine's own
     // spec says so and keeps the measuring half in the browser suite. A guard

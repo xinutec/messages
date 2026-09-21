@@ -132,7 +132,7 @@ export class App {
         wasOpen = open;
       });
 
-    // ⚠ **The same moment, by a route the router never sees.** Coming back from
+    // ⚠ The same moment, by a route the router never sees. Coming back from
     // the Android launcher is a return to the list, but nothing navigates — it is
     // already mounted and keeps showing what it last rendered. Measured on the
     // Pixel 9: two hours old, ten behind on one channel, one row out of order,

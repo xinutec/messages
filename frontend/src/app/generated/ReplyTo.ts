@@ -3,7 +3,7 @@
 /**
  * What a message was a reply TO, for the two origins that record one.
  *
- * ⚠ **A reply can point at a message this archive does not hold**, and that is
+ * ⚠ A reply can point at a message this archive does not hold, and that is
  * not an error to hide: Signal's quote names a TIMESTAMP, so a quote of
  * anything older than the archive resolves to nothing, and Telegram's names a
  * message id that may sit in a gap the backfill has not reached. Every field

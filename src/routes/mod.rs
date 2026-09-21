@@ -17,8 +17,8 @@ use crate::state::AppState;
 
 /// How long a static response may be reused without asking again.
 ///
-/// ⚠ **`index.html` MUST REVALIDATE, and shipping it without saying so cost a
-/// deploy that nobody could see.** With no `Cache-Control` at all — which is
+/// ⚠ `index.html` MUST REVALIDATE, and shipping it without saying so cost a
+/// deploy that nobody could see. With no `Cache-Control` at all — which is
 /// what this served until 2026-08-14 — a client falls back to *heuristic*
 /// caching from `Last-Modified`, and is free to keep the document for as long as
 /// it likes without ever asking. An Android WebView did exactly that: it fetched
@@ -34,12 +34,12 @@ use crate::state::AppState;
 /// build is a new URL and the old one can never be wrong. Those are the one kind
 /// of response `immutable` is honestly available for.
 fn cache_control_for(res: &Response<ServeFileSystemResponseBody>) -> Option<HeaderValue> {
-    // ⚠ **A 404 is not an asset.** `SetResponseHeaderLayer::overriding` stamps
+    // ⚠ A 404 is not an asset. `SetResponseHeaderLayer::overriding` stamps
     // whatever the service returned, and a missing file answered with a year of
     // `immutable` is a client that will not ask for that name again this year.
     // Only a response that carried something may say how long it keeps.
     //
-    // ⚠ NOT `!is_success()`. That excludes **304 Not Modified**, which must
+    // ⚠ NOT `!is_success()`. That excludes 304 Not Modified, which must
     // carry the headers a 200 would so the client can refresh what it already
     // holds. Stripping it made every revalidated image a full re-fetch, and the
     // arriving bytes grew the thread AFTER it had scrolled to the bottom —
@@ -63,8 +63,8 @@ fn cache_control_for(res: &Response<ServeFileSystemResponseBody>) -> Option<Head
 /// Serve the app's page for a client-side ROUTE, and 404 anything that plainly
 /// named a file.
 ///
-/// ⚠ **A missing FILE must not be handed the page, and the mistake is
-/// invisible**: the wrong answer is a `200`, so a browser that asked for a
+/// ⚠ A missing FILE must not be handed the page, and the mistake is
+/// invisible: the wrong answer is a `200`, so a browser that asked for a
 /// woff2 and got HTML renders broken icons and reports nothing anywhere.
 /// Measured 2026-09-08 — `/media/nope.woff2` answered `200 text/html` (#1478).
 ///
@@ -120,7 +120,7 @@ pub fn router(state: AppState) -> Router {
         .route("/telemetry", post(telemetry::record));
 
     let app = Router::new()
-        // ⚠ **DELIBERATELY DUMB, and it must stay that way.** This is kubelet's
+        // ⚠ DELIBERATELY DUMB, and it must stay that way. This is kubelet's
         // LIVENESS target (`apps/messages.dhall`: initialDelaySeconds 5,
         // periodSeconds 20). A liveness probe that checks a dependency turns a
         // database blip into a crashloop — kubelet kills the pod for something

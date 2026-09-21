@@ -19,8 +19,8 @@ import { expectIconFontLoaded, expectNoTextOverlaps } from "@xinutec/ui-harness"
  *  "scrolled fine". */
 async function scrollThread(page: Page, top: number | "bottom"): Promise<void> {
   await page.locator(".thread").waitFor();
-  // ⚠ **SETTING scrollTop ONCE IS NOT SCROLLING — THE COMPONENT SCROLLS ITSELF
-  // AND CAN DO IT AFTER US.** Opening a thread jumps to the newest message. This
+  // ⚠ SETTING scrollTop ONCE IS NOT SCROLLING — THE COMPONENT SCROLLS ITSELF
+  // AND CAN DO IT AFTER US. Opening a thread jumps to the newest message. This
   // ran as soon as `.thread` existed, and on a loaded machine that jump landed
   // SECOND: the gate caught it on 2026-09-21 (three gates, load 10.2 on 10 cores)
   // as a day header 635.6875px above where it belonged. That number is not noise

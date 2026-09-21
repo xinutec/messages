@@ -1,6 +1,6 @@
 //! The allow-list: who may use this app at all.
 //!
-//! ⚠ **This is the gate the security model actually rests on.** README's layer 2
+//! ⚠ This is the gate the security model actually rests on. README's layer 2
 //! — VPN-only by DNS — is admitted obscurity there, because the isis ingress
 //! answers on the public IP too. So what stands between an authenticated
 //! stranger and a private message archive is `Config::is_allowed`, called from

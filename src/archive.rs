@@ -94,7 +94,7 @@ impl ConversationKind {
 // that only makes sense to a Rust reader; those go in `//` like this.
 /// Whether a line was said or done.
 ///
-/// ⚠ **Two variants, and the IRC table has four.** Its column is
+/// ⚠ Two variants, and the IRC table has four. Its column is
 /// `ENUM('message','action','event','notice')`, but every query restricts to
 /// message and action — joins, parts and server notices are not conversation.
 /// Widening this would be claiming the reader shows things it does not. Signal
@@ -139,15 +139,15 @@ pub fn us_to_ms(us: i64) -> i64 {
 /// A cursor that lands on the first message of a given DAY, in whatever unit the
 /// origin counts in.
 ///
-/// ⚠ **THE CURSOR COULD ALWAYS EXPRESS A DATE — ONLY THE CALLER COULD NOT MINT
-/// ONE** (#1562). `encode_cursor` takes a NATIVE timestamp, and the four origins
+/// ⚠ THE CURSOR COULD ALWAYS EXPRESS A DATE — ONLY THE CALLER COULD NOT MINT
+/// ONE (#1562). `encode_cursor` takes a NATIVE timestamp, and the four origins
 /// disagree about what that is: Signal milliseconds, Google Chat MICROseconds,
 /// Telegram and IRC whole seconds. A frontend building its own would have to
 /// carry all four conventions and would be wrong for three of them the moment it
 /// got one right — which is the same class of bug as the cursor comments in
 /// `search` guard against.
 ///
-/// ⚠ **`id = 0`, WHICH IS A FLOOR AND NOT A REAL ROW.** The paging predicate is
+/// ⚠ `id = 0`, WHICH IS A FLOOR AND NOT A REAL ROW. The paging predicate is
 /// `ts > ? OR (ts = ? AND id >= ?)`, so a zero id admits every message in that
 /// first second rather than skipping the ones whose id happens to sort lower.
 /// Any id above the smallest real one would silently drop messages from the
@@ -236,7 +236,7 @@ pub struct Reaction {
     pub count: i64,
     /// Who reacted, where the origin records it.
     ///
-    /// ⚠ **EMPTY MEANS NOT RECORDED, NEVER "NOBODY".** Google Chat aggregates
+    /// ⚠ EMPTY MEANS NOT RECORDED, NEVER "NOBODY". Google Chat aggregates
     /// reactions and names no one; Telegram names reactors but may TRUNCATE the
     /// list for a heavily-reacted message. So `who` can be shorter than `count`
     /// and the count stays authoritative — a reader that derives the number from
@@ -246,7 +246,7 @@ pub struct Reaction {
 
 /// How far an outgoing message got, as far as the archive can tell.
 ///
-/// ⚠ **A LADDER, AND EVERY ORIGIN CLIMBS ONLY AS HIGH AS IT CAN SPEAK.** Telegram
+/// ⚠ A LADDER, AND EVERY ORIGIN CLIMBS ONLY AS HIGH AS IT CAN SPEAK. Telegram
 /// reports a conversation-wide high-water mark and nothing else, so it can say
 /// `Sent` or `Read` and never `Delivered` — the state simply does not exist in
 /// what it sends. Signal reports a per-message, per-person event and reaches all
@@ -266,7 +266,7 @@ pub enum DeliveryState {
     /// View-once media they actually opened. Signal only, and it sits ABOVE
     /// `Read` because it cannot happen without it.
     ///
-    /// ⚠ **NO ROW HAS EVER CARRIED THIS**, checked 2026-09-21: `signal_receipts`
+    /// ⚠ NO ROW HAS EVER CARRIED THIS, checked 2026-09-21: `signal_receipts`
     /// holds only `delivery` and `read`. It is in the ladder because the capture
     /// path already stores the kind, and a state that arrives one day into a
     /// three-valued reader would be silently flattened into `Read`.
@@ -294,7 +294,7 @@ pub struct Delivery {
     /// Who read it and when, for the origin that records people rather than a
     /// position.
     ///
-    /// ⚠ **EMPTY IS NOT "NOBODY", AND A FULL LIST IS NOT "EVERYONE".** Telegram
+    /// ⚠ EMPTY IS NOT "NOBODY", AND A FULL LIST IS NOT "EVERYONE". Telegram
     /// leaves this empty always — it names no one. Signal names only those who
     /// have sent a receipt, so in a GROUP this is who has read it so far and
     /// never the membership; there is no row anywhere saying who has not. The
@@ -380,14 +380,14 @@ pub struct MessageEdit {
 
 /// One run of formatting inside a message body — bold, a link, a spoiler.
 ///
-/// ⚠ **THE OFFSETS ARE UTF-16 CODE UNITS, WHICH IS TELEGRAM'S UNIT AND NOT
-/// RUST'S.** Slicing a Rust `String` by them lands mid-character on any body
+/// ⚠ THE OFFSETS ARE UTF-16 CODE UNITS, WHICH IS TELEGRAM'S UNIT AND NOT
+/// RUST'S. Slicing a Rust `String` by them lands mid-character on any body
 /// containing an emoji, and this archive's Telegram half is full of them. They
 /// are carried out to the browser UNCONVERTED on purpose: a JavaScript string
 /// index IS a UTF-16 code unit, so the arithmetic is native there and no
 /// conversion — and no conversion bug — exists anywhere.
 ///
-/// ⚠ **THE VIEWER MUST NOT BUILD HTML FROM THESE.** `url` comes from whoever sent
+/// ⚠ THE VIEWER MUST NOT BUILD HTML FROM THESE. `url` comes from whoever sent
 /// the message. It is rendered through Angular's `[href]` binding, which
 /// sanitises, and never through `innerHTML`.
 #[derive(Debug, Clone, Serialize)]
@@ -426,7 +426,7 @@ pub struct LinkImage {
 #[cfg_attr(feature = "ts", ts(export))]
 /// What a message was a reply TO, for the two origins that record one.
 ///
-/// ⚠ **A reply can point at a message this archive does not hold**, and that is
+/// ⚠ A reply can point at a message this archive does not hold, and that is
 /// not an error to hide: Signal's quote names a TIMESTAMP, so a quote of
 /// anything older than the archive resolves to nothing, and Telegram's names a
 /// message id that may sit in a gap the backfill has not reached. Every field
@@ -484,7 +484,7 @@ pub struct Message {
     pub reply_to: Option<ReplyTo>,
     /// How far this message got, for the origins that report it.
     ///
-    /// ⚠ **`None` IS "THE ARCHIVE CANNOT SAY", NEVER "UNDELIVERED".** It covers
+    /// ⚠ `None` IS "THE ARCHIVE CANNOT SAY", NEVER "UNDELIVERED". It covers
     /// every INCOMING message, Google Chat and IRC entirely, and — the case this
     /// field exists for — anything sent before capture began. Telegram's read
     /// marks start 2026-09-17 and Signal's receipts 2026-09-18; neither service
@@ -494,7 +494,7 @@ pub struct Message {
     pub delivery: Option<Delivery>,
     /// Formatting runs inside `body` — Telegram only, empty everywhere else.
     ///
-    /// ⚠ **EMPTY MEANS NO FORMATTING RECORDED, NOT PLAIN TEXT.** Only Telegram
+    /// ⚠ EMPTY MEANS NO FORMATTING RECORDED, NOT PLAIN TEXT. Only Telegram
     /// sends these and only the recapture collected them; Signal's `textStyles`
     /// are kept in `signal_frames` and have no columns yet (#1693), and Google
     /// Chat and IRC have no such concept. A reader must not conclude from an
@@ -523,14 +523,14 @@ type Version = (i64, Option<String>);
 
 /// Put an edited message's history on it, and its CURRENT text in its body.
 ///
-/// ⚠ **AN EDIT IS A SEPARATE ROW, AND UNTIL NOW BOTH WERE DRAWN.** Signal sends a
+/// ⚠ AN EDIT IS A SEPARATE ROW, AND UNTIL NOW BOTH WERE DRAWN. Signal sends a
 /// revision as a new message carrying `edit_of_ts`, so a thread showed the same
 /// message twice — the old text where it was said, the new text minutes later,
 /// with nothing saying they were one thing. 254 messages in the archive are in
 /// that state. The revisions are excluded from the page above; this hangs them on
 /// the message they revise.
 ///
-/// ⚠ **The BODY becomes the newest version, and the position stays the original's.**
+/// ⚠ The BODY becomes the newest version, and the position stays the original's.
 /// That is what an edit means: the thing was said then, and now reads this way.
 /// Keeping the original's text as the body would show a message the sender has
 /// already corrected, which is the failure this whole change is about.
@@ -541,7 +541,7 @@ pub const EXCERPT_CHARS: usize = 120;
 
 /// A one-line prefix of a quoted message.
 ///
-/// ⚠ **Truncated by CHARACTERS, not bytes.** These bodies are full of emoji and
+/// ⚠ Truncated by CHARACTERS, not bytes. These bodies are full of emoji and
 /// non-Latin text — the Telegram archive alone is mostly neither — and slicing a
 /// `String` at a byte offset panics mid-codepoint. Newlines are folded because
 /// the preview is one line by construction; letting a body's own line breaks
@@ -560,7 +560,7 @@ pub fn excerpt(body: Option<&str>) -> Option<String> {
 
 /// Resolve Signal's quotes for one page.
 ///
-/// ⚠ **Signal names the quoted message by TIMESTAMP** (`quote_target_ts`), not by
+/// ⚠ Signal names the quoted message by TIMESTAMP (`quote_target_ts`), not by
 /// id, so resolution is a lookup on `(thread_id, server_ts)` and legitimately
 /// misses: a quote of anything older than this archive has nothing to match. A
 /// miss is recorded as an unresolved reply rather than dropped — see [`ReplyTo`].
@@ -634,21 +634,21 @@ async fn attach_signal_replies(
 
 /// The pictures and videos a Google Chat message carried.
 ///
-/// ⚠ **THE COMMENT HERE USED TO SAY "GOOGLE CHAT EXPORT CARRIES NO ATTACHMENTS",
-/// AND IT WAS NEVER TRUE.** The capture read six indices of a 39-element record
+/// ⚠ THE COMMENT HERE USED TO SAY "GOOGLE CHAT EXPORT CARRIES NO ATTACHMENTS",
+/// AND IT WAS NEVER TRUE. The capture read six indices of a 39-element record
 /// and attachments are at index 10; 326 messages carry one, and only 20 of those
 /// are wordless — the other 306 rendered as an ordinary message with a caption
 /// and no picture, which is why nobody noticed for as long as this archive has
 /// existed.
 ///
-/// ⚠ **`available` IS THE HONEST HALF.** The bytes are not Google Chat's to
+/// ⚠ `available` IS THE HONEST HALF. The bytes are not Google Chat's to
 /// re-serve: the download URL is minted per render, session-bound and expiring,
 /// so what is held is whatever a harvest managed to read at the time. A row with
 /// no `stored_path` still draws — as a picture this archive KNOWS ABOUT and does
 /// not have, which is a different statement from a blank message and the whole
 /// reason the metadata was worth importing separately from the files.
 ///
-/// ⚠ **THE ID IS THIS TABLE'S OWN, AND THE ROUTE IS WHAT KEEPS IT APART.** Every
+/// ⚠ THE ID IS THIS TABLE'S OWN, AND THE ROUTE IS WHAT KEEPS IT APART. Every
 /// origin's attachments have independent AUTO_INCREMENTs, so id 42 exists in
 /// several and means a different picture in each. This app already had the
 /// answer — Telegram is served by `/api/telegram-media/{id}`, its own route —
@@ -703,14 +703,14 @@ async fn attach_gchat_attachments(
 
 /// Resolve Google Chat's quote-replies for one page.
 ///
-/// ⚠ **THIS ORIGIN WAS REPORTED AS HAVING NO REPLIES AT ALL, AND THAT WAS A
-/// MEASUREMENT ERROR, NOT A FACT ABOUT GOOGLE.** `gchat_messages.thread_id`
+/// ⚠ THIS ORIGIN WAS REPORTED AS HAVING NO REPLIES AT ALL, AND THAT WAS A
+/// MEASUREMENT ERROR, NOT A FACT ABOUT GOOGLE. `gchat_messages.thread_id`
 /// groups messages into topics, every DM message is its own topic, so a diff of
 /// topic-replies against topic-starters found nothing — and an inline
 /// quote-reply in a DM *is* a starter, so the field sat inside the control
 /// group. 126 messages carry a real pointer; the archive drew none of them.
 ///
-/// ⚠ **`reply_to_msg_id` IS NOT `thread_id`.** A topic says which conversation a
+/// ⚠ `reply_to_msg_id` IS NOT `thread_id`. A topic says which conversation a
 /// message belongs to; this says which MESSAGE it answers. A group message can
 /// have both, and they mean different things.
 ///
@@ -786,7 +786,7 @@ async fn attach_gchat_replies(
 
 /// Resolve Telegram's replies for one page.
 ///
-/// ⚠ **THIS USED TO REFUSE SERVICE EVENTS, AND THE REASON EXPIRED.** The rule was
+/// ⚠ THIS USED TO REFUSE SERVICE EVENTS, AND THE REASON EXPIRED. The rule was
 /// that `kind = 'service'` kept an event off every page, so resolving a reply to
 /// one would hand back an id the reader could never be taken to — a quote that
 /// clicks through to nothing. That premise is gone: the page query now returns
@@ -794,8 +794,8 @@ async fn attach_gchat_replies(
 /// refusing it would withhold a jump that works.
 ///
 /// The promise it was protecting still holds and is worth restating, because it
-/// is the thing to check if this is ever narrowed again: **an id in a [`ReplyTo`]
-/// means the reader can be taken there.** What satisfies that promise is now
+/// is the thing to check if this is ever narrowed again: an id in a [`ReplyTo`]
+/// means the reader can be taken there. What satisfies that promise is now
 /// "the page query returns it", not "it is speech".
 async fn attach_telegram_replies(
     pool: &MySqlPool,
@@ -891,8 +891,8 @@ async fn attach_edits(pool: &MySqlPool, thread_id: &str, msgs: &mut [Message]) -
         return Ok(());
     }
     let placeholders = vec!["?"; originals.len()].join(",");
-    // ⚠ **SCOPED TO THE THREAD, and matching on the timestamp alone was a real
-    // defect.** `edit_of_ts` is a SERVER TIMESTAMP, not a message id: two
+    // ⚠ SCOPED TO THE THREAD, and matching on the timestamp alone was a real
+    // defect. `edit_of_ts` is a SERVER TIMESTAMP, not a message id: two
     // conversations can hold messages sharing a millisecond, and a revision
     // matched across threads would show one conversation's text inside another's
     // history. Found by three parallel tests seeding the same timestamp in
@@ -973,7 +973,7 @@ pub async fn attach_link_images(pool: &MySqlPool, msgs: &mut [Message]) -> Resul
         h
     };
     let placeholders = vec!["?"; hashes.len()].join(",");
-    // ⚠ **EVERY STATE, NOT JUST THE PICTURES.** Selecting only `ok` rows made a
+    // ⚠ EVERY STATE, NOT JUST THE PICTURES. Selecting only `ok` rows made a
     // link we had already decided against look unseen, so the page offered a
     // control for it — and tapping that control 404s, because a decided row is
     // rightly not resolvable to an address. A button that cannot work is worse
@@ -1050,7 +1050,7 @@ pub async fn attach_link_images(pool: &MySqlPool, msgs: &mut [Message]) -> Resul
 /// Register this page's links so they can be asked for later, WITHOUT asking for
 /// anything.
 ///
-/// ⚠ **THIS IS THE ONLY PLACE A URL ENTERS THE TABLE**, and that is what keeps
+/// ⚠ THIS IS THE ONLY PLACE A URL ENTERS THE TABLE, and that is what keeps
 /// the tap from being an open proxy: the address comes off a message in the
 /// archive, never off a request. A tap can then only promote a row that already
 /// exists, by its hash.
@@ -1121,7 +1121,7 @@ pub async fn link_image_blob(pool: &MySqlPool, id: &str) -> Result<Option<(Strin
 /// What the archive now holds for one Telegram message, for a reader watching a
 /// fetch it asked for.
 ///
-/// ⚠ **This exists because the request is ASYNCHRONOUS and the POST cannot answer.**
+/// ⚠ This exists because the request is ASYNCHRONOUS and the POST cannot answer.
 /// A link picture is fetched while the request is open, so its response carries the
 /// outcome; a 1.5GB video is fetched by another process minutes later. Without
 /// something to ask, the control that said "fetching…" said it forever — which it
@@ -1237,7 +1237,7 @@ pub async fn gchat_attachment_blob(
 
 /// Which way a page runs from its cursor.
 ///
-/// ⚠ **The direction cannot be a bound parameter**: `ORDER BY` will not take
+/// ⚠ The direction cannot be a bound parameter: `ORDER BY` will not take
 /// one, and multiplying the sort keys by ±1 to fake it costs the index on a
 /// 401,794-row table. So each origin carries the comparison twice, once per
 /// direction, and this enum is what chooses between them.
@@ -1252,8 +1252,8 @@ pub enum PageDir {
     Newer,
     /// The cursor's own row, and forward from there. What LANDING needs.
     ///
-    /// ⚠ **Both other directions are strict, so a landing built from `Older` +
-    /// `Newer` skips the row it is aimed at.** Shipped that way on 2026-09-08
+    /// ⚠ Both other directions are strict, so a landing built from `Older` +
+    /// `Newer` skips the row it is aimed at. Shipped that way on 2026-09-08
     /// and found on a phone: the reader was put one message past the hit and the
     /// marker naming "the message you searched for" pointed at its neighbour.
     /// The two halves must meet AND overlap by exactly the one row between them.
@@ -1336,8 +1336,8 @@ pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
     // something anybody said, and counting it would make a conversation look
     // busier than it was.
     //
-    // ⚠ **AGGREGATE-THEN-JOIN, and that shape is the IRC lesson applied before it
-    // has to be learned again.** The derived table lets MariaDB answer the whole
+    // ⚠ AGGREGATE-THEN-JOIN, and that shape is the IRC lesson applied before it
+    // has to be learned again. The derived table lets MariaDB answer the whole
     // aggregate from `idx_tg_conv_kind_ts`; grouping the join instead makes it
     // choose the unique key and read every candidate row. There is no maintained
     // stats table here yet and at this archive's size there should not be — the
@@ -1465,7 +1465,7 @@ pub async fn irc_target(pool: &MySqlPool, conversation_id: &str) -> Result<Optio
 
 /// Who reacted to each of these messages, by `(msg_id, emoji)`.
 ///
-/// ⚠ **A PEER ID IS NOT A NAME, AND THERE ARE TWO PLACES TO LOOK.** A reactor in a
+/// ⚠ A PEER ID IS NOT A NAME, AND THERE ARE TWO PLACES TO LOOK. A reactor in a
 /// DM is usually the conversation's own peer, so `telegram_conversations` names
 /// them — but the SELF user has no conversation row, and 8,706 of this archive's
 /// reactions are his own. The second lookup is any message that peer ever sent,
@@ -1522,13 +1522,13 @@ async fn telegram_reactors(
 
 /// A call in words, from what the archive knows about it.
 ///
-/// ⚠ **`None` FOR DURATION IS NOT A ZERO-LENGTH CALL.** Telegram omits the field
+/// ⚠ `None` FOR DURATION IS NOT A ZERO-LENGTH CALL. Telegram omits the field
 /// for a call that was never answered, so the absence IS the record of it not
 /// being answered — which is why "missed" and "busy" are phrased without one
 /// rather than as "0 seconds". Getting this backwards would report every
 /// unanswered call as a call that happened and took no time.
 ///
-/// ⚠ **A VERB PHRASE ABOUT THE SENDER, not a noun phrase naming the event.** An
+/// ⚠ A VERB PHRASE ABOUT THE SENDER, not a noun phrase naming the event. An
 /// `Action` is drawn `* Dana <body>` in the thread and `HH:MM  * Dana <body>`
 /// in a copied log, so "a call" renders as `* Dana a call`. Every label the
 /// ingester writes is already phrased this way — "added a member", "changed the
@@ -1609,8 +1609,8 @@ pub async fn messages_page(
         Origin::Telegram => telegram_messages(pool, id, cursor, limit, dir).await?,
     };
     let mut page = page;
-    // ⚠ **Edit history is per-origin because the two origins that have any store
-    // it differently.** Signal appends a row per version and points it at the
+    // ⚠ Edit history is per-origin because the two origins that have any store
+    // it differently. Signal appends a row per version and points it at the
     // original (`edit_of_ts`); Telegram mutates the message and the archive files
     // the superseded text beside it. One function cannot read both, and calling
     // Signal's against a Telegram thread id would quietly find nothing and report
@@ -1803,8 +1803,8 @@ async fn signal_messages(
     // add-then-remove of the same author within the page).
     if !ts_list.is_empty() {
         let placeholders = vec!["?"; ts_list.len()].join(",");
-        // ⚠ **THIS USED TO BE `COUNT(DISTINCT author_uuid)`, WHICH THREW AWAY THE
-        // ONE THING SIGNAL HAS THAT THE OTHER ORIGINS DID NOT.** Signal stores
+        // ⚠ THIS USED TO BE `COUNT(DISTINCT author_uuid)`, WHICH THREW AWAY THE
+        // ONE THING SIGNAL HAS THAT THE OTHER ORIGINS DID NOT. Signal stores
         // per-author reaction EVENTS, so it always knew who laughed; the common
         // `Reaction` shape had nowhere to put them and the count was taken on the
         // way out. The names come back now, and the DISTINCT is done in Rust
@@ -1864,22 +1864,22 @@ async fn signal_messages(
 
 /// What became of the outgoing messages on this page, person by person.
 ///
-/// ⚠ **SIGNAL IS THE ONLY ORIGIN HERE THAT NAMES A PERSON AND A TIME.** A receipt
+/// ⚠ SIGNAL IS THE ONLY ORIGIN HERE THAT NAMES A PERSON AND A TIME. A receipt
 /// is `(target_ts, author_uuid, kind, when_ts)` — per message, per recipient, with
 /// the moment Signal says it happened rather than the moment we heard. Telegram
 /// gives one moving position per conversation and no names at all, which is why
 /// `attach_telegram_read` is a comparison and this is a join.
 ///
-/// ⚠ **A RECEIPT FROM MYSELF SAYS NOTHING ABOUT THE RECIPIENT, and there are real
-/// rows like that.** Reading a thread on a linked device syncs a read of
+/// ⚠ A RECEIPT FROM MYSELF SAYS NOTHING ABOUT THE RECIPIENT, and there are real
+/// rows like that. Reading a thread on a linked device syncs a read of
 /// EVERYTHING in it, my own messages included — 2 such rows in one DM alone. Left
 /// in, a message nobody had opened would show as read by the person who sent it.
 /// `r.author_uuid <> m.sender_uuid` drops them: the author of my message is me, so
 /// a receipt from the message's own sender is self-addressed by construction, and
 /// no separate "who am I" lookup is needed to know it.
 ///
-/// ⚠ **NO RECEIPT MEANS "SENT" ONLY AFTER CAPTURE BEGAN — otherwise it means
-/// NOTHING.** Receipt capture started 2026-09-18; the 659 outgoing messages before
+/// ⚠ NO RECEIPT MEANS "SENT" ONLY AFTER CAPTURE BEGAN — otherwise it means
+/// NOTHING. Receipt capture started 2026-09-18; the 659 outgoing messages before
 /// it have no rows and never will, because Signal keeps no server-side history to
 /// re-walk. So the floor is read from the data (`MIN(observed_at)`) and anything
 /// older is left `None`. Calling those "sent, never delivered" would report this
@@ -2102,8 +2102,8 @@ async fn gchat_messages(
                 .unwrap_or_default();
             let mid = mid.to_string();
             if let Some(m) = msgs.iter_mut().find(|m| m.id == mid) {
-                // ⚠ **`list_topics` NAMES NOBODY, so these come from a SECOND
-                // capture.** The reaction itself arrives as `[emoji, count]`;
+                // ⚠ `list_topics` NAMES NOBODY, so these come from a SECOND
+                // capture. The reaction itself arrives as `[emoji, count]`;
                 // who reacted is a separate rpc that `gchat-archive`'s `sync.py`
                 // replays per reacted message, and `tools/import_gchat_reactors.py`
                 // loads. So `who` is empty for any reaction that capture has not
@@ -2119,8 +2119,8 @@ async fn gchat_messages(
 
 /// One page of an IRC conversation.
 ///
-/// ⚠ **The cursor's native unit is seconds, and it is the coarsest of the three
-/// origins by a wide margin.** irssi's default `timestamp_format` is `%H:%M`, so
+/// ⚠ The cursor's native unit is seconds, and it is the coarsest of the three
+/// origins by a wide margin. irssi's default `timestamp_format` is `%H:%M`, so
 /// the source records no seconds at all and every line in a busy minute shares
 /// one timestamp — `id` is not a tie-break here so much as the actual ordering.
 /// It holds because the importer walks files in sorted path order and a log is
@@ -2265,7 +2265,7 @@ pub struct SearchHit {
 
 /// Simple substring search across all three origins' message text. Newest first.
 ///
-/// ⚠ **RETRACTED MESSAGES MATCH.** Signal's `deleted` rows were excluded here
+/// ⚠ RETRACTED MESSAGES MATCH. Signal's `deleted` rows were excluded here
 /// until 2026-09-04 while a thread sent the same text and hid it behind a click:
 /// one concept, two policies, chosen in two places, neither aware of the other.
 /// Decided 2026-09-04 — a search that cannot find what was retracted is not an
@@ -2373,7 +2373,7 @@ async fn telegram_messages(
         let deleted: i8 = r.try_get("deleted")?;
         let is_outgoing: i8 = r.try_get("is_outgoing")?;
         let edited_at: Option<i64> = r.try_get("edited_at")?;
-        // ⚠ **AN EDIT DATE IS NOT AN EDIT TO SHOW.** Telegram's `edit_hide` says
+        // ⚠ AN EDIT DATE IS NOT AN EDIT TO SHOW. Telegram's `edit_hide` says
         // "the message should be shown as not modified to the user, even if an edit
         // date is present" — it sets a date for its own reasons and asks clients not
         // to surface it, which its own apps honour. This reader did not, and printed
@@ -2385,7 +2385,7 @@ async fn telegram_messages(
         let edit_hidden: Option<i8> = r.try_get("edit_hidden")?;
         let edited = edited_at.is_some() && edit_hidden.unwrap_or(0) == 0;
         let is_service = r.try_get::<String, _>("kind")? == "service";
-        // ⚠ **THE STORED TEXT FOR A CALL IS THE TWO WORDS "a call".** The ingester
+        // ⚠ THE STORED TEXT FOR A CALL IS THE TWO WORDS "a call". The ingester
         // writes an English label for a service action and `describe_action`
         // returns a `&'static str`, so the duration, whether it was video and how
         // it ended were all discarded before this ever saw them. They are columns
@@ -2410,7 +2410,7 @@ async fn telegram_messages(
                 .try_get::<Option<String>, _>("sender")?
                 .unwrap_or_default(),
             is_outgoing: is_outgoing != 0,
-            // ⚠ **A SERVICE EVENT IS AN ACTION, AND IT USED TO BE NOTHING.** This
+            // ⚠ A SERVICE EVENT IS AN ACTION, AND IT USED TO BE NOTHING. This
             // query excluded `kind = 'service'` outright, so 73 events — every
             // call in the archive among them — were stored and then filtered out
             // of the only thing that reads them. `Action` is the shape IRC
@@ -2439,7 +2439,7 @@ async fn telegram_messages(
 
     // Media this archive holds bytes for, as `attachments`.
     //
-    // ⚠ **`attachments` WAS "SIGNAL ONLY", AND THAT WAS NEVER WHAT IT MEANT.** It
+    // ⚠ `attachments` WAS "SIGNAL ONLY", AND THAT WAS NEVER WHAT IT MEANT. It
     // means "bytes this archive holds for this message", and Signal was simply the
     // only origin that had any. Giving Telegram a parallel field would have made one
     // concept two, with the copied-log namer, the is-image test and the not-stored
@@ -2505,7 +2505,7 @@ async fn telegram_messages(
     // with a count beside it. What the archive holds and what the screen can show
     // are different questions, and this is the second one.
     //
-    // ⚠ **And `removed_at IS NULL`, which is the same distinction again.** A
+    // ⚠ And `removed_at IS NULL`, which is the same distinction again. A
     // reaction taken back KEEPS ITS ROW in the archive — the ingester dates it
     // instead of deleting it, so a re-walk cannot forget that it happened — and the
     // thread draws what is on the message NOW. Without this filter every retracted
@@ -2552,16 +2552,16 @@ async fn telegram_messages(
 
 /// Mark the outgoing messages on this page as read or not.
 ///
-/// ⚠ **ONE QUERY FOR THE WHOLE PAGE, because a read mark is per CONVERSATION.**
+/// ⚠ ONE QUERY FOR THE WHOLE PAGE, because a read mark is per CONVERSATION.
 /// Telegram records how far the other side has read — a single high-water
 /// `msg_id` — not a flag per message, so "have they read this?" is a comparison
 /// rather than a lookup, and there is nothing to join per row.
 ///
-/// ⚠ **`direction = 'outbox'` is the one that says anything about THEM.** The
+/// ⚠ `direction = 'outbox'` is the one that says anything about THEM. The
 /// out-tray is my messages; `inbox` is how far I have read theirs, which is a
 /// fact about the archive's owner and not what a tick on your own message means.
 ///
-/// ⚠ **No mark → every message stays `None`, not `false`.** Capture began
+/// ⚠ No mark → every message stays `None`, not `false`. Capture began
 /// 2026-09-17 and Telegram keeps no history of reading, so a conversation nobody
 /// has opened since then has no mark at all. Reporting that as unread would turn
 /// this archive's late start into a claim about somebody's behaviour.
@@ -2605,17 +2605,17 @@ async fn attach_telegram_read(
 
 /// The formatting runs on this page's messages.
 ///
-/// ⚠ **ONE QUERY FOR THE PAGE**, like reactions and read marks — 1,146 entity
+/// ⚠ ONE QUERY FOR THE PAGE, like reactions and read marks — 1,146 entity
 /// rows exist across 160,230 messages, so per-message queries would be ~100
 /// round trips to attach nothing for almost all of them.
 ///
-/// ⚠ **`removed_at IS NULL`, BECAUSE AN EDIT RETRACTS FORMATTING TOO.** Editing a
+/// ⚠ `removed_at IS NULL`, BECAUSE AN EDIT RETRACTS FORMATTING TOO. Editing a
 /// message replaces its entity list, and the archive dates the old rows rather
 /// than deleting them — the same shape `telegram_reactions` uses. Drawing a
 /// retracted run would bold a stretch of text that is no longer bold, or worse,
 /// point a link at a URL the sender removed.
 ///
-/// ⚠ **ORDERED BY OFFSET**, because the reader walks them in one pass to cut the
+/// ⚠ ORDERED BY OFFSET, because the reader walks them in one pass to cut the
 /// body into segments. Unordered, a later-starting run would truncate an earlier
 /// one and the tail of the message would vanish.
 async fn attach_telegram_entities(
@@ -2660,7 +2660,7 @@ async fn attach_telegram_entities(
 
 /// Telegram's edit history: the superseded versions of each edited message.
 ///
-/// ⚠ **The ordering is the whole difficulty, and it is not the one Signal has.**
+/// ⚠ The ordering is the whole difficulty, and it is not the one Signal has.
 /// Signal's versions each arrive with their own send time, so they sort by it.
 /// Telegram gives a message one `edit_date` — the LAST edit — so a superseded
 /// version is filed under the `edit_date` it carried, and the ORIGINAL carried
@@ -2724,14 +2724,14 @@ async fn attach_telegram_edits(
 
 /// Where a search looks: everywhere, or inside one conversation.
 ///
-/// ⚠ **SCOPING IS NOT A FILTER APPLIED AFTERWARDS.** Narrowing by fetching the
+/// ⚠ SCOPING IS NOT A FILTER APPLIED AFTERWARDS. Narrowing by fetching the
 /// global result and keeping the matching rows would be bounded by `limit`
 /// BEFORE the conversation is considered — a term that is common elsewhere and
 /// rare here would come back empty while the messages sat in the archive. The
 /// scope goes into the SQL, and the origins it cannot match are not queried at
 /// all.
 ///
-/// ⚠ **AND IT MAKES THE SLOW ORIGIN FAST.** The global IRC search is a 10s scan
+/// ⚠ AND IT MAKES THE SLOW ORIGIN FAST. The global IRC search is a 10s scan
 /// of 3.7M rows because `LIKE '%term%'` cannot use an index (see below).
 /// `conversation_id` IS indexed, so a scoped search reads one conversation's
 /// rows instead of every row — the opposite of the usual "filtering costs extra".
@@ -2928,14 +2928,14 @@ pub async fn search(
     // the ones full of words like "connection" and "user" that somebody
     // searching would actually type.
     //
-    // ⚠ **THE SUBSTRING SCAN MUST NOT BE JOINED TO, and this is the same trap
-    // the conversation list fell into.** Written as one flat join, the optimizer
+    // ⚠ THE SUBSTRING SCAN MUST NOT BE JOINED TO, and this is the same trap
+    // the conversation list fell into. Written as one flat join, the optimizer
     // drives from `irc_conversations` (315 rows) and reaches `irc_messages` by
     // `ref` — 3.7M secondary-index entries, each followed by a primary-key
     // lookup to read `text`, which is random I/O over a 502 MiB table behind a
-    // 128 MiB buffer pool. MEASURED 2026-08-14: **32.4s**. Scanning
+    // 128 MiB buffer pool. MEASURED 2026-08-14: 32.4s. Scanning
     // `irc_messages` alone and joining the surviving 50 rows afterwards is
-    // **10.0s** for a result set proved identical (same count, same id bounds).
+    // 10.0s for a result set proved identical (same count, same id bounds).
     //
     // `is_status` therefore moves inside as a subquery against the small table,
     // NOT to a filter after the join: applying it later would filter rows the
@@ -2946,9 +2946,9 @@ pub async fn search(
     // `SUM(LENGTH(text))` is already 7.5s). Going below it means a FULLTEXT
     // index, which searches WORDS: `nix` would stop matching `nixos`. That is a
     // decision about what search means rather than how it runs, so it is
-    // Pippijn's, and it is filed as **#882**.
+    // Pippijn's, and it is filed as #882.
     //
-    // ⚠ **SCOPED, THIS IS THE ONE THAT GETS DRAMATICALLY FASTER**, which is the
+    // ⚠ SCOPED, THIS IS THE ONE THAT GETS DRAMATICALLY FASTER, which is the
     // opposite of the usual "filtering costs extra". The global form is one pass
     // over 3.7M rows because `LIKE '%term%'` cannot use an index;
     // `conversation_id` IS indexed, so the scoped form reads one conversation's
@@ -2964,7 +2964,7 @@ pub async fn search(
     //     scoped #linux  (448,662 lines)          250ms
     //     scoped #c, term absent  ← worst case   2,440ms
     //
-    // ⚠ **COST TRACKS MATCH DENSITY, NOT CONVERSATION SIZE**, which is why the
+    // ⚠ COST TRACKS MATCH DENSITY, NOT CONVERSATION SIZE, which is why the
     // LARGEST conversation is the fastest: `LIMIT 50` is satisfied early when
     // matches are common, and the scan stops. The worst case is therefore a big
     // conversation where the term is ABSENT — every row read, nothing to stop

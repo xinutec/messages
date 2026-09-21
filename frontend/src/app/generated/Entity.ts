@@ -3,14 +3,14 @@
 /**
  * One run of formatting inside a message body — bold, a link, a spoiler.
  *
- * ⚠ **THE OFFSETS ARE UTF-16 CODE UNITS, WHICH IS TELEGRAM'S UNIT AND NOT
- * RUST'S.** Slicing a Rust `String` by them lands mid-character on any body
+ * ⚠ THE OFFSETS ARE UTF-16 CODE UNITS, WHICH IS TELEGRAM'S UNIT AND NOT
+ * RUST'S. Slicing a Rust `String` by them lands mid-character on any body
  * containing an emoji, and this archive's Telegram half is full of them. They
  * are carried out to the browser UNCONVERTED on purpose: a JavaScript string
  * index IS a UTF-16 code unit, so the arithmetic is native there and no
  * conversion — and no conversion bug — exists anywhere.
  *
- * ⚠ **THE VIEWER MUST NOT BUILD HTML FROM THESE.** `url` comes from whoever sent
+ * ⚠ THE VIEWER MUST NOT BUILD HTML FROM THESE. `url` comes from whoever sent
  * the message. It is rendered through Angular's `[href]` binding, which
  * sanitises, and never through `innerHTML`.
  */

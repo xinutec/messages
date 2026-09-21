@@ -5,7 +5,7 @@
 // template change cannot alter what gets copied, and the whole format is
 // testable without a browser.
 //
-// ⚠ **The format is irssi's, and it was measured rather than chosen.**
+// ⚠ The format is irssi's, and it was measured rather than chosen.
 // `signal/src/irclog.rs` classifies 966,039 real log lines and is the importer
 // this archive is built on; this is its inverse for the two classes a viewer can
 // produce. Keep them agreeing — a log copied out of here should read like a log
@@ -15,7 +15,7 @@
 //     14:32 <pippijn> hello there
 //     14:35  * pippijn waves
 //
-// ⚠ **An action's two spaces are irssi's, not a typo.** `HH:MM  * nick text`
+// ⚠ An action's two spaces are irssi's, not a typo. `HH:MM  * nick text`
 // against `HH:MM <nick> text` — the parser matches on it, so losing one space
 // makes the line unrecognisable to the thing this is the inverse of.
 

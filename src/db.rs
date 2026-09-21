@@ -35,7 +35,7 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
     // What is known about a link somebody posted, keyed by the link itself: the
     // same picture posted in three channels is one row and one fetch.
     //
-    // ⚠ **`wanted` IS THE QUEUE, and that is why there is no second table.** A
+    // ⚠ `wanted` IS THE QUEUE, and that is why there is no second table. A
     // link enters this table the moment a READER is served a message containing
     // it — reading is what makes a picture worth having — and leaves `wanted`
     // when the fetcher has asked. The states are a lifecycle, not a set of flags:
@@ -44,14 +44,14 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
     //             → not_image   reached it; not a picture we may inline
     //             → failed      could not reach it, or broke the limits
     //
-    // ⚠ **`offered` IS WHAT MAKES THE TAP SAFE.** Serving a page registers each
+    // ⚠ `offered` IS WHAT MAKES THE TAP SAFE. Serving a page registers each
     // of its links here with the URL TAKEN FROM THE ARCHIVE, and asking for one
     // names that row by its hash. The browser therefore never names an address to
     // fetch — if it could, this would be an endpoint that fetches anything anyone
     // asks for, wearing a button. Nothing is fetched at `offered`; a person has
     // to ask, and the answer comes back on that same request.
     //
-    // ⚠ **THE REFUSALS ARE ROWS TOO.** A link that is not a picture must be
+    // ⚠ THE REFUSALS ARE ROWS TOO. A link that is not a picture must be
     // remembered as not one, or every reading of that conversation asks a
     // stranger's server about it again. Somebody else's server hears from us once
     // per link, ever — and only because someone actually read the line.

@@ -1,7 +1,7 @@
 //! The job half: find links in the archive, ask each server once what its link
 //! is, keep the pictures.
 //!
-//! ⚠ **THIS RUNS NOWHERE NEAR THE WEB POD.** The pod that serves
+//! ⚠ THIS RUNS NOWHERE NEAR THE WEB POD. The pod that serves
 //! `messages.xinutec.org` has no route off the cluster at all — DNS, the
 //! database, and irssi — and that is deliberate. Fetching a stranger's URL is
 //! the one thing in this app that must reach the open internet, so it lives in a
@@ -71,7 +71,7 @@ pub fn url_hash(url: &Url) -> String {
 
 /// Ask the fetch service for a picture, and write down what came back.
 ///
-/// ⚠ **THE WEB POD DOES NOT FETCH, AND THE FETCHER DOES NOT READ.** This side
+/// ⚠ THE WEB POD DOES NOT FETCH, AND THE FETCHER DOES NOT READ. This side
 /// holds the archive's credentials and the stored pictures; the other side holds
 /// a socket to the internet and nothing else. The bytes come back over one
 /// in-cluster request, so a fetcher that has been talked into something by a

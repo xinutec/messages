@@ -57,7 +57,7 @@ pub struct MessagesQuery {
     /// a landing wants: composed of `older` + `newer`, a landing skipped the
     /// very message it was aimed at.
     ///
-    /// ⚠ **An unrecognised value is `older`, deliberately.** The alternative — a
+    /// ⚠ An unrecognised value is `older`, deliberately. The alternative — a
     /// 400 — would make every client that predates #1401 an error the moment it
     /// sent nothing, and "absent" and "misspelled" are the same state to a query
     /// string. Reading backwards is what this endpoint did for its whole life,
@@ -129,7 +129,7 @@ pub struct LinkImageState {
 
 /// GET /api/gchat-attachments/{id} → stream a Google Chat picture from the PVC.
 ///
-/// ⚠ **ITS OWN ROUTE, LIKE TELEGRAM'S, AND NOT A SHARED ID SPACE.** Each origin's
+/// ⚠ ITS OWN ROUTE, LIKE TELEGRAM'S, AND NOT A SHARED ID SPACE. Each origin's
 /// attachments carry an independent AUTO_INCREMENT, so id 42 exists in three
 /// tables and means three different pictures. Serving them through one endpoint
 /// would need the id to carry its origin — and the first attempt at that negated
@@ -175,7 +175,7 @@ pub async fn attachment(
     let Some((content_type, stored_path)) = archive::attachment_blob(&app.pool, id).await? else {
         return Err(AppError::NotFound);
     };
-    // ⚠ **A 404 FROM HERE MEANS THE DATABASE AND THE PVC DISAGREE**, and that is
+    // ⚠ A 404 FROM HERE MEANS THE DATABASE AND THE PVC DISAGREE, and that is
     // worth saying out loud. Reaching this point means `stored_path` was NOT
     // null — the archive claims these bytes exist and the UI has already drawn
     // the picture rather than "(not stored)". So a failure is a mount that did
@@ -253,7 +253,7 @@ pub async fn telegram_media_state(
 
 /// POST /api/telegram-media/{id}/request → a reader asked for these bytes.
 ///
-/// ⚠ **This writes a row and returns; it does NOT fetch.** The only process that can
+/// ⚠ This writes a row and returns; it does NOT fetch. The only process that can
 /// fetch is the Telegram feed, because it is the only one holding a session — and
 /// that pod listens on no port, which is a property worth keeping: nothing in the
 /// cluster can dial the process that holds a logged-in account. So the request is a
@@ -275,8 +275,8 @@ pub async fn request_telegram_media(
 
 /// GET /api/link-images/{id} → the picture we hold for a link in a message.
 ///
-/// ⚠ **THE READER NEVER TOUCHES THE OTHER SERVER, and that is the reason this
-/// endpoint exists at all.** An `<img>` pointed straight at the link would
+/// ⚠ THE READER NEVER TOUCHES THE OTHER SERVER, and that is the reason this
+/// endpoint exists at all. An `<img>` pointed straight at the link would
 /// announce every reader of the conversation to whoever hosts it, on every
 /// render, years after the line was typed. The bytes come from us or not at all.
 ///
@@ -309,7 +309,7 @@ pub async fn link_image(
 
 /// POST /api/link-images/{id}/request → a reader tapped "show this picture".
 ///
-/// ⚠ **THE BROWSER NAMES A HASH, NEVER AN ADDRESS.** This promotes a row that
+/// ⚠ THE BROWSER NAMES A HASH, NEVER AN ADDRESS. This promotes a row that
 /// serving a page already created from the message's own text; there is no path
 /// by which a request can introduce a URL. An endpoint that took one would be a
 /// fetch-anything proxy with a button on it, reachable by anyone who can log in.
@@ -329,7 +329,7 @@ pub async fn request_link_image(
     };
     let url = url::Url::parse(&url).map_err(|_| AppError::NotFound)?;
 
-    // ⚠ **SYNCHRONOUS, BECAUSE SOMEBODY IS WATCHING.** This was a queue drained
+    // ⚠ SYNCHRONOUS, BECAUSE SOMEBODY IS WATCHING. This was a queue drained
     // by a CronJob, whose floor is one minute — two minutes of "fetching…" for a
     // tap in a chat client. The work still happens in the other pod; what changed
     // is that we wait for it rather than leaving the reader to poll.
@@ -358,7 +358,7 @@ pub async fn request_link_image(
 /// GET /api/search?q= → substring search across all four origins,
 /// or inside one conversation with `&origin=&id=`.
 ///
-/// ⚠ **HALF A SCOPE IS REFUSED, NOT IGNORED.** `?origin=irc` without an id, or an
+/// ⚠ HALF A SCOPE IS REFUSED, NOT IGNORED. `?origin=irc` without an id, or an
 /// origin this app has never heard of, would otherwise silently widen to a
 /// global search — the caller asked to look in one place and got answers from
 /// everywhere, which reads as the scope not working rather than as a bad
@@ -416,7 +416,7 @@ pub struct SendResult {
 
 /// POST /api/conversations/irc/{id}/send → say something, through irssi.
 ///
-/// ⚠ **The only write in the app, and the only thing another person sees.** Two
+/// ⚠ The only write in the app, and the only thing another person sees. Two
 /// things bound it and neither is in this function: the session must belong to
 /// an allow-listed user (the `AuthUser` extractor, as for every route here), and
 /// the irssi host decides for itself whether this recipient may be messaged.
@@ -431,7 +431,7 @@ pub async fn send(
     // Only IRC can be sent to, and a 404 says so more honestly than a 400 about
     // an unsupported origin.
     //
-    // ⚠ **FOR SIGNAL THAT IS A DECISION, NOT A MISSING PIECE** (Pippijn,
+    // ⚠ FOR SIGNAL THAT IS A DECISION, NOT A MISSING PIECE (Pippijn,
     // 2026-08-15). `signal-cli-rest-api` is a linked device in this namespace and
     // could send — which is the temptation. What stops it: an IRC echo is
     // confirmable against irssi's log, where a Signal echo would be the only

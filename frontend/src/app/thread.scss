@@ -129,7 +129,7 @@
   .fmt-spoiler {
     border-radius: 0.2em;
     cursor: pointer;
-    // ⚠ **NOT `currentColor`.** It resolves to this element's own `color`, which
+    // ⚠ NOT `currentColor`. It resolves to this element's own `color`, which
     // the next rule sets to `transparent` — so the cover went transparent with
     // the text and the spoiler rendered as an invisible GAP. Worse than showing
     // it: the reader cannot tell anything is hidden. Caught by looking at the
@@ -231,7 +231,7 @@
 
   // The message a search hit put the reader on.
   //
-  // ⚠ **Landing on it is not the same as showing which one.** `scrollToTs`
+  // ⚠ Landing on it is not the same as showing which one. `scrollToTs`
   // puts the hit flush under the sticky header and, unmarked, it looks exactly
   // like its neighbours — measured against a 2013 hit in #netchat, where a
   // dozen lines share the minute and the reader has to work out which one they
@@ -269,7 +269,7 @@
   }
   // What a message was a reply to, drawn as a quote above it.
   //
-  // ⚠ **It must not compete with the message.** A quote that reads as loudly as
+  // ⚠ It must not compete with the message. A quote that reads as loudly as
   // the body turns every reply into two messages and doubles the height of a
   // thread — 18% of the Telegram archive carries one. Hence the muted colour, the
   // single clipped line, and the left rule doing the work a border box would do
@@ -294,7 +294,7 @@
     opacity: 0.75;
     overflow: hidden;
 
-    // ⚠ **`min-width: 0`, or the quote drags the bubble off the screen.** A
+    // ⚠ `min-width: 0`, or the quote drags the bubble off the screen. A
     // message is a flex ITEM, so its automatic minimum size is its MIN-CONTENT
     // width — and a `white-space: nowrap` descendant makes that the whole
     // string. That minimum BEATS the `max-width: 70%` above it, so a 120-character
@@ -314,12 +314,12 @@
       white-space: nowrap;
       text-overflow: ellipsis;
     }
-    // ⚠ **NEITHER HALF GROWS.** With `flex-grow` on the excerpt, a SHORT quote
+    // ⚠ NEITHER HALF GROWS. With `flex-grow` on the excerpt, a SHORT quote
     // spread itself across the bubble and pushed what follows it — the date on an
     // unresolved quote — hard against the right edge, reading as a separate
     // right-aligned column rather than as part of the same sentence.
     //
-    // ⚠ **AND THE NAME DOES NOT SHRINK EITHER — a cap, not a shrink factor.**
+    // ⚠ AND THE NAME DOES NOT SHRINK EITHER — a cap, not a shrink factor.
     // Flex distributes shrinkage in proportion to base size, which sounds like it
     // would spare a short name beside a long excerpt and does not: a 95px name
     // against a 700px excerpt still surrenders its proportional share, and

@@ -41,7 +41,7 @@ reply_to: ReplyTo | null,
 /**
  * How far this message got, for the origins that report it.
  *
- * ⚠ **`None` IS "THE ARCHIVE CANNOT SAY", NEVER "UNDELIVERED".** It covers
+ * ⚠ `None` IS "THE ARCHIVE CANNOT SAY", NEVER "UNDELIVERED". It covers
  * every INCOMING message, Google Chat and IRC entirely, and — the case this
  * field exists for — anything sent before capture began. Telegram's read
  * marks start 2026-09-17 and Signal's receipts 2026-09-18; neither service
@@ -53,7 +53,7 @@ delivery: Delivery | null,
 /**
  * Formatting runs inside `body` — Telegram only, empty everywhere else.
  *
- * ⚠ **EMPTY MEANS NO FORMATTING RECORDED, NOT PLAIN TEXT.** Only Telegram
+ * ⚠ EMPTY MEANS NO FORMATTING RECORDED, NOT PLAIN TEXT. Only Telegram
  * sends these and only the recapture collected them; Signal's `textStyles`
  * are kept in `signal_frames` and have no columns yet (#1693), and Google
  * Chat and IRC have no such concept. A reader must not conclude from an
