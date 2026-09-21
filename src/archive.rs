@@ -2820,11 +2820,27 @@ pub async fn search(
     // decision about what search means rather than how it runs, so it is
     // Pippijn's, and it is filed as **#882**.
     //
-    // ⚠ **SCOPED, THIS IS THE ONE THAT GETS DRAMATICALLY FASTER.** The 10s floor
-    // above is one pass over 3.7M rows because `LIKE '%term%'` cannot use an
-    // index. `conversation_id` IS indexed, so adding it narrows the scan to one
-    // conversation's rows before the substring test runs — the scoped query does
-    // strictly less work than the global one it refines.
+    // ⚠ **SCOPED, THIS IS THE ONE THAT GETS DRAMATICALLY FASTER**, which is the
+    // opposite of the usual "filtering costs extra". The global form is one pass
+    // over 3.7M rows because `LIKE '%term%'` cannot use an index;
+    // `conversation_id` IS indexed, so the scoped form reads one conversation's
+    // rows and does strictly less work than the query it refines.
+    //
+    // Measured 2026-09-21, `%kernel%`, LIMIT 50 (the 32.4s/10.0s pair above is
+    // from 2026-08-14 and is NOT today's baseline — the global form now runs in
+    // about 3.8s):
+    //
+    //     global, term present                  3,800ms
+    //     global, term absent                   3,857ms
+    //     scoped #c      (900,420 lines)           80ms
+    //     scoped #linux  (448,662 lines)          250ms
+    //     scoped #c, term absent  ← worst case   2,440ms
+    //
+    // ⚠ **COST TRACKS MATCH DENSITY, NOT CONVERSATION SIZE**, which is why the
+    // LARGEST conversation is the fastest: `LIMIT 50` is satisfied early when
+    // matches are common, and the scan stops. The worst case is therefore a big
+    // conversation where the term is ABSENT — every row read, nothing to stop
+    // early for — and even that is faster than the global search it replaces.
     //
     // The `is_status` exclusion stays even when scoped: it is cheap, and a
     // reader who deep-links the status log should get the same nothing the list
