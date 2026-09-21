@@ -378,6 +378,35 @@ pub struct MessageEdit {
     pub body: Option<String>,
 }
 
+/// One run of formatting inside a message body — bold, a link, a spoiler.
+///
+/// ⚠ **THE OFFSETS ARE UTF-16 CODE UNITS, WHICH IS TELEGRAM'S UNIT AND NOT
+/// RUST'S.** Slicing a Rust `String` by them lands mid-character on any body
+/// containing an emoji, and this archive's Telegram half is full of them. They
+/// are carried out to the browser UNCONVERTED on purpose: a JavaScript string
+/// index IS a UTF-16 code unit, so the arithmetic is native there and no
+/// conversion — and no conversion bug — exists anywhere.
+///
+/// ⚠ **THE VIEWER MUST NOT BUILD HTML FROM THESE.** `url` comes from whoever sent
+/// the message. It is rendered through Angular's `[href]` binding, which
+/// sanitises, and never through `innerHTML`.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct Entity {
+    /// Telegram's own name for it: `bold`, `italic`, `url`, `textUrl`,
+    /// `strike`, `code`, `spoiler`, … Passed through rather than mapped to an
+    /// enum, because an unknown kind must render as plain text rather than
+    /// failing the page — Telegram adds them faster than this archive learns.
+    pub kind: String,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub offset: i64,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub length: i64,
+    /// Where a `textUrl` points. `None` for `url`, where the text IS the link.
+    pub url: Option<String>,
+}
+
 /// A picture we hold for a link somebody posted — see `link_image.rs`. The UI
 /// renders it under the message and links out to where it came from, so the
 /// reader can still see whose it is.
@@ -463,6 +492,14 @@ pub struct Message {
     /// those dates. Drawing our own late start as somebody's behaviour is the
     /// mistake this three-state shape is here to make impossible.
     pub delivery: Option<Delivery>,
+    /// Formatting runs inside `body` — Telegram only, empty everywhere else.
+    ///
+    /// ⚠ **EMPTY MEANS NO FORMATTING RECORDED, NOT PLAIN TEXT.** Only Telegram
+    /// sends these and only the recapture collected them; Signal's `textStyles`
+    /// are kept in `signal_frames` and have no columns yet (#1693), and Google
+    /// Chat and IRC have no such concept. A reader must not conclude from an
+    /// empty list that somebody wrote without emphasis.
+    pub entities: Vec<Entity>,
 }
 
 /// A link the reader can ask us to fetch a picture for.
@@ -1723,6 +1760,7 @@ async fn signal_messages(
             link_offers: Vec::new(),
             reply_to: None,
             delivery: None,
+            entities: Vec::new(),
         });
     }
 
@@ -2018,6 +2056,7 @@ async fn gchat_messages(
             link_offers: Vec::new(),
             reply_to: None,
             delivery: None,
+            entities: Vec::new(),
         });
     }
 
@@ -2190,6 +2229,7 @@ async fn irc_messages(
             link_offers: Vec::new(),
             reply_to: None,
             delivery: None,
+            entities: Vec::new(),
             attachments: Vec::new(), // nor these
         });
     }
@@ -2393,6 +2433,7 @@ async fn telegram_messages(
             link_offers: Vec::new(),
             reply_to: None,
             delivery: None,
+            entities: Vec::new(),
         });
     }
 
@@ -2504,6 +2545,7 @@ async fn telegram_messages(
 
     attach_telegram_replies(pool, conversation_id, &mut msgs, &replies).await?;
     attach_telegram_read(pool, conversation_id, &mut msgs, &msg_ids).await?;
+    attach_telegram_entities(pool, conversation_id, &mut msgs, &msg_ids).await?;
 
     Ok(Fetched::new(msgs, keys, dir))
 }
@@ -2557,6 +2599,61 @@ async fn attach_telegram_read(
                 read_by: Vec::new(),
             });
         }
+    }
+    Ok(())
+}
+
+/// The formatting runs on this page's messages.
+///
+/// ⚠ **ONE QUERY FOR THE PAGE**, like reactions and read marks — 1,146 entity
+/// rows exist across 160,230 messages, so per-message queries would be ~100
+/// round trips to attach nothing for almost all of them.
+///
+/// ⚠ **`removed_at IS NULL`, BECAUSE AN EDIT RETRACTS FORMATTING TOO.** Editing a
+/// message replaces its entity list, and the archive dates the old rows rather
+/// than deleting them — the same shape `telegram_reactions` uses. Drawing a
+/// retracted run would bold a stretch of text that is no longer bold, or worse,
+/// point a link at a URL the sender removed.
+///
+/// ⚠ **ORDERED BY OFFSET**, because the reader walks them in one pass to cut the
+/// body into segments. Unordered, a later-starting run would truncate an earlier
+/// one and the tail of the message would vanish.
+async fn attach_telegram_entities(
+    pool: &MySqlPool,
+    conversation_id: i64,
+    msgs: &mut [Message],
+    msg_ids: &[i32],
+) -> Result<()> {
+    if msg_ids.is_empty() {
+        return Ok(());
+    }
+    let placeholders = vec!["?"; msg_ids.len()].join(",");
+    // `sql` is a fixed template with a computed count of `?` placeholders and no
+    // interpolated data; all values are bound. Safe to assert.
+    let sql = format!(
+        "SELECT msg_id, kind, offset_utf16, length_utf16, url
+           FROM telegram_message_entities
+          WHERE conversation_id = ? AND removed_at IS NULL
+            AND msg_id IN ({placeholders})
+          ORDER BY msg_id, offset_utf16, length_utf16",
+    );
+    let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
+    for id in msg_ids {
+        q = q.bind(id);
+    }
+    for row in q.fetch_all(pool).await? {
+        let msg_id: i32 = row.try_get("msg_id")?;
+        let Some(i) = msg_ids.iter().position(|m| *m == msg_id) else {
+            continue;
+        };
+        let offset: i32 = row.try_get("offset_utf16")?;
+        let length: i32 = row.try_get("length_utf16")?;
+        msgs[i].entities.push(Entity {
+            kind: row.try_get("kind")?,
+            offset: offset.into(),
+            length: length.into(),
+            url: row.try_get("url")?,
+        });
     }
     Ok(())
 }

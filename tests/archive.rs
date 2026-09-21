@@ -262,6 +262,7 @@ async fn seed(pool: &MySqlPool) {
         "telegram_reactions",
         "telegram_message_edits",
         "telegram_messages",
+        "telegram_message_entities",
         "telegram_read_marks",
         "telegram_conversations",
         "sessions",
@@ -312,6 +313,11 @@ async fn seed(pool: &MySqlPool) {
         "CREATE TABLE telegram_message_edits (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, was_edited_at BIGINT NULL, text TEXT NULL, UNIQUE KEY uniq_tg_edit (conversation_id, msg_id, was_edited_at)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_media (conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, state ENUM('offered','wanted','stored','failed') NOT NULL, stored_name VARCHAR(255) NULL, content_type VARCHAR(128) NULL, note VARCHAR(255) NULL, requested_at TIMESTAMP NULL, stored_at TIMESTAMP NULL, PRIMARY KEY (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, emoji VARCHAR(32) NULL, custom_emoji_id BIGINT NULL, cnt INT NOT NULL DEFAULT 0, chosen TINYINT(1) NOT NULL DEFAULT 0, removed_at TIMESTAMP NULL) DEFAULT CHARSET=utf8mb4",
+        // ⚠ Mirrors the archive's own shape, offsets included: `offset_utf16`
+        // and `length_utf16` are TELEGRAM's unit, not Rust's and not the
+        // reader's. The names carry the unit so a test cannot quietly compare
+        // them against a character count.
+        "CREATE TABLE telegram_message_entities (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, kind VARCHAR(32) NOT NULL, offset_utf16 INT NOT NULL, length_utf16 INT NOT NULL, url TEXT NULL, user_id BIGINT NULL, language VARCHAR(32) NULL, document_id BIGINT NULL, removed_at TIMESTAMP NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_read_marks (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, direction ENUM('inbox','outbox') NOT NULL, max_id INT NOT NULL, observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uniq_tg_read (conversation_id, direction, max_id)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE gchat_attachments (id BIGINT AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL, name VARCHAR(255) NULL, mime VARCHAR(128) NULL, width INT NULL, height INT NULL, uuid VARCHAR(64) NULL, token TEXT NULL, hash1 VARCHAR(128) NULL, hash2 VARCHAR(128) NULL, stored_path VARCHAR(255) NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE gchat_reaction_authors (id BIGINT AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL, emoji VARCHAR(64) NOT NULL, reactor_id VARCHAR(32) NOT NULL, UNIQUE KEY uniq_gchat_reactor (message_id, emoji, reactor_id)) DEFAULT CHARSET=utf8mb4",
@@ -625,6 +631,22 @@ async fn seed(pool: &MySqlPool) {
             (4242, 15, 1700000240, 4242, 'Tessa', 0, 'service', 'changed the photo', NULL, 0),
             (4242, 16, 1700000260, 777, 'Me', 1, 'message', 'telegram touched this', 1700000600, 0),
             (-1000000000055, 3, 1700000300, NULL, NULL, 0, 'message', 'an announcement', NULL, 0)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    // Formatting on msg 11, with one run RETRACTED.
+    //
+    // ⚠ The retracted row is the point. Editing a Telegram message replaces its
+    // entity list, and the archive dates the old rows rather than deleting them
+    // — so a reader that forgets `removed_at IS NULL` would bold a stretch that
+    // is no longer bold, or point a link at a URL the sender took back.
+    sqlx::query(
+        "INSERT INTO telegram_message_entities
+            (conversation_id, msg_id, kind, offset_utf16, length_utf16, url, removed_at) VALUES
+            (4242, 11, 'bold', 0, 3, NULL, NULL),
+            (4242, 11, 'textUrl', 4, 3, 'https://example.invalid/a', NULL),
+            (4242, 11, 'italic', 0, 3, NULL, CURRENT_TIMESTAMP)",
     )
     .execute(pool)
     .await
@@ -3002,4 +3024,53 @@ async fn a_day_lands_on_that_day_and_reads_forwards() {
         sorted,
         "oldest first"
     );
+}
+
+/// ⚠ **A RETRACTED FORMATTING RUN MUST NOT BE DRAWN.** Editing a Telegram
+/// message replaces its entity list; the archive dates the old rows rather than
+/// deleting them, the same shape `telegram_reactions` uses. Without
+/// `removed_at IS NULL` the reader bolds text that is no longer bold — or, for a
+/// `textUrl`, points a link at an address the sender took back, which is the
+/// version that actually matters.
+#[tokio::test]
+async fn telegram_formatting_is_attached_and_a_retracted_run_is_not() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 100, PageDir::Older)
+        .await
+        .unwrap();
+    let m = page
+        .messages
+        .iter()
+        .find(|m| m.body.as_deref() == Some("ook hoi"))
+        .expect("msg 11 is on the page");
+
+    let kinds: Vec<_> = m.entities.iter().map(|e| e.kind.as_str()).collect();
+    assert_eq!(kinds, ["bold", "textUrl"], "the italic run was retracted");
+
+    // ⚠ Ordered by offset, because the reader walks them in ONE pass to cut the
+    // body into segments. Out of order, a later-starting run truncates an
+    // earlier one and the tail of the message disappears.
+    let offsets: Vec<_> = m.entities.iter().map(|e| e.offset).collect();
+    let mut sorted = offsets.clone();
+    sorted.sort_unstable();
+    assert_eq!(offsets, sorted, "entities arrive in offset order");
+
+    assert_eq!(
+        m.entities[1].url.as_deref(),
+        Some("https://example.invalid/a"),
+        "a textUrl carries where it points; the text alone does not say"
+    );
+
+    // The other origins carry none — nothing else records formatting at all.
+    for (origin, id) in [(Origin::Signal, "dm:alice"), (Origin::Gchat, "gc1")] {
+        let p = archive::messages_page(&pool, origin, id, None, 100, PageDir::Older)
+            .await
+            .unwrap();
+        assert!(
+            p.messages.iter().all(|m| m.entities.is_empty()),
+            "{origin:?} records no formatting"
+        );
+    }
 }

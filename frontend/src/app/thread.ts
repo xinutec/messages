@@ -517,6 +517,62 @@ export class Thread {
     return d.state === 'sent' || d.state === 'delivered';
   }
 
+  /**
+   * Cut a body into runs of plain and formatted text.
+   *
+   * ⚠ **TELEGRAM'S OFFSETS ARE UTF-16 CODE UNITS, AND SO ARE JAVASCRIPT STRING
+   * INDICES.** That is why the arithmetic happens here and not in Rust, where
+   * the same numbers would land mid-character on any body containing an emoji —
+   * and the Telegram half of this archive is full of them. `slice` is exactly
+   * right; no conversion exists, so no conversion bug can.
+   *
+   * ⚠ **OVERLAPPING AND OUT-OF-RANGE RUNS ARE DROPPED RATHER THAN TRUSTED.**
+   * Telegram can nest them (bold inside a link), and this renders one flat pass
+   * — so a run starting before the previous one ended is skipped instead of
+   * rewinding `at`, which would emit the overlap twice and lengthen the message.
+   * A run reaching past the end is clamped: the body is what was said, and no
+   * entity may make the reader see more or less of it.
+   *
+   * ⚠ **THE TEXT ALWAYS COMES FROM `body`, NEVER FROM THE ENTITY.** An entity
+   * says where and what kind, never what it says — so no value from the sender
+   * can put characters on screen that were not in the message.
+   */
+  protected segments(m: Message): { text: string; kind: string; url: string | null }[] {
+    const body = m.body ?? '';
+    // ⚠ `?.` DELIBERATELY. A message without the field renders as plain text;
+    // without this the whole THREAD renders blank, because one TypeError in the
+    // template kills every body on the page. That is how 29 browser tests came
+    // to time out at once — each waiting 90s for text that a crashed render
+    // could never produce.
+    if (!m.entities?.length) return [{ text: body, kind: 'plain', url: null }];
+    const out: { text: string; kind: string; url: string | null }[] = [];
+    let at = 0;
+    for (const e of m.entities) {
+      const start = Number(e.offset);
+      const end = start + Number(e.length);
+      if (!Number.isFinite(start) || start < at || start >= body.length) continue;
+      const stop = Math.min(end, body.length);
+      if (stop <= start) continue;
+      if (start > at) out.push({ text: body.slice(at, start), kind: 'plain', url: null });
+      out.push({ text: body.slice(start, stop), kind: e.kind, url: e.url });
+      at = stop;
+    }
+    if (at < body.length) out.push({ text: body.slice(at), kind: 'plain', url: null });
+    return out;
+  }
+
+  /** Where a formatted run points, or null if it is not a link.
+   *
+   *  ⚠ `url` is the SENDER's. It reaches the DOM only through Angular's `[href]`
+   *  binding, which sanitises; nothing here builds markup. For a bare `url`
+   *  entity the text IS the address, which is why that case reads the body. */
+  protected hrefOf(seg: { text: string; kind: string; url: string | null }): string | null {
+    if (seg.kind === 'textUrl') return seg.url;
+    if (seg.kind === 'url') return seg.text;
+    if (seg.kind === 'email') return `mailto:${seg.text}`;
+    return null;
+  }
+
   /** Jump to a date the reader picks.
    *
    *  ⚠ **MIDNIGHT LOCAL, NOT `Date.parse` OF THE `yyyy-mm-dd`.** A bare date

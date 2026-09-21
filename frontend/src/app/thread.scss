@@ -106,6 +106,41 @@
   }
 }
 
+// Telegram's formatting runs. Only the kinds the archive actually holds get a
+// rule; anything else renders as an unstyled span, which is the point — Telegram
+// adds entity kinds faster than this reader learns them and an unknown one must
+// look like plain text rather than disappear.
+.body {
+  .fmt-bold { font-weight: 600; }
+  .fmt-italic { font-style: italic; }
+  .fmt-strike { text-decoration: line-through; }
+  .fmt-underline { text-decoration: underline; }
+  // ⚠ FAMILY ONLY — no ad-hoc size. A monospace face at the body's own size is
+  // what `code` means here; inventing `0.92em` puts a type size outside the M3
+  // scale, which dev-lint refuses (DL-SCSS-ADHOC-FONT-SIZE) and which drifts
+  // from every other size in the app the moment the scale changes.
+  .fmt-code,
+  .fmt-pre {
+    font-family: ui-monospace, monospace;
+  }
+  // ⚠ A spoiler is HIDDEN UNTIL ASKED FOR, because that is what the sender chose
+  // — rendering it plainly would show something meant to be covered, which is
+  // the same mistake as printing a retracted message's words.
+  .fmt-spoiler {
+    border-radius: 0.2em;
+    cursor: pointer;
+    // ⚠ **NOT `currentColor`.** It resolves to this element's own `color`, which
+    // the next rule sets to `transparent` — so the cover went transparent with
+    // the text and the spoiler rendered as an invisible GAP. Worse than showing
+    // it: the reader cannot tell anything is hidden. Caught by looking at the
+    // render; both the test and the markup were correct.
+    background: var(--mat-sys-on-surface);
+    &:not(:hover):not(:focus) {
+      color: transparent;
+    }
+  }
+}
+
 // Visually hidden but read aloud — the date input's own label.
 .sr-only {
   position: absolute;

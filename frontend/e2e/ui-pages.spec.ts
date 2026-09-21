@@ -63,7 +63,7 @@ const THREAD = {
   messages: [
     { id: "1", ts: Date.UTC(2026, 0, 1, 12, 0), sender: "Alice Andersson", is_outgoing: false,
       body: "Morning! Did the referral letter come through yet? The clinic said they'd post it but it's been almost two weeks now.",
-      deleted: false, edited: true, reply_to: null, delivery: null, reactions: [{ emoji: "👍", count: 3, who: ["Bob Bytecode", "Dana", "Test User"] }, { emoji: "❤️", count: 2, who: [] }, { emoji: "🎉", count: 1, who: ["Dana"] }],
+      deleted: false, edited: true, reply_to: null, delivery: null, entities: [], reactions: [{ emoji: "👍", count: 3, who: ["Bob Bytecode", "Dana", "Test User"] }, { emoji: "❤️", count: 2, who: [] }, { emoji: "🎉", count: 1, who: ["Dana"] }],
       attachments: [], link_images: [], link_offers: [], edits: [] },
     // ⚠ A reply quote whose excerpt is the FULL 120 characters the backend will
     // send, on an OUTGOING bubble — the narrowest one, since `.out` is pushed
@@ -91,7 +91,7 @@ const THREAD = {
     // image. The attachment-only shape is the one that renders no `.body` at
     // all, so it is the one a careless selector misses.
     { id: "4", ts: Date.UTC(2026, 0, 1, 12, 11), sender: "Alice Andersson", is_outgoing: false,
-      body: "something said and then taken back", deleted: true, edited: false, reactions: [], reply_to: null, delivery: null,
+      body: "something said and then taken back", deleted: true, edited: false, reactions: [], reply_to: null, delivery: null, entities: [],
       attachments: [{ id: "a2", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true }], link_images: [], link_offers: [], edits: [] },
     // ⚠ A SERVICE EVENT, which this app drew for three origins and never for
     // Telegram — the page query filtered them out. It arrives as `action`, so it
@@ -99,13 +99,13 @@ const THREAD = {
     // one that can overflow a phone.
     { id: "5", ts: Date.UTC(2026, 0, 1, 12, 20), sender: "Alice Andersson", is_outgoing: false,
       kind: "action", body: "made a 55-minute video call", deleted: false, edited: false,
-      reactions: [], reply_to: null, delivery: null,
+      reactions: [], reply_to: null, delivery: null, entities: [],
       attachments: [], link_images: [], link_offers: [], edits: [] },
     // ⚠ Reaction chips that KNOW WHO, with enough names that the hover text is
     // long — the chip must stay chip-sized regardless, since `who` lives in a
     // title attribute and must never widen the row.
     { id: "6", ts: Date.UTC(2026, 0, 1, 12, 24), sender: "Alice Andersson", is_outgoing: false,
-      body: "Six of us are in.", deleted: false, edited: false, reply_to: null, delivery: null,
+      body: "Six of us are in.", deleted: false, edited: false, reply_to: null, delivery: null, entities: [],
       reactions: [{ emoji: "👍", count: 6, who: ["Alice Andersson", "Bob Bytecode", "Test User", "Dana", "Erin Example"] },
                   { emoji: "🎉", count: 1, who: ["Dana"] }],
       attachments: [], link_images: [], link_offers: [], edits: [] },
@@ -338,6 +338,62 @@ test("picking a date asks the server for that day @ phone width", async ({ page 
   expect(withOn.some((u) => u.includes("dir=older"))).toBe(true);
   expect(withOn.some((u) => u.includes("dir=at"))).toBe(true);
 
+  await expectNoTextOverlaps(page, testInfo);
+  await expectNoHorizontalOverflow(page, testInfo);
+});
+
+/// ⚠ **THE TEXT ALWAYS COMES FROM THE BODY; AN ENTITY ONLY SAYS WHERE.** This
+/// renders bold, a link, a spoiler and an unknown kind in one message and checks
+/// the visible text is exactly what was sent — no markup built from sender data,
+/// nothing added, nothing lost. Telegram's offsets are UTF-16 and so are
+/// JavaScript's string indices, which is why the emoji in the fixture matters:
+/// it is one character and TWO units, so a reader counting characters bolds the
+/// wrong run.
+test("telegram formatting renders from the body, never from the entity @ phone width", async ({ page }, testInfo) => {
+  await mockApi(page);
+  const body = "👋 bold here, a link https://example.com/x and a secret plus unknownfmt";
+  await page.route("**/messages**", (r) =>
+    r.fulfill({
+      json: {
+        messages: [{
+          id: "1", ts: Date.UTC(2026, 0, 1, 12, 0), sender: "Alice Andersson", is_outgoing: false,
+          kind: "message", body, deleted: false, edited: false, reactions: [], attachments: [],
+          link_images: [], link_offers: [], edits: [], reply_to: null, delivery: null,
+          entities: [
+            // ⚠ UTF-16 UNITS. The leading 👋 is one character and TWO units, so
+            // "bold" starts at 3 rather than 2 — a reader counting characters
+            // bolds the wrong run, which is the bug this fixture exists to catch.
+            { kind: "bold", offset: 3, length: 4, url: null },
+            { kind: "url", offset: 21, length: 21, url: null },
+            { kind: "spoiler", offset: 49, length: 6, url: null },
+            // A kind this reader has never heard of: must render as plain text
+            // rather than blanking the tail of the message.
+            { kind: "someFutureKind", offset: 61, length: 10, url: null },
+          ],
+        }],
+        has_more: false, next_cursor: null, prev_cursor: null,
+      },
+    }),
+  );
+  await page.goto("/conversation/telegram/4242");
+  const bodyEl = page.locator(".msg .body").first();
+  await bodyEl.waitFor();
+
+  // ⚠ The whole message, unchanged. An overlapping or over-long entity would
+  // show MORE than was said; a mis-sliced one would show less.
+  expect((await bodyEl.innerText()).trim()).toBe(body);
+
+  await expect(bodyEl.locator(".fmt-bold")).toHaveText("bold");
+  await expect(bodyEl.locator(".fmt-spoiler")).toHaveText("secret");
+  // The link is a real anchor pointing at what the text says.
+  await expect(bodyEl.locator("a")).toHaveAttribute("href", "https://example.com/x");
+  // ⚠ **A SPOILER MUST BE COVERED, NOT INVISIBLE.** The first version styled the
+  // cover `background: currentColor` beside `color: transparent` — and
+  // `currentColor` IS this element's colour, so the cover went transparent with
+  // the text and the spoiler rendered as a blank GAP. The markup and every
+  // assertion above were correct; only the render disagreed. Asserted here so it
+  // cannot silently revert to nothing.
+  await expect(bodyEl.locator(".fmt-spoiler")).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expectNoTextOverlaps(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
 });

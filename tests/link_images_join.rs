@@ -65,6 +65,7 @@ fn msg(body: &str) -> Message {
         link_offers: Vec::new(),
         reply_to: None,
         delivery: None,
+        entities: Vec::new(),
     }
 }
 

@@ -12,6 +12,7 @@ export * from "./generated/Conversation";
 export * from "./generated/ConversationKind";
 export * from "./generated/Delivery";
 export * from "./generated/DeliveryState";
+export * from "./generated/Entity";
 export * from "./generated/LinkImage";
 export * from "./generated/LinkImageState";
 export * from "./generated/LinkOffer";

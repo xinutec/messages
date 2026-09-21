@@ -178,7 +178,20 @@
 
                        interpolation flush with the tags: white-space:pre-wrap
                        would otherwise render the template indent as a leading space -->
-                  <div class="body" [class.deleted]="m.deleted">{{ m.kind === 'action' ? '* ' + m.body : m.body }}</div>
+                  <!-- ⚠ SPANS FROM SLICES, never innerHTML. Every character comes
+                       from `body`; an entity only says where a run starts and what
+                       kind it is, so nothing a sender writes can become markup. A
+                       link's address goes through `[href]`, which Angular
+                       sanitises. An unrecognised kind falls through to a plain
+                       span — Telegram adds entity kinds faster than this archive
+                       learns them, and an unknown one must not blank the message.
+                       ⚠ Interpolation flush with the tags: the template's own
+                       indentation would otherwise render as spaces inside the
+                       message, which is the trap the reply excerpt documents. -->
+                  <div class="body" [class.deleted]="m.deleted"
+                    >@if (m.kind === 'action') {<span>* </span>}@for (seg of segments(m); track $index) {@if (hrefOf(seg); as href) {<a
+                        [href]="href" target="_blank" rel="noopener noreferrer"
+                        >{{ seg.text }}</a>} @else {<span [class]="'fmt-' + seg.kind">{{ seg.text }}</span>}}</div>
                 }
               <!-- A picture somebody linked, fetched by us and served from our
                    side — never an <img> pointed at the other server, which would

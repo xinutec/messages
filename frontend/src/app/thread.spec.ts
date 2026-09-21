@@ -11,7 +11,7 @@ import { Conversation, Message, MessagesPage, ReplyTo } from './models';
 import { MAX_RESTORE_PAGES } from './thread-window';
 
 function msg(id: string, ts: number): Message {
-  return { id, ts, sender: 's', is_outgoing: false, kind: 'message', body: 'b', deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [], reply_to: null, delivery: null };
+  return { id, ts, sender: 's', is_outgoing: false, kind: 'message', body: 'b', deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [], reply_to: null, delivery: null, entities: [] };
 }
 
 function makeApi() {
@@ -1324,5 +1324,66 @@ describe('the delivery tag', () => {
   it('says plain "read" in a DM, where one reader IS everybody', async () => {
     const tag = await render([outgoing('r', { state: 'read', read_by: [{ who: 'Alice', at: 1100 }] })], [dm]);
     expect(tag('r')?.textContent?.trim()).toBe('read');
+  });
+});
+
+/** ⚠ **THE OFFSETS ARE UTF-16, WHICH IS WHY THIS MATH IS IN JAVASCRIPT.** Telegram
+ *  counts code units and so does `String.prototype.slice`, so the arithmetic is
+ *  native here — the same numbers applied to a Rust `String` land mid-character
+ *  on any body with an emoji, and the Telegram half of this archive is full of
+ *  them. Every case below is about what the reader must NOT be shown. */
+describe('formatted message bodies', () => {
+  function withEntities(body: string, entities: Message['entities']): Message {
+    return { ...msg('m', 1000), body, entities };
+  }
+  /** ⚠ ONE TestBed per test: `setup()` configures the testing module, and a
+   *  second call in the same test throws "already instantiated". The splitter is
+   *  pure, so one component instance answers every case. */
+  interface Seg { text: string; kind: string; url: string | null }
+  const segsWith = (t: Thread, m: Message): Seg[] =>
+    (t as unknown as { segments(m: Message): Seg[] }).segments(m);
+
+  it('splits a body into plain and formatted runs', () => {
+    const { thread } = setup();
+    const m = withEntities('hello brave world', [
+      { kind: 'bold', offset: 6, length: 5, url: null },
+    ]);
+    expect(segsWith(thread, m)).toEqual([
+      { text: 'hello ', kind: 'plain', url: null },
+      { text: 'brave', kind: 'bold', url: null },
+      { text: ' world', kind: 'plain', url: null },
+    ]);
+  });
+
+  it('counts an emoji as TWO, because Telegram does', () => {
+    // '👋' is one code POINT and two code UNITS. Telegram's offset 2 therefore
+    // means "after the wave", and a reader counting characters would start one
+    // short and bold the wrong text.
+    const { thread } = setup();
+    const m = withEntities('👋 bold', [{ kind: 'bold', offset: 3, length: 4, url: null }]);
+    expect(segsWith(thread, m).map((s) => s.text)).toEqual(['👋 ', 'bold']);
+  });
+
+  it('never lets an entity change how much of the message is shown', () => {
+    const { thread } = setup();
+    const body = 'short';
+    // A run reaching past the end — clamped, not allowed to throw away the tail
+    // or repeat it.
+    const over = withEntities(body, [{ kind: 'bold', offset: 2, length: 99, url: null }]);
+    expect(segsWith(thread, over).map((s) => s.text).join('')).toBe(body);
+    // ⚠ OVERLAPPING runs: Telegram nests them (bold inside a link) and this
+    // renders one flat pass. The second is SKIPPED rather than rewinding, which
+    // would emit the overlap twice and show more text than was said.
+    const nested = withEntities('abcdefgh', [
+      { kind: 'bold', offset: 0, length: 5, url: null },
+      { kind: 'italic', offset: 2, length: 3, url: null },
+    ]);
+    expect(segsWith(thread, nested).map((s) => s.text).join('')).toBe('abcdefgh');
+  });
+
+  it('is exactly the body when nothing is formatted', () => {
+    const { thread } = setup();
+    const m = withEntities('just words', []);
+    expect(segsWith(thread, m)).toEqual([{ text: 'just words', kind: 'plain', url: null }]);
   });
 });
