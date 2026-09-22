@@ -85,14 +85,17 @@ test("opening a long conversation lands at the latest message", async ({ page })
   // they load would give a false pass.
   await expect
     .poll(async () =>
-      // The element type is a parameter of `evaluateAll`, so asking for
-      // `HTMLImageElement` up front is what makes `.complete` and
-      // `.naturalHeight` legal — an assertion inside the callback would claim
-      // the same thing without anything checking it.
+      // `instanceof` narrows each element to `HTMLImageElement`, which is what
+      // makes `.complete` and `.naturalHeight` legal — and it is CHECKED, so a
+      // non-image under `.attach img` fails the poll rather than being cast
+      // into one. (Playwright 1.63's `evaluateAll` no longer takes the element
+      // type as a type argument.)
       page
         .locator(".attach img")
-        .evaluateAll<boolean, HTMLImageElement>(
-          (imgs) => imgs.length > 0 && imgs.every((i) => i.complete && i.naturalHeight > 0),
+        .evaluateAll(
+          (imgs) =>
+            imgs.length > 0 &&
+            imgs.every((i) => i instanceof HTMLImageElement && i.complete && i.naturalHeight > 0),
         ),
     )
     .toBe(true);
