@@ -57,3 +57,11 @@ unsafe_code = "forbid"
 dbg_macro = "deny"
 todo = "deny"
 unimplemented = "deny"
+
+# The tables this crate queries are `signal`'s — its migrations create them,
+# and tests/archive.rs carries a SECOND COPY as the fixture. dev-lint's sqlx
+# engine replays the owner's DDL and fails a copy that drifted from it
+# (DL-SQLX-FIXTURE-DRIFT), which happened three times on 2026-09-14 before
+# anything compared them.
+[package.metadata.dev-lint]
+schema_owner = "../signal"
