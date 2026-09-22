@@ -1,14 +1,8 @@
 #!/usr/bin/env bash
-# Single health gate. A commit must be healthy: this runs the full gate
-# (gate.json, rendered from gate.dhall) — backend + frontend + generated-type
-# drift + shared dev-lint rules. There is NO separate pre-push step.
-# Slow by design; we optimise for healthy commits, not commit speed.
-# Quiet on success: the gate prints a check's output only when it FAILS, so a
-# healthy commit isn't buried under build/test noise (DL-GIT-PRECOMMIT-GATE).
-# Bypass a genuine work-in-progress commit with:  git commit --no-verify
+# The runner is the hook. What to show on success, what exit 2 means, what a
+# signal death left unjudged — the gate says each itself, so this only starts
+# it on this repository's table. `?ref=HEAD`: a plain path would build the
+# neighbour's WORKING TREE, and a session mid-edit in dev-lint would fail this
+# gate for a reason no commit here explains.
 set -euo pipefail
-cd "$(git rev-parse --show-toplevel)"
-if ! out=$(nix run "git+file:../dev-lint?ref=HEAD#gate" -- . gate.json 2>&1); then
-  printf '%s\n' "$out" >&2
-  exit 1
-fi
+exec nix run "git+file:../dev-lint?ref=HEAD#gate" -- . gate.json
