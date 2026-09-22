@@ -23,5 +23,5 @@ allowBuilds:
 # Carried across from package.json's npm-format `overrides`, which pnpm does not
 # read. Here and nowhere else: two lists of one constraint drift.
 overrides:
-  esbuild: ^0.28.1
+  esbuild: ^0.28.2
   "@babel/core": ^7.29.6
