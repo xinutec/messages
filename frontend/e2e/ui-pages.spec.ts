@@ -40,7 +40,7 @@ const THREAD = {
   messages: [
     { id: "1", ts: Date.UTC(2026, 0, 1, 12, 0), sender: "Alice Andersson", is_outgoing: false,
       body: "Morning! Did the referral letter come through yet? The clinic said they'd post it but it's been almost two weeks now.",
-      deleted: false, edited: true, reply_to: null, delivery: null, entities: [], album: null, reactions: [{ emoji: "👍", count: 3, who: ["Bob Bytecode", "Dana", "Test User"] }, { emoji: "❤️", count: 2, who: [] }, { emoji: "🎉", count: 1, who: ["Dana"] }],
+      deleted: false, edited: true, reply_to: null, delivery: null, entities: [], album: null, previews: [], reactions: [{ emoji: "👍", count: 3, who: ["Bob Bytecode", "Dana", "Test User"] }, { emoji: "❤️", count: 2, who: [] }, { emoji: "🎉", count: 1, who: ["Dana"] }],
       attachments: [], link_images: [], link_offers: [], edits: [] },
     // A full-length reply excerpt on an outgoing bubble, the narrowest.
     { id: "2", ts: Date.UTC(2026, 0, 1, 12, 4), sender: "Test User", is_outgoing: true,
@@ -59,30 +59,41 @@ const THREAD = {
       attachments: [], link_images: [], link_offers: [], edits: [] },
     // Deleted, with words and a stored image behind the reveal.
     { id: "4", ts: Date.UTC(2026, 0, 1, 12, 11), sender: "Alice Andersson", is_outgoing: false,
-      body: "something said and then taken back", deleted: true, edited: false, reactions: [], reply_to: null, delivery: null, entities: [], album: null,
+      body: "something said and then taken back", deleted: true, edited: false, reactions: [], reply_to: null, delivery: null, entities: [], album: null, previews: [],
       attachments: [{ id: "a2", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true }], link_images: [], link_offers: [], edits: [] },
     // A Telegram service event, rendered as an action.
     { id: "5", ts: Date.UTC(2026, 0, 1, 12, 20), sender: "Alice Andersson", is_outgoing: false,
       kind: "action", body: "made a 55-minute video call", deleted: false, edited: false,
-      reactions: [], reply_to: null, delivery: null, entities: [], album: null,
+      reactions: [], reply_to: null, delivery: null, entities: [], album: null, previews: [],
       attachments: [], link_images: [], link_offers: [], edits: [] },
     // Named reactors: the names are in a title and must not widen the chip.
     { id: "6", ts: Date.UTC(2026, 0, 1, 12, 24), sender: "Alice Andersson", is_outgoing: false,
-      body: "Six of us are in.", deleted: false, edited: false, reply_to: null, delivery: null, entities: [], album: null,
+      body: "Six of us are in.", deleted: false, edited: false, reply_to: null, delivery: null, entities: [], album: null, previews: [],
       reactions: [{ emoji: "👍", count: 6, who: ["Alice Andersson", "Bob Bytecode", "Test User", "Dana", "Erin Example"] },
                   { emoji: "🎉", count: 1, who: ["Dana"] }],
       attachments: [], link_images: [], link_offers: [], edits: [] },
+    // A link preview, and a reply to a message the archive does not hold whose
+    // quote carried its author and text.
+    { id: "10", ts: Date.UTC(2026, 0, 1, 12, 27), sender: "Alice Andersson", is_outgoing: false,
+      body: "Look: https://xinutec.org/a/rather/long/path/that/keeps/going/and/going", deleted: false, edited: false, reactions: [],
+      reply_to: { id: null, cursor: null, ts: Date.UTC(2025, 5, 3, 8, 30), sender: "Bob Bytecode",
+        excerpt: "Did anybody write down the address of that place with the enormous climbing wall and the good coffee?", deleted: false },
+      delivery: null, entities: [], album: null,
+      previews: [{ url: "https://xinutec.org/a/rather/long/path/that/keeps/going/and/going",
+                   title: "A page with a title long enough to need wrapping on a phone screen",
+                   description: "And a description that says a little more about what is on the page." }],
+      attachments: [], link_images: [], link_offers: [], edits: [] },
     // An outgoing album of three: a captioned member, then two pictures.
     { id: "7", ts: Date.UTC(2026, 0, 1, 12, 30), sender: "Test User", is_outgoing: true,
-      body: "From the climbing wall on Saturday, the three of us at the top of the orange route", deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740993",
+      body: "From the climbing wall on Saturday, the three of us at the top of the orange route", deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740993", previews: [],
       delivery: { state: "delivered", read_by: [] },
       attachments: [{ id: "p7", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true }], link_images: [], link_offers: [], edits: [] },
     { id: "8", ts: Date.UTC(2026, 0, 1, 12, 30), sender: "Test User", is_outgoing: true,
-      body: null, deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740993",
+      body: null, deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740993", previews: [],
       delivery: { state: "delivered", read_by: [] },
       attachments: [{ id: "p8", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true }], link_images: [], link_offers: [], edits: [] },
     { id: "9", ts: Date.UTC(2026, 0, 1, 12, 30), sender: "Test User", is_outgoing: true,
-      body: null, deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740993",
+      body: null, deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740993", previews: [],
       delivery: { state: "delivered", read_by: [] },
       attachments: [{ id: "p9", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true }], link_images: [], link_offers: [], edits: [] },
   ],
@@ -156,6 +167,22 @@ test("open thread — meta + reactions + attachment: lays out cleanly @ phone wi
   await page.locator(".msg .body").first().waitFor();
   await page.getByText("👍 3").waitFor();
   await page.getByText("referral-scan-2026-final-v2.pdf", { exact: false }).waitFor();
+  await expectNoTextOverlaps(page, testInfo);
+  await expectNoHorizontalOverflow(page, testInfo);
+});
+
+/// A link preview renders as a card, and an unresolved quote shows what it quoted.
+test("a link preview and a quoted message from before the archive @ phone width", async ({ page }, testInfo) => {
+  await mockApi(page);
+  await page.goto("/conversation/signal/dm:a");
+  const bubble = page.locator('.msg[data-id="10"]');
+  await expect(bubble.locator(".preview .title")).toHaveText(
+    "A page with a title long enough to need wrapping on a phone screen");
+  await expect(bubble.locator(".preview .host")).toHaveText("xinutec.org");
+  await expect(bubble.locator(".reply-quote .who")).toHaveText("Bob Bytecode");
+  await expect(bubble.locator(".reply-quote .said")).toContainText("enormous climbing wall");
+  await bubble.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath("preview.png") });
   await expectNoTextOverlaps(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
 });

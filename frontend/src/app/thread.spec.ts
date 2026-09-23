@@ -11,7 +11,7 @@ import { Conversation, Message, MessagesPage, ReplyTo } from './models';
 import { MAX_RESTORE_PAGES } from './thread-window';
 
 function msg(id: string, ts: number): Message {
-  return { id, ts, sender: 's', is_outgoing: false, kind: 'message', body: 'b', deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [], reply_to: null, delivery: null, entities: [], album: null };
+  return { id, ts, sender: 's', is_outgoing: false, kind: 'message', body: 'b', deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [], reply_to: null, delivery: null, entities: [], album: null, previews: [] };
 }
 
 function makeApi() {
@@ -1179,7 +1179,7 @@ describe('formatted message bodies', () => {
     return { ...msg('m', 1000), body, entities };
   }
   /** One TestBed per test; the splitter is pure, so one instance answers all. */
-  interface Seg { text: string; kind: string; url: string | null }
+  interface Seg { text: string; cls: string; href: string | null }
   const segsWith = (t: Thread, m: Message): Seg[] =>
     (t as unknown as { segments(m: Message): Seg[] }).segments(m);
 
@@ -1189,13 +1189,13 @@ describe('formatted message bodies', () => {
       { kind: 'bold', offset: 6, length: 5, url: null },
     ]);
     expect(segsWith(thread, m)).toEqual([
-      { text: 'hello ', kind: 'plain', url: null },
-      { text: 'brave', kind: 'bold', url: null },
-      { text: ' world', kind: 'plain', url: null },
+      { text: 'hello ', cls: '', href: null },
+      { text: 'brave', cls: 'fmt-bold', href: null },
+      { text: ' world', cls: '', href: null },
     ]);
   });
 
-  it('counts an emoji as TWO, because Telegram does', () => {
+  it('counts an emoji as TWO, because Telegram and Signal do', () => {
     // '👋' is two code units, so offset 2 is after it.
     const { thread } = setup();
     const m = withEntities('👋 bold', [{ kind: 'bold', offset: 3, length: 4, url: null }]);
@@ -1208,17 +1208,42 @@ describe('formatted message bodies', () => {
     // Past the end: clamped.
     const over = withEntities(body, [{ kind: 'bold', offset: 2, length: 99, url: null }]);
     expect(segsWith(thread, over).map((s) => s.text).join('')).toBe(body);
-    // Overlapping: the second run is skipped, not re-emitted.
-    const nested = withEntities('abcdefgh', [
+  });
+
+  it('combines overlapping runs rather than dropping one', () => {
+    const { thread } = setup();
+    // Signal's own shape: one span both monospace and struck, and a nested run.
+    const m = withEntities('abcdefgh mono', [
       { kind: 'bold', offset: 0, length: 5, url: null },
       { kind: 'italic', offset: 2, length: 3, url: null },
+      { kind: 'code', offset: 9, length: 4, url: null },
+      { kind: 'strike', offset: 9, length: 4, url: null },
     ]);
-    expect(segsWith(thread, nested).map((s) => s.text).join('')).toBe('abcdefgh');
+    expect(segsWith(thread, m)).toEqual([
+      { text: 'ab', cls: 'fmt-bold', href: null },
+      { text: 'cde', cls: 'fmt-bold fmt-italic', href: null },
+      { text: 'fgh ', cls: '', href: null },
+      { text: 'mono', cls: 'fmt-code fmt-strike', href: null },
+    ]);
+  });
+
+  it('keeps a link whole when formatting splits it', () => {
+    const { thread } = setup();
+    const m = withEntities('see https://x.org now', [
+      { kind: 'url', offset: 4, length: 13, url: null },
+      { kind: 'bold', offset: 12, length: 5, url: null },
+    ]);
+    expect(segsWith(thread, m)).toEqual([
+      { text: 'see ', cls: '', href: null },
+      { text: 'https://', cls: 'fmt-url', href: 'https://x.org' },
+      { text: 'x.org', cls: 'fmt-url fmt-bold', href: 'https://x.org' },
+      { text: ' now', cls: '', href: null },
+    ]);
   });
 
   it('is exactly the body when nothing is formatted', () => {
     const { thread } = setup();
     const m = withEntities('just words', []);
-    expect(segsWith(thread, m)).toEqual([{ text: 'just words', kind: 'plain', url: null }]);
+    expect(segsWith(thread, m)).toEqual([{ text: 'just words', cls: '', href: null }]);
   });
 });

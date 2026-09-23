@@ -373,6 +373,18 @@ pub struct Message {
     /// The album this message was sent in, shared by its members: Telegram's
     /// `grouped_id`, as a string because it exceeds a JavaScript number.
     pub album: Option<String>,
+    /// Link previews the sender's app attached. Signal only.
+    pub previews: Vec<LinkPreview>,
+}
+
+/// A link preview as the sender's app made it.
+#[derive(Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct LinkPreview {
+    pub url: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
 }
 
 /// A link the reader can ask us to fetch a picture for.
@@ -416,17 +428,26 @@ pub fn excerpt(body: Option<&str>) -> Option<String> {
 ///
 /// Signal quotes by timestamp, so a quote of something older than the archive
 /// resolves to nothing.
+/// A Signal quote: the target's timestamp, and its author and text as the quote
+/// carries them.
+struct Quote {
+    msg_id: String,
+    target_ts: i64,
+    author: Option<String>,
+    text: Option<String>,
+}
+
 async fn attach_signal_replies(
     pool: &MySqlPool,
     thread_id: &str,
     msgs: &mut [Message],
-    quotes: &[(String, i64)],
+    quotes: &[Quote],
 ) -> Result<()> {
     if quotes.is_empty() {
         return Ok(());
     }
     let targets: Vec<i64> = {
-        let mut t: Vec<i64> = quotes.iter().map(|(_, ts)| *ts).collect();
+        let mut t: Vec<i64> = quotes.iter().map(|q| q.target_ts).collect();
         t.sort_unstable();
         t.dedup();
         t
@@ -465,17 +486,17 @@ async fn attach_signal_replies(
             deleted,
         });
     }
-    for (msg_id, target_ts) in quotes {
-        let Some(m) = msgs.iter_mut().find(|m| &m.id == msg_id) else {
+    for q in quotes {
+        let Some(m) = msgs.iter_mut().find(|m| m.id == q.msg_id) else {
             continue;
         };
-        m.reply_to = Some(found.get(target_ts).cloned().unwrap_or(ReplyTo {
+        m.reply_to = Some(found.get(&q.target_ts).cloned().unwrap_or(ReplyTo {
             id: None,
             cursor: None,
-            // For Signal the timestamp is the quote.
-            ts: Some(*target_ts),
-            sender: None,
-            excerpt: None,
+            ts: Some(q.target_ts),
+            // Not held: who and what, as the quote itself carries them.
+            sender: q.author.clone(),
+            excerpt: excerpt(q.text.as_deref()),
             deleted: false,
         }));
     }
@@ -686,16 +707,24 @@ async fn attach_telegram_replies(
 /// Hang an edited Signal message's history on it, with the newest text as its
 /// body and the original's position. The revision rows are excluded from the
 /// page itself.
-async fn attach_edits(pool: &MySqlPool, thread_id: &str, msgs: &mut [Message]) -> Result<()> {
+///
+/// Returns, for each edited message, the row id of the revision whose text it
+/// now shows.
+async fn attach_edits(
+    pool: &MySqlPool,
+    thread_id: &str,
+    msgs: &mut [Message],
+) -> Result<HashMap<String, i64>> {
+    let mut shown = HashMap::new();
     let originals: Vec<i64> = msgs.iter().filter(|m| m.edited).map(|m| m.ts).collect();
     if originals.is_empty() {
-        return Ok(());
+        return Ok(shown);
     }
     let placeholders = vec!["?"; originals.len()].join(",");
     // Scoped to the thread: `edit_of_ts` is a timestamp, and two threads can
     // share one.
     let sql = format!(
-        "SELECT edit_of_ts, server_ts, body FROM messages
+        "SELECT id, edit_of_ts, server_ts, body FROM messages
          WHERE thread_id = ? AND edit_of_ts IN ({placeholders})
          ORDER BY server_ts ASC",
     );
@@ -708,8 +737,10 @@ async fn attach_edits(pool: &MySqlPool, thread_id: &str, msgs: &mut [Message]) -
     // Group first, then assign: each version's time comes from the row before
     // it, not the row carrying its text.
     let mut revisions: Vec<(i64, Vec<Version>)> = Vec::new();
+    let mut newest_row: HashMap<i64, i64> = HashMap::new();
     for row in q.fetch_all(pool).await? {
         let of: i64 = row.try_get("edit_of_ts")?;
+        newest_row.insert(of, row.try_get("id")?);
         let ts: i64 = row.try_get("server_ts")?;
         let body: Option<String> = row.try_get("body")?;
         match revisions.iter_mut().find(|(k, _)| *k == of) {
@@ -735,6 +766,123 @@ async fn attach_edits(pool: &MySqlPool, thread_id: &str, msgs: &mut [Message]) -
             .map(|(ts, body)| MessageEdit { ts, body })
             .collect();
         m.body = newest;
+        if let Some(row) = newest_row.get(&of) {
+            shown.insert(m.id.clone(), *row);
+        }
+    }
+    Ok(shown)
+}
+
+/// A Signal text style, by Signal's own name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SignalStyle {
+    Bold,
+    Italic,
+    Strikethrough,
+    Monospace,
+    Spoiler,
+}
+
+impl SignalStyle {
+    /// Parse a `signal_text_styles.style` value; `None` for one this build does
+    /// not know.
+    fn parse(s: &str) -> Option<Self> {
+        match s {
+            "BOLD" => Some(SignalStyle::Bold),
+            "ITALIC" => Some(SignalStyle::Italic),
+            "STRIKETHROUGH" => Some(SignalStyle::Strikethrough),
+            "MONOSPACE" => Some(SignalStyle::Monospace),
+            "SPOILER" => Some(SignalStyle::Spoiler),
+            _ => None,
+        }
+    }
+
+    /// The viewer's entity kind for it.
+    fn kind(self) -> &'static str {
+        match self {
+            SignalStyle::Bold => "bold",
+            SignalStyle::Italic => "italic",
+            SignalStyle::Strikethrough => "strike",
+            SignalStyle::Monospace => "code",
+            SignalStyle::Spoiler => "spoiler",
+        }
+    }
+}
+
+/// Styled runs for this page's Signal messages, from the row whose text each
+/// shows: `shown` maps an edited message to its newest revision.
+async fn attach_signal_styles(
+    pool: &MySqlPool,
+    msgs: &mut [Message],
+    shown: &HashMap<String, i64>,
+) -> Result<()> {
+    let rows: Vec<(usize, i64)> = msgs
+        .iter()
+        .enumerate()
+        .filter_map(|(i, m)| {
+            let row = shown.get(&m.id).copied().or_else(|| m.id.parse().ok())?;
+            Some((i, row))
+        })
+        .collect();
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let placeholders = vec!["?"; rows.len()].join(",");
+    let sql = format!(
+        "SELECT message_id, style, start_utf16, length_utf16 FROM signal_text_styles
+          WHERE message_id IN ({placeholders})
+          ORDER BY message_id, start_utf16, length_utf16, style",
+    );
+    // A fixed template with a computed count of `?` and every value bound.
+    let mut q = sqlx::query(AssertSqlSafe(sql));
+    for (_, row) in &rows {
+        q = q.bind(row);
+    }
+    for r in q.fetch_all(pool).await? {
+        let row: i64 = r.try_get("message_id")?;
+        let style: String = r.try_get("style")?;
+        let start: i32 = r.try_get("start_utf16")?;
+        let length: i32 = r.try_get("length_utf16")?;
+        for (i, _) in rows.iter().filter(|(_, rr)| *rr == row) {
+            msgs[*i].entities.push(Entity {
+                // An unknown style passes through, and renders as plain text.
+                kind: SignalStyle::parse(&style).map_or(style.clone(), |st| st.kind().to_string()),
+                offset: start.into(),
+                length: length.into(),
+                url: None,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Link previews for this page's Signal messages, in the order sent.
+async fn attach_signal_previews(pool: &MySqlPool, msgs: &mut [Message]) -> Result<()> {
+    let ids: Vec<i64> = msgs.iter().filter_map(|m| m.id.parse().ok()).collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let placeholders = vec!["?"; ids.len()].join(",");
+    let sql = format!(
+        "SELECT message_id, url, title, description FROM signal_link_previews
+          WHERE message_id IN ({placeholders})
+          ORDER BY message_id, position",
+    );
+    // A fixed template with a computed count of `?` and every value bound.
+    let mut q = sqlx::query(AssertSqlSafe(sql));
+    for id in &ids {
+        q = q.bind(id);
+    }
+    for r in q.fetch_all(pool).await? {
+        let id: i64 = r.try_get("message_id")?;
+        let id = id.to_string();
+        if let Some(m) = msgs.iter_mut().find(|m| m.id == id) {
+            m.previews.push(LinkPreview {
+                url: r.try_get("url")?,
+                title: r.try_get("title")?,
+                description: r.try_get("description")?,
+            });
+        }
     }
     Ok(())
 }
@@ -1271,7 +1419,11 @@ pub async fn messages_page(
     // Signal stores an edit as a new row pointing at the original; Telegram
     // edits in place and files the old text beside it.
     match origin {
-        Origin::Signal => attach_edits(pool, id, &mut page.msgs).await?,
+        Origin::Signal => {
+            let shown = attach_edits(pool, id, &mut page.msgs).await?;
+            attach_signal_styles(pool, &mut page.msgs, &shown).await?;
+            attach_signal_previews(pool, &mut page.msgs).await?;
+        }
         Origin::Telegram => attach_telegram_edits(pool, id, &mut page.msgs).await?,
         // Neither has revisions.
         Origin::Gchat | Origin::Irc => {}
@@ -1326,9 +1478,11 @@ async fn signal_messages(
                  COALESCE(ct.display_name, m.sender_uuid) AS sender,
                  m.is_outgoing AS is_outgoing, m.body AS body,
                  m.deleted AS deleted, m.edited AS edited,
-                 m.quote_target_ts AS quote_target_ts
+                 m.quote_target_ts AS quote_target_ts, m.quote_text AS quote_text,
+                 COALESCE(qa.display_name, m.quote_author_uuid) AS quote_author
           FROM messages m
           LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
+          LEFT JOIN contacts qa ON qa.uuid = m.quote_author_uuid
           WHERE m.thread_id = ?
             AND m.edit_of_ts IS NULL
             AND (? IS NULL OR m.server_ts < ? OR (m.server_ts = ? AND m.id < ?))
@@ -1340,9 +1494,11 @@ async fn signal_messages(
                  COALESCE(ct.display_name, m.sender_uuid) AS sender,
                  m.is_outgoing AS is_outgoing, m.body AS body,
                  m.deleted AS deleted, m.edited AS edited,
-                 m.quote_target_ts AS quote_target_ts
+                 m.quote_target_ts AS quote_target_ts, m.quote_text AS quote_text,
+                 COALESCE(qa.display_name, m.quote_author_uuid) AS quote_author
           FROM messages m
           LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
+          LEFT JOIN contacts qa ON qa.uuid = m.quote_author_uuid
           WHERE m.thread_id = ?
             AND m.edit_of_ts IS NULL
             AND (? IS NULL OR m.server_ts > ? OR (m.server_ts = ? AND m.id > ?))
@@ -1354,9 +1510,11 @@ async fn signal_messages(
                  COALESCE(ct.display_name, m.sender_uuid) AS sender,
                  m.is_outgoing AS is_outgoing, m.body AS body,
                  m.deleted AS deleted, m.edited AS edited,
-                 m.quote_target_ts AS quote_target_ts
+                 m.quote_target_ts AS quote_target_ts, m.quote_text AS quote_text,
+                 COALESCE(qa.display_name, m.quote_author_uuid) AS quote_author
           FROM messages m
           LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
+          LEFT JOIN contacts qa ON qa.uuid = m.quote_author_uuid
           WHERE m.thread_id = ?
             AND m.edit_of_ts IS NULL
             AND (? IS NULL OR m.server_ts > ? OR (m.server_ts = ? AND m.id >= ?))
@@ -1380,12 +1538,17 @@ async fn signal_messages(
     let mut ts_list = Vec::with_capacity(rows.len());
     let mut ids = Vec::with_capacity(rows.len());
     let mut keys = Vec::with_capacity(rows.len());
-    let mut quotes: Vec<(String, i64)> = Vec::new();
+    let mut quotes: Vec<Quote> = Vec::new();
     for r in rows {
         let id: i64 = r.try_get("id")?;
         let ts: i64 = r.try_get("ts")?;
         if let Some(target) = r.try_get::<Option<i64>, _>("quote_target_ts")? {
-            quotes.push((id.to_string(), target));
+            quotes.push(Quote {
+                msg_id: id.to_string(),
+                target_ts: target,
+                author: r.try_get("quote_author")?,
+                text: r.try_get("quote_text")?,
+            });
         }
         keys.push((ts, id));
         let is_outgoing: i8 = r.try_get("is_outgoing")?;
@@ -1411,6 +1574,7 @@ async fn signal_messages(
             delivery: None,
             entities: Vec::new(),
             album: None,
+            previews: Vec::new(),
         });
     }
 
@@ -1671,6 +1835,7 @@ async fn gchat_messages(
             delivery: None,
             entities: Vec::new(),
             album: None,
+            previews: Vec::new(),
         });
     }
 
@@ -1826,6 +1991,7 @@ async fn irc_messages(
             delivery: None,
             entities: Vec::new(),
             album: None,
+            previews: Vec::new(),
             attachments: Vec::new(),
         });
     }
@@ -1986,6 +2152,7 @@ async fn telegram_messages(
             album: r
                 .try_get::<Option<i64>, _>("grouped_id")?
                 .map(|g| g.to_string()),
+            previews: Vec::new(),
         });
     }
 

@@ -4,6 +4,7 @@ import type { Delivery } from "./Delivery";
 import type { Entity } from "./Entity";
 import type { LinkImage } from "./LinkImage";
 import type { LinkOffer } from "./LinkOffer";
+import type { LinkPreview } from "./LinkPreview";
 import type { MessageEdit } from "./MessageEdit";
 import type { MessageKind } from "./MessageKind";
 import type { Reaction } from "./Reaction";
@@ -47,4 +48,8 @@ entities: Array<Entity>,
  * The album this message was sent in, shared by its members: Telegram's
  * `grouped_id`, as a string because it exceeds a JavaScript number.
  */
-album: string | null, };
+album: string | null, 
+/**
+ * Link previews the sender's app attached. Signal only.
+ */
+previews: Array<LinkPreview>, };

@@ -63,6 +63,7 @@ fn msg(body: &str) -> Message {
         delivery: None,
         entities: Vec::new(),
         album: None,
+        previews: Vec::new(),
     }
 }
 

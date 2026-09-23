@@ -33,7 +33,7 @@ const MEDIA_WATCH_LIMIT_MS = 15 * 60 * 1000;
 @Component({
   selector: 'app-thread',
   templateUrl: './thread.html',
-  styleUrl: './thread.scss',
+  styleUrls: ['./thread.scss', './thread-media.scss'],
   // The host is the scroll container the sticky headers pin against. `copy`
   // bubbles here from wherever the selection is.
   host: { class: 'thread', '(scroll)': 'onScroll()', '(copy)': 'onCopy($event)' },
@@ -365,35 +365,54 @@ export class Thread {
     return d.state === 'sent' || d.state === 'delivered';
   }
 
-  /** Cut a body into plain and formatted runs. Offsets are UTF-16 code units,
-   *  which is what JavaScript indexes by. Overlapping runs are skipped, long ones
-   *  clamped, and the text always comes from `body`, never the entity. */
-  protected segments(m: Message): { text: string; kind: string; url: string | null }[] {
+  /** Cut a body into runs at every entity boundary; each run carries the classes
+   *  of every entity covering it, and the address of a covering link. Offsets are
+   *  UTF-16 code units, which is what JavaScript indexes by. Runs past the end
+   *  are clamped, and the text always comes from `body`, never the entity. */
+  protected segments(m: Message): { text: string; cls: string; href: string | null }[] {
     const body = m.body ?? '';
     // `?.`: a message without the field must not blank the whole thread.
-    if (!m.entities?.length) return [{ text: body, kind: 'plain', url: null }];
-    const out: { text: string; kind: string; url: string | null }[] = [];
-    let at = 0;
-    for (const e of m.entities) {
-      const start = Number(e.offset);
-      const end = start + Number(e.length);
-      if (!Number.isFinite(start) || start < at || start >= body.length) continue;
-      const stop = Math.min(end, body.length);
-      if (stop <= start) continue;
-      if (start > at) out.push({ text: body.slice(at, start), kind: 'plain', url: null });
-      out.push({ text: body.slice(start, stop), kind: e.kind, url: e.url });
-      at = stop;
+    if (!m.entities?.length) return [{ text: body, cls: '', href: null }];
+    const spans = m.entities
+      .map((e) => {
+        const start = Number(e.offset);
+        const stop = Math.min(start + Number(e.length), body.length);
+        return { e, start, stop };
+      })
+      .filter(({ start, stop }) => Number.isFinite(start) && start >= 0 && stop > start);
+    const cuts = [...new Set([0, body.length, ...spans.flatMap((s) => [s.start, s.stop])])].sort(
+      (a, b) => a - b,
+    );
+    const out: { text: string; cls: string; href: string | null }[] = [];
+    for (let i = 0; i + 1 < cuts.length; i++) {
+      const [a, b] = [cuts[i], cuts[i + 1]];
+      const covering = spans.filter((s) => s.start <= a && s.stop >= b);
+      const link = covering.find((s) => this.hrefOf(s.e, body) != null);
+      out.push({
+        text: body.slice(a, b),
+        cls: covering.map((s) => `fmt-${s.e.kind}`).join(' '),
+        href: link ? this.hrefOf(link.e, body) : null,
+      });
     }
-    if (at < body.length) out.push({ text: body.slice(at), kind: 'plain', url: null });
     return out;
   }
 
-  /** Where a formatted run points, or null. Reaches the DOM only through the
+  /** A preview's host, or its whole url if that does not parse. */
+  protected hostOf(url: string): string {
+    try {
+      return new URL(url).host;
+    } catch {
+      return url;
+    }
+  }
+
+  /** Where a link entity points, or null. Reaches the DOM only through the
    *  sanitising `[href]`. */
-  protected hrefOf(seg: { text: string; kind: string; url: string | null }): string | null {
-    if (seg.kind === 'textUrl') return seg.url;
-    if (seg.kind === 'url') return seg.text;
-    if (seg.kind === 'email') return `mailto:${seg.text}`;
+  private hrefOf(e: Message['entities'][number], body: string): string | null {
+    const text = body.slice(Number(e.offset), Number(e.offset) + Number(e.length));
+    if (e.kind === 'textUrl') return e.url;
+    if (e.kind === 'url') return text;
+    if (e.kind === 'email') return `mailto:${text}`;
     return null;
   }
 

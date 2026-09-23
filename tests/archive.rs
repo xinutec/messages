@@ -221,6 +221,8 @@ async fn seed(pool: &MySqlPool) {
         "telegram_message_entities",
         "telegram_read_marks",
         "telegram_conversations",
+        "signal_text_styles",
+        "signal_link_previews",
         "sessions",
     ] {
         let _ = sqlx::query(AssertSqlSafe(format!("DROP TABLE IF EXISTS {t}")))
@@ -231,7 +233,9 @@ async fn seed(pool: &MySqlPool) {
         "CREATE TABLE conversations (thread_id VARCHAR(80) PRIMARY KEY, type ENUM('dm','group') NOT NULL, name VARCHAR(255) NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE contacts (uuid VARCHAR(64) PRIMARY KEY, phone VARCHAR(32) NULL, display_name VARCHAR(255) NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE signal_receipts (id BIGINT AUTO_INCREMENT PRIMARY KEY, target_ts BIGINT NOT NULL, author_uuid VARCHAR(64) NOT NULL, kind ENUM('delivery','read','viewed') NOT NULL, when_ts BIGINT NOT NULL, observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uniq_signal_receipt (target_ts, author_uuid, kind)) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, thread_id VARCHAR(80) NOT NULL, sender_uuid VARCHAR(64) NOT NULL, server_ts BIGINT NOT NULL, body TEXT NULL, quote_target_ts BIGINT NULL, is_outgoing TINYINT(1) NOT NULL DEFAULT 0, deleted TINYINT(1) NOT NULL DEFAULT 0, edited TINYINT(1) NOT NULL DEFAULT 0, edit_of_ts BIGINT NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, deleted_at TIMESTAMP NULL, expires_in_seconds INT NULL, server_delivered_ts BIGINT NULL, server_received_ts BIGINT NULL) DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, thread_id VARCHAR(80) NOT NULL, sender_uuid VARCHAR(64) NOT NULL, server_ts BIGINT NOT NULL, body TEXT NULL, quote_target_ts BIGINT NULL, is_outgoing TINYINT(1) NOT NULL DEFAULT 0, deleted TINYINT(1) NOT NULL DEFAULT 0, edited TINYINT(1) NOT NULL DEFAULT 0, edit_of_ts BIGINT NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, deleted_at TIMESTAMP NULL, expires_in_seconds INT NULL, server_delivered_ts BIGINT NULL, server_received_ts BIGINT NULL, quote_author_uuid VARCHAR(64) NULL, quote_text TEXT NULL) DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE signal_text_styles (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL, style VARCHAR(16) NOT NULL, start_utf16 INT NOT NULL, length_utf16 INT NOT NULL, UNIQUE KEY uniq_signal_text_style (message_id, style, start_utf16, length_utf16)) DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE signal_link_previews (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL, position INT NOT NULL, url TEXT NOT NULL, title TEXT NULL, description TEXT NULL, UNIQUE KEY uniq_signal_link_preview (message_id, position)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, thread_id VARCHAR(80) NOT NULL, target_ts BIGINT NOT NULL, author_uuid VARCHAR(64) NOT NULL, emoji VARCHAR(32) NULL, reaction_ts BIGINT NOT NULL, removed TINYINT(1) NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE attachments (id BIGINT AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL, content_type VARCHAR(255) NULL, file_name VARCHAR(512) NULL, size_bytes BIGINT NULL, stored_path VARCHAR(1024) NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE gchat_conversations (group_id VARCHAR(64) PRIMARY KEY, name VARCHAR(255) NULL, is_dm TINYINT(1) NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
@@ -2589,4 +2593,152 @@ async fn telegram_formatting_is_attached_and_a_retracted_run_is_not() {
             "{origin:?} records no formatting"
         );
     }
+}
+
+// ---- Signal text styles, link previews, quote details -----------------------
+
+/// A thread of its own: a styled message, a link with a preview, a reply to a
+/// message the archive does not hold, and an edited message whose styles
+/// changed with its text.
+async fn seed_signal_fields(pool: &MySqlPool, thread: &str) {
+    sqlx::query("DELETE FROM messages WHERE thread_id = ?")
+        .bind(thread)
+        .execute(pool)
+        .await
+        .unwrap();
+    for (ts, body, edit_of, edited) in [
+        (10_000i64, "Hello bold mono strike", None::<i64>, 0i8),
+        (11_000, "https://xinutec.org", None, 0),
+        (12_000, "This is many styles.", None, 0),
+        (13_000, "plain", None, 1),
+        (14_000, "now italic", Some(13_000), 0),
+    ] {
+        sqlx::query(
+            "INSERT INTO messages (thread_id, sender_uuid, server_ts, body, is_outgoing, deleted, edited, edit_of_ts)
+             VALUES (?, 'me', ?, ?, 1, 0, ?, ?)",
+        )
+        .bind(thread)
+        .bind(ts)
+        .bind(body)
+        .bind(edited)
+        .bind(edit_of)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    for (ts, style, start, length) in [
+        (10_000i64, "BOLD", 6, 4),
+        (10_000, "MONOSPACE", 11, 11),
+        (10_000, "STRIKETHROUGH", 11, 11),
+        (13_000, "BOLD", 0, 5),
+        (14_000, "ITALIC", 4, 6),
+    ] {
+        sqlx::query(
+            "INSERT INTO signal_text_styles (message_id, style, start_utf16, length_utf16)
+             SELECT id, ?, ?, ? FROM messages WHERE thread_id = ? AND server_ts = ?",
+        )
+        .bind(style)
+        .bind(start)
+        .bind(length)
+        .bind(thread)
+        .bind(ts)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO signal_link_previews (message_id, position, url, title, description)
+         SELECT id, 0, 'https://xinutec.org', 'Welcome to nginx!', NULL
+           FROM messages WHERE thread_id = ? AND server_ts = 11000",
+    )
+    .bind(thread)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE messages SET quote_target_ts = 5, quote_author_uuid = 'alice',
+                quote_text = 'something from before the archive'
+          WHERE thread_id = ? AND server_ts = 12000",
+    )
+    .bind(thread)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Signal's style names arrive as the viewer's kinds, overlapping runs kept; an
+/// edited message carries its current revision's styles.
+#[tokio::test]
+async fn signal_styles_arrive_as_entities() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let thread = "dm:fields-styles";
+    seed_signal_fields(&pool, thread).await;
+    let page = archive::messages_page(&pool, Origin::Signal, thread, None, 50, PageDir::Older)
+        .await
+        .unwrap();
+    let runs = |i: usize| -> Vec<(String, i64, i64)> {
+        page.messages[i]
+            .entities
+            .iter()
+            .map(|e| (e.kind.clone(), e.offset, e.length))
+            .collect()
+    };
+    assert_eq!(
+        runs(0),
+        vec![
+            ("bold".into(), 6, 4),
+            ("code".into(), 11, 11),
+            ("strike".into(), 11, 11),
+        ]
+    );
+    assert!(runs(1).is_empty());
+    let edited = &page.messages[3];
+    assert_eq!(edited.body.as_deref(), Some("now italic"));
+    assert_eq!(runs(3), vec![("italic".into(), 4, 6)]);
+}
+
+/// A preview comes with its message.
+#[tokio::test]
+async fn a_signal_link_preview_comes_with_its_message() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let thread = "dm:fields-previews";
+    seed_signal_fields(&pool, thread).await;
+    let page = archive::messages_page(&pool, Origin::Signal, thread, None, 50, PageDir::Older)
+        .await
+        .unwrap();
+    let previews: Vec<(&str, Option<&str>)> = page.messages[1]
+        .previews
+        .iter()
+        .map(|p| (p.url.as_str(), p.title.as_deref()))
+        .collect();
+    assert_eq!(
+        previews,
+        vec![("https://xinutec.org", Some("Welcome to nginx!"))]
+    );
+    assert!(page.messages[0].previews.is_empty());
+}
+
+/// A reply to a message the archive does not hold shows who and what from the
+/// quote itself.
+#[tokio::test]
+async fn an_unresolved_signal_quote_shows_what_it_quoted() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let thread = "dm:fields-quote";
+    seed_signal_fields(&pool, thread).await;
+    let page = archive::messages_page(&pool, Origin::Signal, thread, None, 50, PageDir::Older)
+        .await
+        .unwrap();
+    let r = page.messages[2].reply_to.as_ref().expect("a reply");
+    assert_eq!(r.id, None, "not held");
+    assert_eq!(r.sender.as_deref(), Some("Alice"));
+    assert_eq!(
+        r.excerpt.as_deref(),
+        Some("something from before the archive")
+    );
 }

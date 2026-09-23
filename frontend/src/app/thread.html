@@ -124,6 +124,12 @@
                       r.deleted ? '(deleted)' : (r.excerpt ?? '(no text)')
                     }}</span>
                   </button>
+                } @else if (r.excerpt) {
+                  <!-- Not held, but the quote carried who and what. -->
+                  <div class="reply-quote missing">
+                    @if (r.sender) { <span class="who">{{ r.sender }}</span> }
+                    <span class="said">{{ r.excerpt }}</span>
+                  </div>
                 } @else {
                   <div class="reply-quote missing">
                     <span class="said absent">a message this archive doesn't hold</span>
@@ -154,10 +160,18 @@
                        address goes through the sanitising `[href]`, and an unknown kind is a plain
                        span. Flush with the tags, as above. -->
                   <div class="body" [class.deleted]="m.deleted"
-                    >@if (m.kind === 'action') {<span>* </span>}@for (seg of segments(m); track $index) {@if (hrefOf(seg); as href) {<a
-                        [href]="href" target="_blank" rel="noopener noreferrer"
-                        >{{ seg.text }}</a>} @else {<span [class]="'fmt-' + seg.kind">{{ seg.text }}</span>}}</div>
+                    >@if (m.kind === 'action') {<span>* </span>}@for (seg of segments(m); track $index) {@if (seg.href; as href) {<a
+                        [href]="href" [class]="seg.cls" target="_blank" rel="noopener noreferrer"
+                        >{{ seg.text }}</a>} @else {<span [class]="seg.cls">{{ seg.text }}</span>}}</div>
                 }
+              <!-- A preview the sender's app made. -->
+              @for (p of m.previews; track $index) {
+                <a class="preview" [href]="p.url" target="_blank" rel="noopener noreferrer">
+                  @if (p.title) { <span class="title">{{ p.title }}</span> }
+                  @if (p.description) { <span class="description">{{ p.description }}</span> }
+                  <span class="host">{{ hostOf(p.url) }}</span>
+                </a>
+              }
               <!-- A picture somebody linked, served by us so the reader never contacts the other
                    server; the link underneath goes to the original. -->
               @for (li of m.link_images; track li.id) {
