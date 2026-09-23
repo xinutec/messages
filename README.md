@@ -131,6 +131,7 @@ gains another reader.
 | `edited` | Signal and Telegram, by different mechanisms; Telegram's also honours `edit_hide` | `edited` tag | ` (edited)` on the last line | not shown |
 | `edits` | Signal: revision rows via `edit_of_ts`; Telegram: `telegram_message_edits` | behind the `edited` tag | not shown | not shown |
 | `kind` | IRC, and Telegram service events as `action` | `* ` before the body | `HH:MM  * nick ` prefix | not shown |
+| `entities` | Telegram entities; Signal text styles mapped to the same kinds, from an edited message's newest revision | formatted runs, overlaps combined | plain text | not shown |
 | `is_outgoing` | all origins | `.out` class | nothing; the sender's name carries it | not shown |
 
 The server sends retracted text; every reader hides it until asked. A revealed
@@ -162,6 +163,8 @@ to send.
 - Google Chat reactors are named only as far as gchat-archive's second capture
   has reached; Telegram truncates its reactor list. `count` stays authoritative.
 - A custom-emoji Telegram reaction has no characters to draw and is left out.
+- Signal link previews show title and description; a preview image is not yet
+  captured (#1693).
 - Telegram secret chats are device-local and absent.
 - A Telegram message edited before the archive saw it has no earlier versions:
   Telegram serves only the current text.
