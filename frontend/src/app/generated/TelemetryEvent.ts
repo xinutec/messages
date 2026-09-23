@@ -10,7 +10,6 @@ export type TelemetryEvent = { kind: string, path: string, label: string | null,
 /**
  * The client's clock, in epoch milliseconds.
  *
- * Kept because a batch arrives all at once, so the server's receive time
- * cannot order the events inside it and the client's can.
+ * A batch arrives at once, so only the client's clock orders it.
  */
 at: number, };

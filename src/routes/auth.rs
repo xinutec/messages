@@ -1,9 +1,7 @@
 //! Auth routes: Nextcloud identity login, restricted to an explicit allow-list.
 //!
-//! The login flow is copied from `life`; the one addition is the allow-list
-//! check in the callback — the archive holds private messages and the host is
-//! on a shared VPN, so a successfully-authenticated but non-allowed Nextcloud
-//! user is rejected with 403 and no session is minted.
+//! A Nextcloud user not on the allow-list is rejected with 403 and gets no
+//! session.
 
 use anyhow::anyhow;
 use axum::extract::{Query, State};

@@ -1,16 +1,7 @@
-//! The job half: find links in the archive, ask each server once what its link
-//! is, keep the pictures.
-//!
-//! ⚠ THIS RUNS NOWHERE NEAR THE WEB POD. The pod that serves
-//! `messages.xinutec.org` has no route off the cluster at all — DNS, the
-//! database, and irssi — and that is deliberate. Fetching a stranger's URL is
-//! the one thing in this app that must reach the open internet, so it lives in a
-//! scheduled job with its own egress, and the result reaches the reader as bytes
-//! on a volume, exactly like a Signal attachment.
-//!
-//! Politeness is a design constraint, not a nicety: these are other people's
-//! servers, and the links are years old. Every decision is written down —
-//! including "not a picture" — so each link is asked about ONCE, ever.
+//! The web pod's half of fetching a link's picture: ask the fetch service, then
+//! record the outcome and store the bytes. Every verdict is recorded, "not a
+//! picture" included, so a stranger's server is asked about a link once per
+//! decision.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -22,9 +13,7 @@ use url::Url;
 
 use crate::link_image::read_advert;
 
-/// What a fetch is allowed to cost. A share page is ~30 KB and a preview a few
-/// hundred; the cap is not a guess about pictures, it is the point past which we
-/// stop reading whatever we are being sent.
+/// What a fetch may cost: the point past which we stop reading.
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
     pub max_bytes: usize,
@@ -40,15 +29,14 @@ impl Default for Limits {
     }
 }
 
-/// How a link ended up. Every one of these is stored; see the module note.
+/// How a link ended up. Every one is stored.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
     /// Bytes on the volume, servable.
     Ok,
-    /// Reached it, and it is not a picture we may inline. Never asked again.
+    /// Reached it, and it is not a picture we may inline.
     NotImage,
-    /// Could not reach it, or it broke the limits. Also not asked again — a link
-    /// from 2014 that times out today will time out next week too.
+    /// Could not reach it, or it broke the limits. A reader may ask again.
     Failed,
 }
 
@@ -62,22 +50,17 @@ impl Outcome {
     }
 }
 
-/// A link's identity on disk and in the table: the SHA-256 of the URL itself.
-/// The same picture posted in three channels is one row and one file, and the
-/// name gives away nothing about where it came from.
+/// A link's identity on disk and in the table: the URL's SHA-256. One row and
+/// one file per link, and the name reveals nothing about its source.
 pub fn url_hash(url: &Url) -> String {
     hex::encode(Sha256::digest(url.as_str().as_bytes()))
 }
 
 /// Ask the fetch service for a picture, and write down what came back.
 ///
-/// ⚠ THE WEB POD DOES NOT FETCH, AND THE FETCHER DOES NOT READ. This side
-/// holds the archive's credentials and the stored pictures; the other side holds
-/// a socket to the internet and nothing else. The bytes come back over one
-/// in-cluster request, so a fetcher that has been talked into something by a
-/// hostile page has no database to read, no volume to write and no credential to
-/// steal — the worst it can do is lie about the bytes of a picture somebody
-/// asked for, which is the same thing the remote server could have done anyway.
+/// The fetch service reaches the internet and holds nothing; this side holds the
+/// credentials and the volume. A compromised fetcher can at worst lie about a
+/// picture's bytes.
 pub async fn resolve_one(
     pool: &MySqlPool,
     client: &reqwest::Client,
@@ -112,9 +95,8 @@ pub async fn resolve_one(
     }
 }
 
-/// One in-cluster request. 204 means "reached it, not a picture"; a 5xx carries
-/// the reason, which is kept because "failed" with no reason is the kind of row
-/// that gets retried by hand for ever.
+/// One in-cluster request. 204 means not a picture; a 5xx carries the reason,
+/// which is recorded.
 async fn ask_service(
     client: &reqwest::Client,
     service: &str,
@@ -164,7 +146,7 @@ pub async fn fetch_picture(
     let final_url = Url::parse(res.url().as_str())?;
     let content_type = header(&res, reqwest::header::CONTENT_TYPE);
 
-    // A link straight to a picture is already the answer; no page to read.
+    // A link straight to a picture needs no page.
     if content_type
         .as_deref()
         .is_some_and(|t| t.starts_with("image/"))
@@ -198,14 +180,9 @@ pub async fn fetch_picture(
 
     let res = client.get(image_url).timeout(limits.timeout).send().await?;
     let ct = header(&res, reqwest::header::CONTENT_TYPE).unwrap_or_default();
-    // ⚠ The page SAID it was a picture; this is the server actually sending one.
-    // A share whose file was replaced since it was posted answers with whatever
-    // is there now, and that is the byte stream we would be storing.
+    // Check the image itself: the file behind a share can change.
     if !ct.starts_with("image/") {
-        // ⚠ The page named a picture and the server sent something else. This is
-        // where a URL we mangled shows up — a 404 page carries a content type
-        // too — so it is worth saying out loud rather than folding into a bare
-        // "not a picture".
+        // A URL gone wrong answers with an error page, which lands here.
         tracing::info!("the advertised picture answered {ct}, not an image");
         return Ok(None);
     }
@@ -232,9 +209,7 @@ async fn read_capped(mut res: reqwest::Response, limits: Limits) -> Result<Vec<u
     Ok(out)
 }
 
-/// Write the bytes under the URL's hash. The extension comes from the type the
-/// server sent, so the volume is browsable, and nothing from the URL reaches the
-/// filesystem.
+/// Write the bytes under the URL's hash, with an extension from the served type.
 fn store(dir: &Path, url: &Url, content_type: &str, bytes: &[u8]) -> Result<String> {
     let ext = match content_type {
         "image/jpeg" => "jpg",

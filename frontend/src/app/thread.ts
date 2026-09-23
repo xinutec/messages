@@ -19,23 +19,14 @@ import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
 import { Conversation, Delivery, LinkOffer, Message, Origin, Attachment, Reaction, ReplyTo, SearchHit } from './models';
 
-/** How often an open, visible thread asks whether anything is newer.
- *
- *  Bounded below by how fast the ARCHIVE learns, not by what feels responsive:
- *  polling faster than the importer runs only adds requests that answer "no".
- *  Five seconds is under the cadence of everything upstream and cheap — the
- *  query is indexed on `(conversation_id, sent_at)` and returns one page. */
+/** How often an open, visible thread checks for newer messages. */
 const POLL_MS = 5000;
 
 /** How often a fetch in flight is asked about. */
 const MEDIA_WATCH_INTERVAL_MS = 4000;
 
-/** How long to keep asking before giving up quietly.
- *
- *  ⚠ Generous because the files this watches are the LARGE ones — being asked for is
- *  what makes a file large enough to wait for. Bounded because something genuinely
- *  stuck should stop costing a request every four seconds, and the row is still the
- *  truth: reopening the conversation asks again. */
+/** How long to watch a requested fetch before giving up quietly; reopening the
+ *  conversation asks again. */
 const MEDIA_WATCH_LIMIT_MS = 15 * 60 * 1000;
 
 
@@ -43,10 +34,8 @@ const MEDIA_WATCH_LIMIT_MS = 15 * 60 * 1000;
   selector: 'app-thread',
   templateUrl: './thread.html',
   styleUrl: './thread.scss',
-  // The host IS the scroll container (class `thread`): the sticky head + day
-  // headers pin against it, and it's where we read/adjust scrollTop.
-  // `copy` is on the host because it BUBBLES from wherever the selection is —
-  // the browser does the selecting, we only rewrite what leaves.
+  // The host is the scroll container the sticky headers pin against. `copy`
+  // bubbles here from wherever the selection is.
   host: { class: 'thread', '(scroll)': 'onScroll()', '(copy)': 'onCopy($event)' },
   imports: [
     DatePipe,
@@ -69,62 +58,37 @@ export class Thread {
   private host = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private readonly messagesEl = viewChild<ElementRef<HTMLElement>>('messagesEl');
 
-  // For the template. Naming an attachment is shared with the clipboard —
-  // see attachment.ts.
+  // Shared with the clipboard; see attachment.ts.
   protected readonly attachmentName = attachmentName;
 
-  /** Where an attachment's bytes come from.
-   *
-   *  ⚠ Two routes because two origins hold bytes and they are keyed differently:
-   *  Signal's by the attachment's own id, Telegram's by the MESSAGE's, since a
-   *  Telegram message has at most one file and no separate id for it. The origin is
-   *  an input to this component, so the decision is made once here rather than by
-   *  prefixing ids and parsing them apart on the server. */
+  /** Where an attachment's bytes come from: each origin has its own route, since
+   *  attachment ids are per origin. */
   protected attachmentUrl(a: Attachment): string {
-    // ⚠ EXHAUSTIVE ON PURPOSE — the `else` that used to be here meant Signal.
-    // Every origin's attachment ids come from its own AUTO_INCREMENT, so id 42
-    // exists in three tables and names three different pictures; the route is
-    // what keeps them apart. A trailing `: '/api/attachments/…'` silently gave a
-    // NEW origin Signal's endpoint, which answers 404 for an id that exists —
-    // indistinguishable from a picture that was never stored. A Record over
-    // Origin makes adding one a type error instead.
+    // A Record, so a new origin is a type error rather than another origin's
+    // endpoint.
     const route: Record<Origin, string> = {
       signal: 'attachments',
       gchat: 'gchat-attachments',
       telegram: 'telegram-media',
-      // IRC has no attachments at all; a URL here would never be built, and
-      // naming it is cheaper than a branch that cannot be reached.
+      // IRC has no attachments.
       irc: 'attachments',
     };
     const origin = this.origin();
-    // ⚠ No origin, no URL. This cannot happen while a thread is rendering — the
-    // component is routed by origin — but the old `else` absorbed `undefined`
-    // into Signal's endpoint, which is how a wrong-origin id becomes a 404 that
-    // reads like a missing file. An empty src fails visibly and cannot fetch
-    // somebody else's picture.
+    // Unreachable while routed; an empty src fails visibly.
     return origin ? `/api/${route[origin]}/${a.id}` : '';
   }
   protected readonly attachmentNoun = attachmentNoun;
 
-  /** Which deleted messages the reader has asked to see, by id.
-   *
-   *  ⚠ **A decision about THIS screen, and nothing further.** It never reaches
-   *  the clipboard — `copy-log.ts` builds from the model, which this does not
-   *  touch, so a revealed message still pastes as `(deleted)`. And it is dropped
-   *  when the conversation changes (`resetState`): reading one retraction must
-   *  not quietly arm every other thread.
-   *
-   *  Held as ids rather than a flag on the message because `pollNewer` replaces
-   *  the array wholesale; a flag would be lost on the next tick. */
+  /** Deleted messages the reader chose to see, by id. Screen only (the clipboard
+   *  still says `(deleted)`), reset with the conversation. Ids rather than a flag
+   *  on the message, which `pollNewer` would replace. */
   private readonly revealedIds = signal<ReadonlySet<string>>(new Set());
 
   protected isRevealed(id: string): boolean {
     return this.revealedIds().has(id);
   }
 
-  /** Which messages are showing what they said before. Ids, like `revealedIds`,
-   *  and for the same reason: `pollNewer` replaces the array wholesale, so a flag
-   *  on the message would be lost on the next tick. */
+  /** Messages showing their earlier versions, by id, like `revealedIds`. */
   private readonly openHistories = signal<ReadonlySet<string>>(new Set());
 
   protected isHistoryOpen(id: string): boolean {
@@ -147,14 +111,11 @@ export class Thread {
     });
   }
 
-  // Bound from the route (withComponentInputBinding); both absent on `/` → the
-  // placeholder. Ids can contain ':' and '/'; the router encodes/decodes them.
-  // Our navigation only ever routes valid origins, so `origin` is typed as such.
+  // Bound from the route; both absent on `/`. The router encodes ids containing
+  // ':' and '/'.
   readonly origin = input<Origin>();
   readonly id = input<string>();
 
-  // A conversation is routed (vs the '' placeholder route) when both params are
-  // bound. Kept as a boolean so the template doesn't compare signals to null.
   readonly routed = computed(() => this.origin() != null && this.id() != null);
 
   readonly conversation = computed<Conversation | null>(() => {
@@ -163,40 +124,28 @@ export class Thread {
     return o != null && i != null ? this.store.find(o, i) : null;
   });
 
-  // Title from the loaded list when available; a deep link can render the thread
-  // before the list arrives, so fall back rather than block.
+  // A deep link can render before the list arrives.
   readonly headTitle = computed(() => {
     const c = this.conversation();
     return c ? this.store.title(c) : 'Conversation';
   });
 
-  /** Searching WITHIN this conversation.
-   *
-   * ⚠ **THE SHELL'S SEARCH BOX IS UNREACHABLE FROM HERE ON A PHONE**, which is
-   * why this exists rather than a scope toggle up there. `app.scss` hides
-   * `.list` — and the search field inside it — whenever a conversation is open
-   * below 768px, so the one moment you want to search the thread you are reading
-   * is the one moment that box is off screen.
-   */
+  /** Search within this conversation. On a phone the shell's search box is
+   *  hidden while a thread is open. */
   readonly searchOpen = signal(false);
   readonly searchQuery = signal('');
   readonly searchHits = signal<SearchHit[] | null>(null);
   readonly searchBusy = signal(false);
-  /** ⚠ Distinct from "no hits", for the reason `app.ts` spells out: an empty
-   *  list is a CLAIM that the words are not in this conversation, and a failed
-   *  request must not be able to make it. */
+  /** A failed search, distinct from no hits. */
   readonly searchFailed = signal(false);
   private threadSearch$ = new Subject<string>();
 
-  /** All fetched messages, ascending by ts. Retained in full (text is cheap);
-   *  only a window of them is ever rendered. */
+  /** All fetched messages, ascending by ts; only a window is rendered. */
   // dev-lint: allow-component-list — `messages` is an infinite-scroll pagination
   // buffer, not a retained catalog; a thread re-fetches fresh on entry by design.
   readonly messages = signal<Message[]>([]);
 
-  /** Which of them are in the DOM, and the scrolling that decides — see
-   *  thread-window.ts. It measures and moves the viewport; everything about
-   *  where messages COME FROM stays here. */
+  /** Which messages are in the DOM; see thread-window.ts. */
   private readonly win = new ThreadWindow(
     this.host,
     () => this.messagesEl()?.nativeElement,
@@ -216,8 +165,7 @@ export class Thread {
   readonly threadError = signal(false);
   /** Where to continue BACKWARDS — the oldest loaded row. */
   private cursor: string | null = null;
-  /** Where to continue FORWARDS — the newest loaded row. Only meaningful while
-   *  `floating`: a window anchored to the present has nothing after it. */
+  /** Where to continue forwards: the newest loaded row, while `floating`. */
   private newerCursor: string | null = null;
 
   private fromTimer: ReturnType<typeof setTimeout> | null = null;
@@ -226,10 +174,7 @@ export class Thread {
 
 
 
-  /** Rendered messages bucketed by calendar day, so each day renders as a section
-   *  with a sticky date header (the header pins only within its own day → it
-   *  shows the current top message's date and is replaced by the next day, never
-   *  stacks). */
+  /** Rendered messages grouped by day, each with a sticky date header. */
   readonly dayGroups = computed(() => {
     const groups: { key: string; ts: number; items: Message[] }[] = [];
     let lastKey: string | null = null;
@@ -246,17 +191,13 @@ export class Thread {
   });
 
   constructor() {
-    // ⚠ `switchMap`, so a slow answer cannot land after a newer one — the
-    // same shape the shell's search uses. Typing two queries quickly otherwise
-    // shows the first one's hits under the second one's words.
+    // `switchMap`, so a slow answer cannot land after a newer one.
     this.threadSearch$
       .pipe(
         switchMap((q) => {
           const o = this.origin();
           const id = this.id();
-          // Nothing to scope to means nothing to search: the thread search is
-          // only ever offered on a routed conversation, and widening to a global
-          // search here would answer a different question than the one asked.
+          // Offered only on a routed conversation; never widened to global.
           if (o == null || id == null) return of<SearchHit[]>([]);
           return this.api.search(q, { origin: o, id }).pipe(
             catchError(() => {
@@ -272,9 +213,7 @@ export class Thread {
         this.searchBusy.set(false);
       });
 
-    // (Re)load whenever the routed conversation changes — deep link, switching
-    // conversations (Angular reuses this instance, just updates the inputs),
-    // Back/forward.
+    // Reload when the routed conversation changes; Angular reuses this instance.
     let loadedKey: string | null = null;
     effect(() => {
       const o = this.origin();
@@ -286,24 +225,15 @@ export class Thread {
       else this.resetState();
     });
 
-    // ⚠ `?at` CHANGING IS ALSO A RELOAD, and the effect above cannot see it.
-    // That effect keys on origin+id, and Angular reuses this component across
-    // navigations — so clicking a search result for the conversation already on
-    // screen changed only the query string, the key compared equal, and nothing
-    // happened. On a wide screen search sits beside an open thread, so that is a
-    // click somebody makes, and the symptom is the one #1401 was filed for.
-    //
-    // Only a CHANGE to a non-null `at` re-lands. `commitFromParam` clears the
-    // parameter on the first scroll, and treating that clear as a navigation
-    // would reload the thread out from under the reader who caused it.
+    // A changed `?at` or `?on` reloads too, which the effect above cannot see:
+    // clicking a hit in the open conversation changes only the query string.
+    // Only a change to a non-null value counts; `commitFromParam` clearing it is
+    // not a navigation.
     let landedAt: string | null = this.route.snapshot.queryParamMap.get('at');
     let landedOn: string | null = this.route.snapshot.queryParamMap.get('on');
     this.route.queryParamMap.pipe(takeUntilDestroyed()).subscribe((pm) => {
       const at = pm.get('at');
       const on = pm.get('on');
-      // ⚠ Both landings re-run on CHANGE only. Picking the same date twice is
-      // not a navigation, and treating the `commitFromParam` clear as one would
-      // reload the thread out from under the reader who scrolled.
       const movedTo = (at != null && at !== landedAt) || (on != null && on !== landedOn);
       landedAt = at;
       landedOn = on;
@@ -315,61 +245,30 @@ export class Thread {
 
     const poll = setInterval(() => void this.pollNewer(), POLL_MS);
     const destroyRef = inject(DestroyRef);
-    // ⚠ Cleared with the component. An interval outlives its component
-    // otherwise, and every visit to a thread would leave another one running —
-    // the request rate climbing with no screen left to show the answers on.
+    // Intervals and timers go with the component.
     destroyRef.onDestroy(() => clearInterval(poll));
     destroyRef.onDestroy(() => {
       if (this.recheck != null) clearTimeout(this.recheck);
-      // ⚠ AND THE `?from` DEBOUNCE, which navigates. It was cleared only to
-      // reschedule itself, never on destroy, so scrolling and leaving inside its
-      // 300ms window left a timer that called `commitFromParam` on a dead
-      // component — `router.navigate` relative to a route the reader had already
-      // left, with `replaceUrl: true`. Measured 2026-09-11: press Back within
-      // the window and 2 runs in 3 landed back INSIDE the conversation, the list
-      // entry replaced in history. Silent: no page error, nothing in the log.
+      // The `?from` debounce navigates, so it must not fire after leaving.
       if (this.fromTimer != null) clearTimeout(this.fromTimer);
-      // Every fetch being watched. Same reason as the interval above: a watcher
-      // that outlives its component polls for a conversation nobody is looking at.
       for (const tick of this.watching.values()) clearInterval(tick);
       this.watching.clear();
     });
 
-    // The soft keyboard opening is a resize of the scroll container, and the
-    // conversation has to follow it or the reader loses the messages they are
-    // replying to — see `ThreadWindow.observeShrink`, which hands back its own
-    // teardown because a ResizeObserver outlives its element otherwise.
+    // The soft keyboard resizes the scroll container; see
+    // `ThreadWindow.observeShrink`.
     destroyRef.onDestroy(this.win.observeShrink());
-    // The message block is a new element after every render that recreates it,
-    // so the observer is re-pointed at the current one rather than the first.
+    // Re-pointed at the current message block after each re-render.
     effect(() => this.win.watchContent(this.messagesEl()?.nativeElement));
   }
 
-  /** The loaded window is NOT anchored to the newest message — the reader was
-   *  put somewhere in the middle by `?at`, and the present is off the bottom of
-   *  what is held.
-   *
-   *  ⚠ **This is a fact `pollNewer` has to know.** Its gap guard is already
-   *  correct: when not one message of the newest page is known it treats the
-   *  hole as unfillable and reloads rather than merging one. But a floating
-   *  window is permanently in exactly that state, so the poll would reload and
-   *  land the reader back in the present within `POLL_MS` — and from the
-   *  outside that reads as the thread wandering off, not as a bug. */
+  /** The loaded window does not reach the newest message: `?at` or `?on` put the
+   *  reader in the middle. `pollNewer` must not run then, or its gap guard would
+   *  reload the thread into the present. */
   readonly floating = signal(false);
 
-  /** The message the reader was PUT on by `?at`, or null when they arrived any
-   *  other way.
-   *
-   *  ⚠ **Landing on the right message is not the same as showing which one.**
-   *  `scrollToTs` puts the hit flush under the sticky header and nothing marked
-   *  it, so in a busy channel — `#netchat` at 1:07 PM has a dozen lines that
-   *  look alike — you arrive in the right place and then have to work out which
-   *  line you came for. Measured on the phone against a hit from 2013.
-   *
-   *  Set by `?at` and by `jumpToReply` when the message replied to was already
-   *  on screen — which is the same statement, "this is where you were put",
-   *  reached two ways. It stops being true the moment the reader scrolls, and
-   *  `commitFromParam` clears it along with `?at` itself. */
+  /** The message the reader was put on by `?at` or `jumpToReply`, marked so it
+   *  can be told from its neighbours. Cleared on the first scroll. */
   readonly landedId = signal<string | null>(null);
 
   private resetState(): void {
@@ -383,27 +282,14 @@ export class Thread {
     this.newerCursor = null;
   }
 
-  /** Land ON a message rather than at the end of its conversation — #1401.
-   *
-   *  Two half-pages around the cursor, fetched together. The newer half is the
-   *  one that makes the landing worth anything: a page fetched only backwards
-   *  puts the hit at the newest end with nothing after it, and a message
-   *  without the reply to it is usually the half somebody was searching for.
-   *
-   *  ⚠ **The forward half is `at`, NOT `newer`.** Both `older` and `newer` are
-   *  STRICT, so a landing built from the pair skipped the very row it was aimed
-   *  at: the reader was put one message past the hit, and the marker naming
-   *  "the message you searched for" pointed at its neighbour. Shipped that way
-   *  on 2026-09-08 and found by looking at a phone. `at` includes the cursor's
-   *  own row, so the two halves concatenate with no gap and no duplicate.
-   */
+  /** Land on a message: half a page either side, fetched together. The forward
+   *  half is `at`, which includes the cursor's own row; `older` and `newer` are
+   *  both strict. */
   private async loadAround(
     origin: Origin,
     id: string,
-    /** A cursor from a search hit or a reply, OR a day to land on. ⚠ The day is
-     *  passed through as `on` rather than turned into a cursor here: the four
-     *  origins disagree about what a timestamp is, and that conversion lives in
-     *  one place on the server (#1562). */
+    /** A cursor from a search hit or reply, or a day, passed as `on` for the
+     *  server to convert to the origin's unit. */
     where: { at: string } | { onDay: number },
   ): Promise<boolean> {
     const half = Math.floor(PAGE / 2);
@@ -414,17 +300,9 @@ export class Thread {
       firstValueFrom(this.api.messages(origin, id, at, half, 'at', on)),
     ]);
 
-    // ⚠ DO THE TWO HALVES ACTUALLY MEET? The server treats a cursor it
-    // cannot read as ABSENT, which is right for a backward page — it means
-    // "start at the newest" — and means "everything after nothing" for a
-    // forward one, which answers with the OLDEST page. So an `?at` from a
-    // hand-edited URL, or a bookmark predating the cursor format, brings back
-    // the two ENDS of the archive and concatenates them into a thread that
-    // jumps years mid-scroll and is in order nowhere.
-    //
-    // Nothing else would notice: both halves are well-formed pages and each is
-    // individually correct. Their ORDER is the only evidence, so it is checked
-    // here and the caller falls back to a plain newest-page load.
+    // An unreadable cursor makes the halves the two ends of the archive, out of
+    // order. Their order is the only evidence, so check it and let the caller
+    // fall back to the newest page.
     const lastOld = older.messages.at(-1);
     const firstNew = newer.messages[0];
     if (lastOld && firstNew && lastOld.ts > firstNew.ts) return false;
@@ -434,14 +312,11 @@ export class Thread {
     this.hasMore.set(older.has_more);
     this.cursor = older.next_cursor;
     this.newerCursor = newer.prev_cursor;
-    // Floating unless the forward half reached the present. `has_more` false
-    // means the newer query ran out, so there is nothing after what is held and
-    // the window is anchored to the latest message after all.
+    // Floating unless the forward half reached the present.
     this.floating.set(newer.has_more);
     this.loadingThread.set(false);
     this.appRef.tick();
-    // `newer.messages[0]` IS the hit — the forward half is inclusive of its own
-    // cursor, which is what makes this the message and not the one after it.
+    // The forward half starts with the hit.
     const hit = newer.messages[0];
     this.landedId.set(hit ? hit.id : null);
     this.win.withScrollLock(() => {
@@ -452,31 +327,8 @@ export class Thread {
     return true;
   }
 
-  /** Go to the message a reply answers.
-   *
-   *  ⚠ **Two paths, and the cheap one is not always available.** A reply nearly
-   *  always answers something a few lines up, which is already on screen — so
-   *  the first try is a plain scroll: no fetch, no navigation, no losing the
-   *  reader's place in the thread they are in.
-   *
-   *  But only a WINDOW of a long conversation is in the DOM (`thread-window.ts`),
-   *  and a reply to something from last year is outside it. `scrollToTs` answers
-   *  with the nearest RENDERED message when the one asked for is not there,
-   *  which would be the wrong message presented as the right one — the exact
-   *  failure the `landed` marker exists to prevent. So a target that is not
-   *  currently rendered goes through `?at` instead, the same landing a search
-   *  hit uses, which fetches half a page either side and marks what it reached.
-   */
-  /**
-   * The hover text naming who reacted.
-   *
-   * ⚠ **`who` BEING SHORTER THAN `count` IS NORMAL, not a bug to paper over.**
-   * Google Chat records no reactors at all, and Telegram truncates the list for
-   * a heavily-reacted message — so the chip keeps showing `count`, and this only
-   * says as much as the archive actually knows. Saying "3 people" when we can
-   * name one would be inventing two, and naming one while the chip says three
-   * would read as a contradiction unless the difference is spelled out.
-   */
+  /** Hover text naming who reacted. `who` can be shorter than `count`; the rest
+   *  are counted, never invented. */
   reactors(r: Reaction): string {
     if (!r.who.length) return '';
     const named = r.who.join(', ');
@@ -484,28 +336,17 @@ export class Thread {
     return unnamed > 0 ? `${named} and ${unnamed} more` : named;
   }
 
-  /**
-   * The tag on an outgoing message: how far it got.
-   *
-   * ⚠ **"read" ALONE WOULD BE A CLAIM ABOUT A WHOLE GROUP, and Signal never makes
-   * one.** A receipt arrives from each person who sent it; nothing anywhere says
-   * who has NOT. So the bare word is used only where it can mean everyone — a DM,
-   * or Telegram, whose mark is a position in the conversation rather than a
-   * person. Where the archive is naming individuals, so does the tag: `read by 2`.
-   * A conversation whose kind is not loaded yet (a deep link straight into a
-   * thread) takes the counted form, which is the one that cannot overclaim.
-   */
+  /** The tag on an outgoing message. Plain "read" only where it covers everyone
+   *  (a DM, or Telegram's position); where people are named, "read by 2". An
+   *  unloaded conversation kind gets the counted form. */
   protected deliveryLabel(d: Delivery): string {
     if (d.state !== 'read' && d.state !== 'viewed') return d.state;
     if (!d.read_by.length || this.conversation()?.kind === 'dm') return d.state;
     return `${d.state} by ${d.read_by.length}`;
   }
 
-  /** Who read it and when — empty for Telegram, which names nobody.
-   *
-   *  ⚠ `formatDate` with the app's LOCALE_ID, NOT `toLocaleString()`. The two
-   *  follow different settings (see app.config.ts) and this sits beside a
-   *  `| date` clock in the same meta line, where a disagreement would show. */
+  /** Who read it and when; empty for Telegram. `formatDate` with LOCALE_ID, to
+   *  match the `| date` beside it. */
   protected readers(d: Delivery): string {
     return d.read_by
       .map((r) => `${r.who} ${formatDate(r.at, 'short', this.locale)}`)
@@ -517,33 +358,12 @@ export class Thread {
     return d.state === 'sent' || d.state === 'delivered';
   }
 
-  /**
-   * Cut a body into runs of plain and formatted text.
-   *
-   * ⚠ **TELEGRAM'S OFFSETS ARE UTF-16 CODE UNITS, AND SO ARE JAVASCRIPT STRING
-   * INDICES.** That is why the arithmetic happens here and not in Rust, where
-   * the same numbers would land mid-character on any body containing an emoji —
-   * and the Telegram half of this archive is full of them. `slice` is exactly
-   * right; no conversion exists, so no conversion bug can.
-   *
-   * ⚠ **OVERLAPPING AND OUT-OF-RANGE RUNS ARE DROPPED RATHER THAN TRUSTED.**
-   * Telegram can nest them (bold inside a link), and this renders one flat pass
-   * — so a run starting before the previous one ended is skipped instead of
-   * rewinding `at`, which would emit the overlap twice and lengthen the message.
-   * A run reaching past the end is clamped: the body is what was said, and no
-   * entity may make the reader see more or less of it.
-   *
-   * ⚠ **THE TEXT ALWAYS COMES FROM `body`, NEVER FROM THE ENTITY.** An entity
-   * says where and what kind, never what it says — so no value from the sender
-   * can put characters on screen that were not in the message.
-   */
+  /** Cut a body into plain and formatted runs. Offsets are UTF-16 code units,
+   *  which is what JavaScript indexes by. Overlapping runs are skipped, long ones
+   *  clamped, and the text always comes from `body`, never the entity. */
   protected segments(m: Message): { text: string; kind: string; url: string | null }[] {
     const body = m.body ?? '';
-    // ⚠ `?.` DELIBERATELY. A message without the field renders as plain text;
-    // without this the whole THREAD renders blank, because one TypeError in the
-    // template kills every body on the page. That is how 29 browser tests came
-    // to time out at once — each waiting 90s for text that a crashed render
-    // could never produce.
+    // `?.`: a message without the field must not blank the whole thread.
     if (!m.entities?.length) return [{ text: body, kind: 'plain', url: null }];
     const out: { text: string; kind: string; url: string | null }[] = [];
     let at = 0;
@@ -561,11 +381,8 @@ export class Thread {
     return out;
   }
 
-  /** Where a formatted run points, or null if it is not a link.
-   *
-   *  ⚠ `url` is the SENDER's. It reaches the DOM only through Angular's `[href]`
-   *  binding, which sanitises; nothing here builds markup. For a bare `url`
-   *  entity the text IS the address, which is why that case reads the body. */
+  /** Where a formatted run points, or null. Reaches the DOM only through the
+   *  sanitising `[href]`. */
   protected hrefOf(seg: { text: string; kind: string; url: string | null }): string | null {
     if (seg.kind === 'textUrl') return seg.url;
     if (seg.kind === 'url') return seg.text;
@@ -573,17 +390,8 @@ export class Thread {
     return null;
   }
 
-  /** Jump to a date the reader picks.
-   *
-   *  ⚠ **MIDNIGHT LOCAL, NOT `Date.parse` OF THE `yyyy-mm-dd`.** A bare date
-   *  string parses as midnight UTC, so west of Greenwich the reader lands on the
-   *  evening BEFORE the day they asked for — and the bug only appears for some
-   *  users, in some months, which is how it survives a look. The parts are split
-   *  and handed to the local-time `Date` constructor instead.
-   *
-   *  The value goes into `?on` and the load path does the rest; the conversion to
-   *  each origin's own unit is the SERVER's, so nothing here knows that Google
-   *  Chat counts microseconds. */
+  /** Jump to a date: local midnight, not `Date.parse`, which reads a bare date as
+   *  UTC. The server converts `?on` to the origin's unit. */
   protected jumpToDate(value: string): void {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
     if (!m) return;
@@ -617,13 +425,8 @@ export class Thread {
     this.threadSearch$.next(q);
   }
 
-  /** Go to a hit, using the same landing a global search result uses.
-   *
-   *  ⚠ **`?at=` RATHER THAN A SCROLL.** Only a window of a long conversation is
-   *  in the DOM, so a hit from last year is not there to scroll to — and
-   *  `scrollToTs` answers with the NEAREST rendered message, which would present
-   *  the wrong one as the right one. The cursor makes the server fetch around it
-   *  and the `landed` marker says which it reached. */
+  /** Go to a hit via `?at`, as a global search result does: it may be outside
+   *  the rendered window. */
   protected openHit(h: SearchHit): void {
     this.toggleSearch();
     void this.router.navigate(['/conversation', h.origin, h.conversation_id], {
@@ -632,6 +435,8 @@ export class Thread {
     });
   }
 
+  /** Go to the message a reply answers: a scroll if it is rendered, else a `?at`
+   *  landing, since `scrollToTs` would pick the nearest rendered message. */
   jumpToReply(r: ReplyTo): void {
     if (!r.id) return;
     const here = this.rendered().find((m) => m.id === r.id);
@@ -640,15 +445,11 @@ export class Thread {
       this.win.withScrollLock(() => this.win.scrollToTs(here.ts));
       return;
     }
-    // Unreachable through the template — the backend mints `cursor` and `id`
-    // together — but the type allows it, and silently doing nothing is better
-    // than navigating to a conversation's newest page as if that were the answer.
+    // `cursor` comes with `id`; without one, stay rather than open the newest page.
     if (!r.cursor) return;
     void this.router.navigate([], {
       relativeTo: this.route,
-      // `from` goes with it. The two are competing answers to "where should the
-      // reader be", and leaving a stale `from` beside a fresh `at` describes two
-      // different places at once.
+      // `from` goes too; it would name a different place.
       queryParams: { at: r.cursor, from: null },
       queryParamsHandling: 'merge',
     });
@@ -665,37 +466,18 @@ export class Thread {
     const onDay = Number(this.route.snapshot.queryParamMap.get('on')) || null;
     const from = Number(this.route.snapshot.queryParamMap.get('from')) || null;
     try {
-      // `?at` — a search hit's opaque cursor. It means "put me here", where
-      // `?from` means "I was here", so it wins on load and the two never
-      // meaningfully coexist: `commitFromParam` takes over and writes `from` as
-      // soon as the reader scrolls.
+      // `?at` means "put me here" and `?from` "I was here"; `?at` wins, and
+      // `commitFromParam` replaces it with `from` on the first scroll.
       if (at != null && (await this.loadAround(origin, id, { at }))) return;
-      // `?on` — a DATE the reader picked. Same landing, and the same precedence
-      // over `?from` for the same reason: it is where they asked to go rather
-      // than where they were.
+      // `?on`, a picked date, likewise.
       if (onDay != null && (await this.loadAround(origin, id, { onDay }))) return;
       const first = await firstValueFrom(this.api.messages(origin, id, undefined, PAGE));
       let msgs = first.messages;
       let hasMore = first.has_more;
       let cursor = first.next_cursor;
-      // Page older until we've reached the saved depth (or run out).
-      //
-      // ⚠ BOUNDED, and the bound is the point rather than defensive habit. Each
-      // turn is one sequential request, and `from` is a TIMESTAMP with no
-      // relation to how far back it sits: a bookmark into #linux (401,794 lines)
-      // asks for roughly 4,000 of them, one after another, with the thread blank
-      // throughout. Nothing about the loop notices — it has more pages and has
-      // not reached the timestamp, so it keeps going.
-      //
-      // `MAX_RESTORE_PAGES * PAGE` messages is already several times
-      // MAX_RENDERED, so everything past it is fetched only for `trimToWindow`
-      // to collapse straight back out of the DOM. Stopping early is not a lost
-      // position either: `scrollToTs` falls back to the oldest message it
-      // loaded, so the thread opens near where it should and scrolling in
-      // loads the rest.
-      //
-      // Landing on a message FAR back is a different problem and wants a cursor
-      // rather than a deeper loop — #1401.
+      // Page older to the saved depth, at most `MAX_RESTORE_PAGES`: `from` is a
+      // timestamp, possibly thousands of pages back. `scrollToTs` falls back to
+      // the oldest loaded message.
       let pages = 0;
       while (
         from != null &&
@@ -724,9 +506,7 @@ export class Thread {
         else this.win.scrollToBottom();
       });
       this.win.trimToWindow();
-      // Opened at the latest message: hold the bottom as lazy images load in.
-      // Holding the bottom as images load in is `watchContent`'s job — the loop
-      // that used to do it here is what made the gate flaky (#1479).
+      // `watchContent` holds the bottom as images load.
     } catch {
       this.threadError.set(true);
       this.loadingThread.set(false);
@@ -741,23 +521,10 @@ export class Thread {
 
   // ---- copying a selection as a chat log -----------------------------------
 
-  /**
-   * Replace the clipboard's text with an irssi-style log when the selection
-   * covers more than one message.
-   *
-   * Everything hard here is the browser's: it owns the selection, the touch
-   * handles, and every route to a copy — ⌘C, right-click, Android's key command
-   * and its selection action bar all arrive as this one event. (⌘C is covered by
-   * e2e/copy.spec.ts; the Android pair was confirmed by hand on the Pixel 9
-   * against the live app, 2026-08-16.) We supply the format, and both flavours
-   * at once — `text/plain` for a terminal or editor, `text/html` for Slack or
-   * mail — so each target picks rather than us guessing.
-   *
-   * ⚠ **Below two messages we do nothing.** Selecting a phrase inside one
-   * message and being handed a timestamped log line is a surprise; attribution
-   * is what the user wants at two, and only then. Returning without
-   * `preventDefault` leaves the browser's own copy intact.
-   */
+  /** Copy a selection of two or more messages as an irssi-style log, in both
+   *  `text/plain` and `text/html`. Every copy route (⌘C, the context menu,
+   *  Android's selection bar) arrives as this event. Below two messages the
+   *  browser's own copy stands. */
   onCopy(e: ClipboardEvent): void {
     const data = e.clipboardData;
     if (data == null) return;
@@ -769,50 +536,26 @@ export class Thread {
     e.preventDefault();
   }
 
-  /** The conversation this copy is a fragment of — supplied ONLY when the
-   *  selection took the whole rendered window.
-   *
-   *  ⚠ **That condition is the point.** Taking the window is the signature of a
-   *  select-all, which is the case that silently returns 400 lines of a 401,794
-   *  line conversation. A deliberate two-message quote is not a truncated copy,
-   *  and telling its reader how big the conversation was would put a footnote on
-   *  every paste. `picked` is filtered from `rendered`, so equal lengths mean it
-   *  covers all of it.
-   *
-   *  The total is the conversation list's `message_count`, absent on a deep link
-   *  that rendered before the list arrived — in which case we say nothing rather
-   *  than guess. */
+  /** The conversation's size, only when the selection is the whole rendered
+   *  window (a truncated select-all). Absent before the list loads. */
   private copyScope(picked: Message[]): LogScope | undefined {
     if (picked.length !== this.rendered().length) return undefined;
     const total = this.conversation()?.message_count;
     return total != null ? { total } : undefined;
   }
 
-  /** Which rendered messages the selection touches, in thread order.
-   *
-   *  The DOM answers only WHICH — `data-id` on each bubble — and the model
-   *  answers what they say, so the copied log cannot drift with the template.
-   *
-   *  ⚠ Only what is RENDERED can be selected: the window collapses the rest out
-   *  of the DOM behind spacers, so a select-all copies the window, not the
-   *  conversation. That matches what the user could see and scroll through. */
+  /** The rendered messages the selection touches, in order: `data-id` says which,
+   *  the model says what. Only the rendered window can be selected. */
   private selectedMessages(): Message[] {
     const el = this.messagesEl()?.nativeElement;
     const sel = document.getSelection();
     if (el == null || sel == null || sel.isCollapsed) return [];
-    // Firefox allows several ranges in one selection; everything else gives
-    // exactly one. Taking them all costs a loop.
+    // Firefox allows several ranges.
     const ranges = Array.from({ length: sel.rangeCount }, (_, i) => sel.getRangeAt(i));
     const ids = new Set<string>();
     for (const node of el.querySelectorAll<HTMLElement>('.msg[data-id]')) {
-      // ⚠ `Range.intersectsNode`, NOT `Selection.containsNode(node, true)`.
-      // "Contains" asks whether the bubble sits inside the selection, so a
-      // selection inside ONE bubble reports that bubble as unselected — the
-      // exact case the two-message threshold turns on. Intersects asks whether
-      // they overlap, which is the question: half a bubble selected is that
-      // message selected, because a log line is whole or it is a misquote.
-      // A switch back would be caught by e2e/copy.spec.ts and NOT by the vitest
-      // specs — jsdom gets both APIs wrong.
+      // `intersectsNode`, not `containsNode`: a selection inside one bubble
+      // selects that message. jsdom gets both wrong; e2e/copy.spec.ts covers it.
       if (ranges.some((r) => r.intersectsNode(node))) {
         const id = node.dataset['id'];
         if (id != null) ids.add(id);
@@ -827,34 +570,15 @@ export class Thread {
    *  slow response must not be overtaken by the tick behind it. */
   private polling = false;
 
-  /** Ask whether anything is newer, and merge it in.
-   *
-   *  ⚠ **Without this, an instant archive is invisible.** Measured before it
-   *  existed: the app showed a message count three behind the database for an
-   *  action the user had just taken himself. Everything upstream — the hourly
-   *  import, the send path's immediate echo — lands in a page that was fetched
-   *  once and never asked again.
-   *
-   *  Reuses the ordinary newest-page endpoint rather than adding a `?since`
-   *  one. The query is indexed on `(conversation_id, sent_at)` and returns one
-   *  page, so the saving would be bytes on a local network, against a second
-   *  code path that could disagree with the first about ordering or filtering.
-   *
-   *  Silent on failure by design: the thread on screen is still correct, the
-   *  next tick tries again, and an error banner for a background refetch would
-   *  be alarming out of proportion to a dropped packet. */
+  /** Merge in anything newer, using the newest-page endpoint. Silent on failure:
+   *  the next tick retries. */
   async pollNewer(): Promise<void> {
     const o = this.origin();
     const i = this.id();
     if (o == null || i == null) return;
-    // Don't compete with a load that is already fetching this same page, and
-    // don't poll a screen nobody is looking at — a backgrounded phone app would
-    // otherwise keep asking forever.
+    // Not during a load, nor while hidden.
     if (this.polling || this.loadingThread() || this.loadingOlder() || this.sending()) return;
-    // ⚠ A FLOATING WINDOW MUST NOT BE POLLED. See `floating`: the gap guard
-    // below would fire on every tick and reload the thread, putting the reader
-    // back in the present a few seconds after they landed on a 2005 message.
-    // Following the conversation is for a reader who is AT it.
+    // Not while floating; see `floating`.
     if (this.floating()) return;
     if (document.visibilityState !== 'visible') return;
     if (this.messages().length === 0) return;
@@ -862,8 +586,7 @@ export class Thread {
     this.polling = true;
     try {
       const page = await firstValueFrom(this.api.messages(o, i, undefined, PAGE));
-      // The user may have moved to another conversation while this was in
-      // flight; merging then would put one thread's messages in another.
+      // The reader may have switched conversations meanwhile.
       if (this.origin() !== o || this.id() !== i) return;
 
       const held = this.messages();
@@ -871,31 +594,24 @@ export class Thread {
       const fresh = page.messages.filter((m) => !known.has(m.id));
       if (fresh.length === 0) return;
 
-      // ⚠ NOT ONE MESSAGE OF THE NEWEST PAGE IS KNOWN, so more than a page has
-      // arrived since the last poll and there is a gap between what is held and
-      // what came back. Merging would leave a hole in the middle of the thread
-      // that no amount of scrolling could fill, and nothing would report it.
+      // None of the newest page is known: more than a page arrived, so reload
+      // rather than leave a hole.
       if (fresh.length === page.messages.length) {
         await this.loadThread(o, i);
         return;
       }
 
       const wasAtBottom = this.win.atBottom();
-      // Sorted rather than appended: an import can write a line with an older
-      // timestamp (a backfilled day landing late), and appending it would put
-      // the thread out of order rather than leave it in the past where it
-      // belongs.
+      // Sorted: an import can land an older line late.
       this.messages.set(
         [...held, ...fresh].sort((a, b) => a.ts - b.ts || a.id.localeCompare(b.id)),
       );
       this.appRef.tick();
-      // Follow the conversation only if the user was already at the end of it.
-      // Yanking someone reading history down to the newest line is the single
-      // most annoying thing a chat app does.
+      // Follow only a reader already at the end.
       if (wasAtBottom) this.win.withScrollLock(() => this.win.scrollToBottom());
       this.win.trimToWindow();
     } catch {
-      // See the doc comment: a failed poll is not an error state.
+      // Not an error state.
     } finally {
       this.polling = false;
     }
@@ -903,24 +619,14 @@ export class Thread {
 
   // ---- sending (IRC only) -------------------------------------------------
 
-  /** Only IRC has a live client behind it. Signal and Google Chat are archives
-   *  of conversations held elsewhere, so there is nothing here to send with —
-   *  showing a box that always failed would be worse than showing none. */
+  /** Only IRC has a client to send with. */
   readonly canSend = computed(() => this.origin() === 'irc' && this.routed());
   readonly draft = signal('');
-  /** True between `compositionstart` and `compositionend` — an IME has a
-   *  candidate in flight.
-   *
-   *  ⚠ **The keydown guard alone is NOT enough, and a unit test cannot see
-   *  why.** Returning early from `onComposerKey` leaves the browser to do what
-   *  it does with Enter in a single-line input inside a `<form>`: implicit
-   *  submission. So the composed word went out anyway, through the submit
-   *  handler, with the keydown check sitting there looking correct. Refusing in
-   *  `send` covers every route into it rather than the one we remembered. */
+  /** An IME candidate is in flight. `send` refuses then, since Enter in a form
+   *  submits even when the keydown handler returned early. */
   readonly composing = signal(false);
   readonly sending = signal(false);
-  /** The far side's refusal, shown as-is: it is the only place that knows why,
-   *  and "could not send" would hide the usual reason (no tab open there). */
+  /** irssi's refusal, shown as-is. */
   readonly sendError = signal<string | null>(null);
 
   async send(): Promise<void> {
@@ -937,17 +643,12 @@ export class Thread {
         this.sendError.set(res.error ?? 'Not sent.');
         return;
       }
-      // Cleared only once irssi says it went: a failed send that empties the box
-      // loses what was typed, and retyping it is the worst moment to do so.
+      // Cleared only once sent, so a failure keeps what was typed.
       this.draft.set('');
       if (res.archived) {
-        // The backend wrote what irssi logged, so a reload shows the real line
-        // rather than an optimistic copy of what we asked for.
+        // Reload to show the line irssi logged.
         await this.loadThread(o, i);
       } else {
-        // Sent, but not yet in the archive — the hourly import will bring it.
-        // Saying so is better than silently showing a conversation that appears
-        // not to contain the message just sent.
         this.sendError.set('Sent. It will appear here after the next import.');
       }
     } catch {
@@ -957,19 +658,10 @@ export class Thread {
     }
   }
 
-  /** Enter sends; Shift+Enter is a newline — except that a newline cannot be
-   *  sent at all (IRC lines are newline-delimited and the far side refuses one),
-   *  so the box is single-line and this only stops the form feeling odd. */
+  /** Enter sends. The box is single-line: IRC cannot carry a newline. */
   onComposerKey(e: KeyboardEvent): void {
-    // ⚠ ASK THE IME FIRST. While a composition is in flight — a word still
-    // underlined under Android's predictive text, a swipe-typed word, anything
-    // in a composing script — Enter means "accept that candidate", not "send".
-    // Taking it ourselves sends half a word AND swallows the key the IME needed
-    // to finish. Invisible on a desktop with a hardware keyboard, which is where
-    // this was written; it is the phone this app is for that hits it.
-    //
-    // `keyCode === 229` is the same state as reported by Android WebViews that
-    // predate the flag, and this ships inside one (see android/).
+    // An IME is composing: Enter accepts its candidate. `keyCode 229` is how
+    // older Android WebViews report it.
     if (e.isComposing || e.keyCode === 229) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -983,65 +675,31 @@ export class Thread {
     void this.router.navigate(['/'], { queryParams: { from: null }, queryParamsHandling: 'merge' });
   }
 
-  // ---- scrolling ----------------------------------------------------------
-
-  /** The scroll handler. The window engine decides what to reveal or collapse;
-   *  the one thing it cannot do is fetch, because it does not know where
-   *  messages come from. */
   // ---- pictures behind links -----------------------------------------------
 
-  /** Links whose request is in flight. Local, because the answer comes back on
-   *  that same request — there is no queue to poll and nothing to reconcile. */
+  /** Link requests in flight; each answers on its own request. */
   private readonly asking = signal<ReadonlySet<string>>(new Set());
 
-  /** Attachment id → interval handle, for fetches being watched.
-   *
-   *  ⚠ Cleared on destroy below. A timer that outlives its component keeps polling
-   *  an endpoint for a conversation nobody is looking at — the class of leak
-   *  #1541 exists about. */
+  /** Attachment id → interval, for requested fetches being watched. */
   private readonly watching = new Map<string, number>();
 
   protected isAsking(id: string): boolean {
     return this.asking().has(id);
   }
 
-  /** A reader tapped "show this picture".
-   *
-   *  ⚠ **NOTHING IS FETCHED UNTIL SOMEBODY ASKS.** Opening a conversation only
-   *  OFFERS its links. This asks, and the answer — a picture, or that there is
-   *  none — comes back on the same request: the fetching happens in a pod with
-   *  its own way out of the cluster and no access to the archive, and this app
-   *  waits for it rather than leaving the reader to watch a spinner on a queue.
-   */
-  /** Ask the feed for an attachment it has not fetched.
-   *
-   *  ⚠ Unlike a link picture, this does NOT come back with an answer: the fetch is a
-   *  queue the Telegram feed polls, and a 1.5GB video takes long enough that holding
-   *  a request open would be a request that times out rather than one that waits. So
-   *  the row's own state carries it — marked here immediately so the control changes
-   *  under the finger, and confirmed by the state that arrives with the next page. */
+  /** Ask the feed for an unfetched attachment. The fetch is queued, so the answer
+   *  is watched for rather than awaited. */
   protected requestMedia(a: Attachment): void {
     this.setAsking(a.id, true);
     this.api.requestTelegramMedia(a.id).subscribe({
-      // 204 either way: a file already stored or already asked for is not an error
-      // the reader can act on.
+      // 204 either way.
       next: () => this.watchMedia(a.id),
       error: () => this.setAsking(a.id, false),
     });
   }
 
-  /** Watch an asked-for attachment until it arrives.
-   *
-   *  ⚠ **WITHOUT THIS THE CONTROL SAID "fetching…" FOREVER.** The request is
-   *  answered by a 204 that knows nothing: the fetch happens in the Telegram feed,
-   *  which for a 14MB video took ninety seconds and for a 1.5GB one takes far
-   *  longer. The first version relied on "the state that arrives with the next page"
-   *  and nothing ever re-fetched the page, so a file that had already landed went on
-   *  being reported as in flight.
-   *
-   *  ⚠ Bounded, and it gives up quietly rather than pretending. Something genuinely
-   *  stuck should stop costing requests, and the row is still the truth — reopening
-   *  the conversation asks again. */
+  /** Poll an asked-for attachment until it arrives or fails, giving up quietly
+   *  after `MEDIA_WATCH_LIMIT_MS`. */
   private watchMedia(id: string): void {
     if (this.watching.has(id)) return;
     const started = Date.now();
@@ -1058,8 +716,7 @@ export class Thread {
             this.stopWatching(id);
             this.setAsking(id, false);
           } else if (state.fetch === 'failed') {
-            // Back to an offer: it can be asked for again, and saying so beats a
-            // control that spins over something that has already given up.
+            // Back to an offer the reader can ask again.
             this.stopWatching(id);
             this.setAsking(id, false);
             this.setFetchState(id, 'failed');
@@ -1109,18 +766,14 @@ export class Thread {
     );
   }
 
-  /** A size a person can read. Only ever shown for something not yet fetched, where
-   *  the number is the whole point of the decision to ask for it. */
+  /** A size for something not yet fetched. */
   protected mib(bytes: number): string {
     const mib = bytes / (1024 * 1024);
     return mib >= 10 ? `${Math.round(mib)} MB` : `${mib.toFixed(1)} MB`;
   }
 
-  /** Pick up fetches already in flight when a page arrives.
-   *
-   *  ⚠ Not only what THIS session asked for. A reader who taps, navigates away and
-   *  comes back — or a second reader entirely — finds the row still `wanted`, and
-   *  without this the control would sit at "fetching…" with nothing watching it. */
+  /** Watch fetches already in flight when a page arrives, including ones asked
+   *  for earlier or by someone else. */
   private watchInFlight(msgs: Message[]): void {
     for (const m of msgs) {
       for (const a of m.attachments) {
@@ -1129,6 +782,7 @@ export class Thread {
     }
   }
 
+  /** A reader asked for a link's picture; the answer comes back on this request. */
   protected requestLinkImage(offer: LinkOffer): void {
     this.setAsking(offer.id, true);
     this.api.requestLinkImage(offer.id).subscribe({
@@ -1137,8 +791,7 @@ export class Thread {
         if (state.state === 'ok' && state.content_type) {
           this.landLinkImage(offer.id, state.content_type);
         } else {
-          // Reached it and it is not a picture, or it could not be reached. The
-          // control goes: leaving one that would do nothing is worse than none.
+          // Not a picture, or unreachable: the control goes.
           this.dropOffer(offer.id);
         }
       },
@@ -1158,8 +811,7 @@ export class Thread {
     });
   }
 
-  /** Swap the offer for the picture, in place — the reader is looking at the
-   *  message it belongs to. */
+  /** Swap the offer for the picture, in place. */
   private landLinkImage(id: string, contentType: string): void {
     this.messages.update((cur) =>
       cur.map((m) => {
@@ -1184,27 +836,15 @@ export class Thread {
     );
   }
 
+  // ---- scrolling ----------------------------------------------------------
+
+  /** The window engine decides what to reveal or collapse; fetching stays here. */
   onScroll(): void {
-    // Before every early return below: where the viewport ended up is true
-    // whoever moved it, and the guards that follow are about who did. See
-    // `ThreadWindow.noteScroll`.
+    // Before any early return; see `ThreadWindow.noteScroll`.
     this.win.noteScroll();
     if (this.threadError() || !this.routed()) return;
-    // ⚠ DEFERRED, NOT DROPPED — a scroll can be the only one there will ever
-    // be. These two guards are right to skip the windowing: a scroll we caused
-    // ourselves, or one arriving mid-load, must not be read as the reader
-    // moving. But the work that event asks for — fetch older, fetch newer, write
-    // `?from` — still needs doing, and a PROGRAMMATIC scroll delivers exactly
-    // one event. Dropped, it strands the window wherever it landed until the
-    // reader happens to scroll again, which at rest they never do.
-    //
-    // Proved by perturbation 2026-09-10: widening the scroll lock from a frame
-    // to 250ms made "scrolling to the top auto-loads older messages" hang 4 runs
-    // out of 4, with the older page NEVER REQUESTED — cursor calls 0, viewport
-    // parked at scrollTop 0. In the suite that same race turns up about one run
-    // in twelve, as a 90-second timeout rather than a failure, which reads as a
-    // slow gate rather than a defect. A live reader is spared it because dragging
-    // emits a stream of events and the next one does the work.
+    // Deferred, not dropped: a programmatic scroll delivers one event, and the
+    // fetch or `?from` it calls for must still happen once the guard clears.
     if (this.win.busy || this.loadingThread()) {
       this.deferScrollCheck();
       return;
@@ -1215,10 +855,7 @@ export class Thread {
     this.scheduleFromParam();
   }
 
-  /** Re-run `onScroll` once the guard that skipped it has cleared. One timer at
-   *  a time: a burst of swallowed events needs one re-check between them, not
-   *  one each. Re-arms only while a guard still holds, and both clear on their
-   *  own — the scroll lock within a frame, a load when it lands. */
+  /** Re-run `onScroll` once the guard that skipped it clears; one timer at a time. */
   private deferScrollCheck(): void {
     if (this.recheck != null) return;
     this.recheck = setTimeout(() => {
@@ -1234,9 +871,7 @@ export class Thread {
     this.loadingOlder.set(true);
     this.api.messages(o, i, this.cursor, PAGE).subscribe({
       next: (page) => {
-        // Prepend; the window starts at index 0 (above is empty when we fetch),
-        // so the new page becomes rendered at the top. Anchor keeps the viewport
-        // on the same message despite the added height.
+        // Prepend, keeping the viewport on the same message.
         this.win.keepingAnchor('fetchOlder', () => {
           this.messages.update((cur) => [...page.messages, ...cur]);
           this.hasMore.set(page.has_more);
@@ -1250,32 +885,18 @@ export class Thread {
     });
   }
 
-  /** Grow the window FORWARDS — the other half of #1401.
-   *
-   *  ⚠ **Running out is how a landing rejoins the present.** When the forward
-   *  page reports no more, everything after the hit is loaded, so the window is
-   *  anchored to the newest message again: `floating` goes false and `pollNewer`
-   *  resumes. Without that a reader who scrolled all the way forward would sit
-   *  at the live end of the conversation and never see another message arrive,
-   *  which is a stranger failure than the one this fixes. */
+  /** Grow the window forwards. When the forward page runs out the window has
+   *  reached the present: `floating` goes false and polling resumes. */
   fetchNewer(): void {
     const o = this.origin();
     const i = this.id();
-    // ⚠ `floating` is checked HERE rather than at the scroll site, and not
-    // only for tidiness: jsdom has no layout, so `step()` reports every rect as
-    // zero and a unit test driving `onScroll` measures a fake — the engine's own
-    // spec says so and keeps the measuring half in the browser suite. A guard
-    // that lives with the thing it guards can be tested without layout at all.
-    //
-    // A window anchored to the present has nothing to fetch forwards, and
-    // asking would be a request per scroll that can only ever answer "nothing".
+    // Only while floating; otherwise there is nothing newer to fetch.
     if (o == null || i == null || !this.floating()) return;
     if (this.newerCursor == null || this.loadingNewer()) return;
     this.loadingNewer.set(true);
     this.api.messages(o, i, this.newerCursor, PAGE, 'newer').subscribe({
       next: (page) => {
-        // Append. The anchor holds the viewport on the same message despite the
-        // added height below it — the same reason `fetchOlder` keeps one.
+        // Append, keeping the viewport on the same message.
         this.win.keepingAnchor('fetchNewer', () => {
           this.messages.update((cur) => [...cur, ...page.messages]);
           this.newerCursor = page.prev_cursor;
@@ -1297,8 +918,7 @@ export class Thread {
   }
 
   commitFromParam(): void {
-    // The reader has moved, so "this is where you were put" is no longer a true
-    // thing to say — the marker goes with `at`, below, for the same reason.
+    // The reader has moved; the landing marker and `?at` go.
     this.landedId.set(null);
     const o = this.origin();
     const i = this.id();
@@ -1307,11 +927,6 @@ export class Thread {
     const ts = from ? this.messages().find((m) => m.id === from)?.ts : null;
     void this.router.navigate([], {
       relativeTo: this.route,
-      // ⚠ `at` is CLEARED here, and that is the whole of its lifetime: it means
-      // "put me here", so once the reader has scrolled it is a stale
-      // instruction. Left in place, a refresh would drag them back to the hit
-      // they had already read past, and `from` — which means "I was here" —
-      // would be ignored in favour of it.
       queryParams: { from: ts != null ? String(ts) : null, at: null },
       queryParamsHandling: 'merge',
       replaceUrl: true,

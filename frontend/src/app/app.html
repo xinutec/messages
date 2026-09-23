@@ -28,48 +28,24 @@
           <mat-progress-bar mode="indeterminate" />
         }
         <mat-action-list>
-          <!-- ⚠ **BY INDEX, because nothing in a hit is unique.** Tracked by
-               `origin + conversation_id + ts` this logged NG0955 on two matching
-               IRC lines from one channel in the same second: `irc_messages.sent_at`
-               is a DATETIME, so an IRC hit's ts is `ts_s * 1000` and a second is
-               the resolution. `SearchHit` carries no message id to key on.
-               The index is sound here and not a shrug: `results` is replaced
-               wholesale by each search and is never reordered or spliced. -->
+          <!-- By index: an IRC hit's ts has second resolution and a hit has no unique id
+               (NG0955). The list is replaced wholesale by each search. -->
           @for (h of results(); track $index) {
             <button mat-list-item lines="3" (click)="openHit(h)">
               <span matListItemTitle>{{ hitTitle(h) }}</span>
-              <!-- The same two disambiguators the conversation list row carries.
-                   Without them a hit is titled by its target alone, and `s_20`
-                   on two networks — or one contact's name in Signal and in
-                   Google Chat — are one row. -->
+              <!-- Origin and network, as the conversation list shows them. -->
               <span matListItemLine>{{ hitOrigin(h) }}</span>
-              <!-- ⚠ A RETRACTION IS FOUND WITHOUT BEING SPELLED OUT. Search matches
-                   on text its sender withdrew, and printing it in the list hands it
-                   over unasked — the one thing the thread is careful not to do. The
-                   row still says who, where and when, which is what a search is for;
-                   clicking through reaches the thread's reveal.
-                   No reveal button here: the row IS a button, and one nested inside
-                   it is neither valid HTML nor separately clickable. -->
-              <!-- One expression picks the text, so there is no branch that could
-                   print a snippet the other branch withholds.
-                   ⚠ **NO NESTED SPAN, and the class goes on the LINE.** Wrapping
-                   just the text in its own element cost the ellipsis: a nested box
-                   is not what `matListItemLine` truncates, so a long snippet ran
-                   103.5px past the right edge at phone width. The whole line goes
-                   italic instead, which also reads better — the row is about a
-                   retraction, not a message whose middle happens to be missing.
-                   Interpolation flush with the tags for the reason thread.html
-                   gives: the template's own indent renders as a leading space, and
-                   this line has to align with the one above it. -->
+              <!-- A retracted hit shows who, where and when, not the words; the thread holds the
+                   reveal. The row is itself a button, so no reveal here. -->
+              <!-- One expression picks the text. The class goes on the line, not a nested span,
+                   which would break the line's ellipsis. Flush with the tags; see thread.html. -->
               <span matListItemLine [class.deleted]="h.deleted"
                 >{{ h.sender }}: {{ h.deleted ? '(deleted)' : h.snippet }}</span
               >
               <span matListItemMeta>{{ h.ts | date: 'shortDate' }}</span>
             </button>
           } @empty {
-            <!-- Only when the search actually ran. "No matches." is a claim
-                 about the archive, and a reader who believes it for a failed
-                 request concludes a conversation is not there. -->
+            <!-- Only when the search ran: "No matches." is a claim. -->
             @if (searchFailed()) {
               <p class="search-failed">
                 The search didn't run — the server didn't answer. This says nothing about whether
@@ -105,15 +81,9 @@
           }
         </mat-action-list>
       }
-      <!-- ⚠ WHICH BUILD THIS IS, stamped INTO the bundle rather than fetched. A page
-           served from a stale cache then shows its OWN old sha instead of whatever
-           the server currently reports — the difference between spotting staleness
-           and being reassured by it. See scripts/stamp-version.mjs.
-
-           Inside the scrolling list, not pinned under it: on a phone a fixed footer
-           costs ~68px of conversations forever to answer a question asked once a
-           month. Here it costs nothing until you reach the end, which is where you
-           would look for it. -->
+      <!-- The build, stamped into the bundle rather than fetched, so a stale page shows
+           its own old sha (scripts/stamp-version.mjs). At the end of the list, where it
+           costs no space. -->
       <footer class="build" [title]="'built ' + builtAt">build {{ build.sha }} · {{ builtAt }}</footer>
     </aside>
 

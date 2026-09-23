@@ -2,12 +2,8 @@
 
 export type Reaction = { emoji: string, count: number, 
 /**
- * Who reacted, where the origin records it.
- *
- * ⚠ EMPTY MEANS NOT RECORDED, NEVER "NOBODY". Google Chat aggregates
- * reactions and names no one; Telegram names reactors but may TRUNCATE the
- * list for a heavily-reacted message. So `who` can be shorter than `count`
- * and the count stays authoritative — a reader that derives the number from
- * `who.length` would under-report the moment Telegram samples.
+ * Who reacted, where the origin records it. Empty means not recorded, and it
+ * can be shorter than `count` (Telegram truncates), so `count` is
+ * authoritative.
  */
 who: Array<string>, };

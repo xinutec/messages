@@ -60,15 +60,12 @@
     padding: 1rem;
     opacity: 0.6;
   }
-  // The same italic-and-dimmed as a retracted body in the thread
-  // (`thread.scss`), because it is the same thing seen from the list: a message
-  // is here and its text is not being shown.
+  // Styled as a retracted body in the thread.
   .deleted {
     font-style: italic;
     opacity: 0.6;
   }
-  // The search did not run. Full strength and in the error colour, where
-  // `.empty` is dimmed: this one withholds an answer rather than being one.
+  // The search did not run: in the error colour, where `.empty` is dimmed.
   .search-failed {
     padding: 1rem;
     margin: 0;
@@ -84,22 +81,12 @@
   }
 }
 
-// Grid cell for the routed Thread component (which is itself the scroll container).
+// The grid cell for the Thread, which is itself the scroll container.
 .pane {
   min-height: 0;
-  // ⚠ AND `min-width: 0`, for the same reason in the other axis. A grid
-  // item's automatic minimum size is its MIN-CONTENT size, so a `1fr` track is
-  // only as narrow as the widest unbreakable thing inside it — and a pane that
-  // cannot be narrower than its content is a pane that pushes the viewport
-  // instead of clipping. One `white-space: nowrap` reply excerpt took the thread
-  // 267px past the right edge of a 412px phone, carrying the bubbles, the meta
-  // lines and the attachment rows with it.
-  //
-  // This is also why `.body` carries `overflow-wrap: anywhere` (thread.scss):
-  // that was the same defect met in the one place it had already shown up, cured
-  // per-element. This is the cure at the cause, and it is what lets any
-  // `text-overflow: ellipsis` inside the pane work at all — an ellipsis needs a
-  // definite width to clip TO, and without this there is never one.
+  // A grid item's minimum is its min-content width, so without this one
+  // nowrap line would push the pane past the viewport, and no ellipsis inside
+  // it would have a width to clip to.
   min-width: 0;
 }
 
@@ -135,9 +122,7 @@
   padding: 1rem;
 }
 
-/* The build stamp, at the end of the scrolling list. Deliberately quiet — it is
-   there to be found when somebody asks "am I looking at a current page?", not to
-   compete with the conversation list. */
+// The build stamp at the end of the list, quiet: there to be found when asked for.
 .build {
   display: block;
   padding: 0.75rem 1rem 1.25rem;

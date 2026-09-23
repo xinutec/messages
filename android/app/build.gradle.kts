@@ -6,14 +6,12 @@ plugins {
 android {
     namespace = "org.xinutec.messages"
     compileSdk = 36
-    // Pin to the build-tools the nix SDK provides (AGP would otherwise pick a
-    // version that isn't in the read-only SDK).
+    // The build-tools version the read-only nix SDK provides.
     buildToolsVersion = "36.0.0"
 
     defaultConfig {
         applicationId = "org.xinutec.messages"
-        // minSdk 26 (Android 8): the system WebView is Chromium on any such device,
-        // so the Angular dashboard renders as it does in Chrome.
+        // minSdk 26: the system WebView is Chromium.
         minSdk = 26
         targetSdk = 36
         versionCode = 1
@@ -21,7 +19,7 @@ android {
     }
 
     buildTypes {
-        // Sideloaded build — no shrinking, signed with the debug key for simplicity.
+        // Sideloaded: no shrinking, debug-signed.
         release {
             isMinifyEnabled = false
         }
@@ -39,19 +37,16 @@ kotlin {
     }
 }
 
-// Say so in a sentence rather than a stacktrace when the shell isn't beside us.
-// Resolved against rootDir (android/), so this is the same path settings.gradle.kts
-// includes — file() here would resolve against app/ and never match.
+// A clear message when the shell is missing. Resolved against rootDir, as
+// settings.gradle.kts includes it.
 require(rootDir.resolve("../../ui-harness/android").isDirectory) {
     "ui-harness must be checked out beside this repo (~/Code/ui-harness)"
 }
 
 dependencies {
-    // The shared WebView shell (ui-harness/android), substituted to a project by
-    // settings.gradle.kts. No version, ever: it resolves by path. It brings
-    // androidx.activity with it (ComponentActivity is its superclass).
+    // The shared WebView shell (ui-harness/android), a project by path via
+    // settings.gradle.kts; it brings androidx.activity.
     implementation("org.xinutec:shell")
-    // core-ktx for the prefs/insets KTX. No Compose, no AppCompat: this app is a
-    // single WebView.
+    // core-ktx for the prefs and insets KTX.
     implementation(libs.androidx.core.ktx)
 }

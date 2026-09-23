@@ -1,20 +1,9 @@
-// Keeping a long conversation's DOM bounded while it still scrolls like one
-// continuous thread.
+// Keeping a long conversation's DOM bounded while it scrolls as one thread.
 //
-// The thread retains every message it has fetched — text is cheap — but renders
-// only a window of them, standing spacer divs in for the runs collapsed off
-// either end so the scrollbar keeps roughly the right shape. Scrolling towards
-// an edge reveals the nearest collapsed run, or asks the caller to fetch.
-//
-// ⚠ The estimates do not have to be right. Spacer heights are averages, so
-// the scrollbar's geometry is approximate on purpose. What the user sees is kept
-// exact by a different mechanism: every mutation re-anchors the viewport on the
-// message that was at the top of it. Correcting the estimates would not remove
-// the need for the anchor, and the anchor removes the need for good estimates.
-//
-// Split out of `thread.ts` because none of it knows what a conversation is: it
-// takes an element, a list and a tick, and it is the part of that component with
-// invariants subtle enough to be worth reading on their own.
+// Every fetched message is retained, but only a window is rendered; spacers
+// stand in for the runs collapsed off either end. Spacer heights are averages,
+// so the scrollbar is approximate; what the reader sees stays exact because
+// every mutation re-anchors the viewport on the message at its top.
 
 import { Signal, computed, signal } from '@angular/core';
 
@@ -24,26 +13,19 @@ import { Message } from './models';
 export const PAGE = 100;
 /** Soft cap on how many messages are ever in the DOM. */
 export const MAX_RENDERED = 400;
-/** How many pages `loadThread` will fetch to restore a saved scroll depth.
- *
- *  Five times `MAX_RENDERED`, so a legitimate restore never reaches it: what it
- *  bounds is a `?from` that no longer sits anywhere near the newest page — a
- *  stale bookmark, or a hand-edited URL — where the loop would otherwise issue
- *  one request per hundred messages all the way back. See `loadThread`. */
+/** How many pages `loadThread` fetches at most to restore a `?from` depth:
+ *  five times `MAX_RENDERED`, beyond any legitimate restore. */
 export const MAX_RESTORE_PAGES = (MAX_RENDERED * 5) / PAGE;
-/** How close (px) to an edge before we load/reveal — big enough to stay ahead of
- *  the scroll so the user rarely sees the blank spacer. */
+/** How close (px) to an edge before revealing or loading, far enough ahead that
+ *  the reader rarely sees a blank spacer. */
 const EDGE = 1200;
-/** First guess for a row's height, replaced by real measurements once rendered.
- *  Only affects spacer sizing (scrollbar geometry); the viewport is kept correct
- *  by anchoring, not by these estimates. */
+/** A row's height before any is measured; affects only spacer sizes. */
 const ROW_GUESS = 64;
-/** How close (px) to the very bottom counts as "at the latest". Small (unlike
- *  EDGE) so a short thread isn't treated as permanently at the bottom. */
+/** How close (px) to the bottom counts as at the latest; small, so a short
+ *  thread is not always at the bottom. */
 const BOTTOM_EPS = 64;
 
-/** A run of messages collapsed out of the DOM: how many, and the pixel height
- *  they occupied (so the spacer standing in for them is ~the right size). */
+/** A run of messages collapsed out of the DOM, and the height it occupied. */
 interface Chunk {
   count: number;
   height: number;
@@ -52,8 +34,8 @@ interface Chunk {
 const sumCount = (cs: Chunk[]): number => cs.reduce((a, c) => a + c.count, 0);
 const sumHeight = (cs: Chunk[]): number => cs.reduce((a, c) => a + c.height, 0);
 
-/** Whether to emit scroll-jump diagnostics. Off unless explicitly enabled, and
- *  guarded because localStorage/location can throw (SSR, sandboxed iframes). */
+/** Whether scroll diagnostics are on. Guarded: localStorage and location can
+ *  throw in sandboxed iframes. */
 function readDebugFlag(): boolean {
   try {
     if (/(?:^|[?&])scrolldebug\b/.test(location.search)) return true;
@@ -64,9 +46,8 @@ function readDebugFlag(): boolean {
 }
 
 export class ThreadWindow {
-  /** Older messages collapsed above the window; newer ones collapsed below.
-   *  `above[last]`/`below[last]` are the chunks nearest the rendered window, so
-   *  reveal pops the end. */
+  /** Older messages collapsed above the window; newer ones below. The last chunk
+   *  of each is nearest the window. */
   private readonly above = signal<Chunk[]>([]);
   private readonly below = signal<Chunk[]>([]);
 
@@ -79,51 +60,41 @@ export class ThreadWindow {
   readonly topSpacer = computed(() => sumHeight(this.above()));
   readonly bottomSpacer = computed(() => sumHeight(this.below()));
 
-  /** Set while we move scrollTop ourselves, so the caller's scroll handler can
-   *  tell a programmatic adjustment from a user's scroll. */
+  /** Set while we move scrollTop ourselves, so a programmatic scroll can be told
+   *  from the reader's. */
   private adjusting = false;
   get busy(): boolean {
     return this.adjusting;
   }
 
-  /** Whether the reader is following the END of the conversation rather than
-   *  reading back inside it.
-   *
-   *  ⚠ **Maintained as state because the moment it is needed it can no longer be
-   *  measured.** `repinAfterResize` runs after the container has already shrunk,
-   *  and by then the bottom has moved away on its own — asking `atBottom()` there
-   *  answers for the new geometry, which is the question nobody asked. So every
-   *  scroll and every programmatic move records it instead.
-   *
-   *  Starts true: a conversation opens at the latest message. */
+  /** Whether the reader is following the end of the conversation. Recorded on
+   *  every scroll, because after a resize `atBottom()` answers for the new
+   *  geometry. Starts true: a conversation opens at its latest message. */
   private following = true;
 
-  /** The container height the last scroll event was seen at, so a scroll the
-   *  RESIZE caused can be told from one the reader caused. See `step`. */
+  /** The container height at the last scroll, so a scroll the resize caused is
+   *  not taken for the reader's. */
   private hostHeight = 0;
-  /** And the content height, for the same reason in the other direction — see
-   *  `noteScroll`: growth BELOW a reader who is at the end moves the bottom away
-   *  from them without their having moved. */
+  /** The content height likewise, so growth below a reader at the end is not
+   *  taken for them leaving. */
   private hostScrollHeight = 0;
 
-  /** The observer behind `observeShrink`, and the message block it is currently
-   *  pointed at — the host never changes, that element does. */
+  /** The observer behind `observeShrink`, and the message block it watches. */
   private ro: ResizeObserver | null = null;
   private watched: HTMLElement | null = null;
 
-  // Optional scroll-jump instrumentation (off by default). Enable at runtime
-  // with `localStorage.threadScrollDebug = '1'` or a `?scrolldebug` URL param,
-  // then read the `[thread-scroll]` console.debug lines: a `jump` line =
-  // already-visible content shifted on its own (the symptom); an op line
-  // (`revealTop`, `fetchOlder`, …) shows how far that step re-anchored.
+  // Scroll diagnostics, off by default: enable with
+  // `localStorage.threadScrollDebug = '1'` or `?scrolldebug`, then read the
+  // `[thread-scroll]` debug lines. `jump` means visible content shifted on its
+  // own; an operation line shows how far that step re-anchored.
   private readonly dbg = readDebugFlag();
   private lastAnchor: { id: string; top: number } | null = null;
   private lastScrollTop = 0;
 
   constructor(
     private readonly host: HTMLElement,
-    /** The message container, once the view has it — a getter because a
-     *  `viewChild` resolves after construction and again after each render. */
+    /** The message container; a getter, since `viewChild` resolves after
+     *  construction and after each render. */
     private readonly container: () => HTMLElement | undefined,
     private readonly messages: Signal<Message[]>,
     /** Flush pending renders, so the DOM can be measured. */
@@ -134,21 +105,17 @@ export class ThreadWindow {
   reset(): void {
     this.above.set([]);
     this.below.set([]);
-    this.following = true; // a fresh conversation opens at its latest message
+    this.following = true;
   }
 
-  /** Advance the window for wherever the scroll is now.
-   *
-   *  Returns whether the top edge is close AND nothing is left collapsed above
-   *  it — which is the caller's cue to fetch an older page, the one thing here
-   *  that needs to know where messages come from. */
+  /** Advance the window for the current scroll. `needOlder` and `needNewer` tell
+   *  the caller an edge is near with nothing collapsed there: fetch a page. */
   step(): { needOlder: boolean; needNewer: boolean } {
     const el = this.container();
     if (!el) return { needOlder: false, needNewer: false };
     if (this.dbg) this.detectJump();
 
-    // Proximity to the message block's edges, measured from viewport rects (the
-    // host's offsetParent isn't guaranteed to be the host, so offsetTop is not).
+    // Measured from rects: the host is not necessarily the offsetParent.
     const hostRect = this.host.getBoundingClientRect();
     const elRect = el.getBoundingClientRect();
     const nearTop = elRect.top - hostRect.top >= -EDGE;
@@ -164,16 +131,6 @@ export class ThreadWindow {
         needOlder = true;
       }
     }
-    // ⚠ THE MIRROR OF `needOlder`, and it did not exist until #1401. The
-    // window could only ever grow backwards, because the only route by which
-    // newer messages reached the thread was `pollNewer` asking for the NEWEST
-    // page. That is fine for a window anchored to the present and useless for
-    // one that is not: a reader landed on a 2005 search hit could scroll back
-    // for ever and not forward one line.
-    //
-    // Same shape as the top: reveal what is collapsed below if there is any,
-    // and otherwise say that something has to be fetched. Who fetches it is not
-    // this engine's business — it does not know where messages come from.
     if (nearBottom) {
       if (this.below().length) {
         this.revealBottom();
@@ -182,8 +139,7 @@ export class ThreadWindow {
         needNewer = true;
       }
     }
-    // Re-baseline after any windowing so the next jump check compares like
-    // frames (a windowing step legitimately re-anchors; that isn't a jump).
+    // Re-baseline after windowing, which legitimately re-anchors.
     if (this.dbg) {
       this.lastAnchor = this.topAnchor();
       this.lastScrollTop = this.host.scrollTop;
@@ -191,27 +147,10 @@ export class ThreadWindow {
     return { needOlder, needNewer };
   }
 
-  /** ⚠ **EVERY scroll event updates `following`, INCLUDING the ones the window
-   *  itself caused — which is why this is not part of `step`.**
-   *
-   *  `onScroll` skips `step` whenever the window is busy or a load is in flight,
-   *  and for the windowing that is right: a programmatic scroll is not the reader
-   *  looking around. But `following` is not about WHO scrolled, it is about where
-   *  the viewport ended up, and leaving it un-updated through those stretches
-   *  leaves it stale-TRUE exactly when the reader has gone back into history —
-   *  so the next resize pins them to the present instead. Measured 2026-09-10 on
-   *  a variant that observed content growth as well: `routing.spec.ts`'s
-   *  "scrolling to the top auto-loads older messages" timed out at 90s in 6 runs
-   *  of 20, each arriving page of history yanking the viewport back.
-   *
-   *  Reading the position during our own scroll is the point rather than a
-   *  hazard: after `scrollToBottom` it answers true, after `scrollToTs` or a
-   *  re-anchored prepend it answers false, and all three are the truth.
-   *
-   *  ⚠ A SHRINKING CONTAINER CAN DISPATCH A SCROLL EVENT OF ITS OWN, and that one
-   *  must not read as the reader leaving the end: the bottom moved, they did not.
-   *  `scrollTop` is identical either way, so the height it was last seen at is
-   *  what separates them. */
+  /** Record whether the reader is following the end, on every scroll including
+   *  our own: it is about where the viewport is, not who moved it. Separate from
+   *  `step`, which is skipped while busy. A scroll caused by the container
+   *  resizing does not count as the reader leaving. */
   noteScroll(): void {
     const h = this.host.clientHeight;
     const sh = this.host.scrollHeight;
@@ -220,23 +159,13 @@ export class ThreadWindow {
     this.hostHeight = h;
     this.hostScrollHeight = sh;
     if (resized) return;
-    // ⚠ GROWTH BELOW A READER AT THE END IS NOT THE READER LEAVING IT. An
-    // image loading under the newest message pushes the bottom away, `atBottom`
-    // answers false for a moment, and a scroll event landing in that moment used
-    // to record them as having wandered off — after which the observer politely
-    // declined to re-pin. Measured 2026-09-11 against the deterministic harness:
-    // 1 run in 4 still landed 585px short with the observer in place, and this
-    // is why.
-    //
-    // The test is whether the whole gap is explained by what just grew. A reader
-    // who actually scrolled away is further off than the growth accounts for; one
-    // standing still is exactly that far and no further.
+    // Content growing below a reader at the end (an image loading) is not the
+    // reader leaving: they are off by no more than the growth.
     if (this.following && grew > 0 && sh - this.host.scrollTop - h <= grew + BOTTOM_EPS) return;
     this.following = this.atBottom();
   }
 
-  /** At the end of the conversation: nothing collapsed below, and within a few
-   *  pixels of the bottom. */
+  /** Nothing collapsed below, and within a few pixels of the bottom. */
   atBottom(): boolean {
     return (
       this.below().length === 0 &&
@@ -244,8 +173,8 @@ export class ThreadWindow {
     );
   }
 
-  /** Keep the DOM bounded by collapsing the end away from the viewport. Call
-   *  after growing the opposite end, so the collapsed rows are off-screen. */
+  /** Collapse the far end until the DOM is under the cap. Call after growing the
+   *  opposite end. */
   enforceMax(side: 'top' | 'bottom'): void {
     let guard = 0;
     while (this.renderCount() > MAX_RENDERED && guard++ < 64) {
@@ -254,8 +183,8 @@ export class ThreadWindow {
     }
   }
 
-  /** After a deep-link restore we may have rendered many pages; collapse the
-   *  ends that are off-screen until the DOM is back under the cap. */
+  /** Collapse off-screen ends until the DOM is under the cap, after a restore
+   *  rendered many pages. */
   trimToWindow(): void {
     let guard = 0;
     while (this.renderCount() > MAX_RENDERED && guard++ < 128) {
@@ -294,10 +223,8 @@ export class ThreadWindow {
 
   // ---- viewport ------------------------------------------------------------
 
-  /** Run a mutation while keeping the viewport pinned to whatever message is at
-   *  the top of it — this is what makes the estimated spacer heights good
-   *  enough. Public because fetching an older page grows the list from outside
-   *  here and must not move what the user is reading. */
+  /** Run a mutation, keeping the message at the top of the viewport in place.
+   *  Public for fetches that grow the list from outside. */
   keepingAnchor(label: string, mutate: () => void): void {
     const anchor = this.topAnchor();
     this.withScrollLock(() => {
@@ -338,9 +265,7 @@ export class ThreadWindow {
   }
 
   scrollToTs(ts: number): void {
-    // Landing mid-history is the definition of not following the end, whether or
-    // not a row for `ts` turns out to be rendered — so it is recorded before the
-    // early return below, not after it.
+    // Landing mid-history is not following, whether or not `ts` is rendered.
     this.following = false;
     const head = this.host.querySelector<HTMLElement>('.thread-head')?.offsetHeight ?? 0;
     const hostTop = this.host.getBoundingClientRect().top;
@@ -349,30 +274,14 @@ export class ThreadWindow {
     this.host.scrollTop += target.getBoundingClientRect().top - hostTop - head;
   }
 
-  /** Keep the bottom of the conversation visible when the SCROLL CONTAINER
-   *  shrinks under it — on a phone, the soft keyboard opening the moment the
-   *  reader starts typing a reply.
-   *
-   *  ⚠ **`interactive-widget=resizes-content` is only half of the job.** That
-   *  token (index.html) makes the Android keyboard shrink the layout viewport
-   *  instead of sliding over the page, and what it buys is the COMPOSER staying
-   *  above the keys. It does nothing for the conversation: a resize leaves
-   *  `scrollTop` exactly where it was, so the newest messages go below the fold
-   *  by the keyboard's full height. Measured 2026-09-10 at 412x839 with a 350px
-   *  keyboard: the thread sat 350px from the bottom, the last message rendered at
-   *  y 732 with the fold at 489, and the reader was typing a reply to messages
-   *  they could no longer see. The two browser tests that guard the keyboard both
-   *  passed — they assert where the composer is, and neither looks at a message.
-   *
-   *  Any resize, not just a shrink: the keyboard closing again, a rotation, a
-   *  desktop pane being dragged. Re-pinning when already at the bottom is a
-   *  no-op, so the cheap condition is the right one.
-   *
-   *  Returns its own teardown. */
+  /** Keep the conversation's end visible when the scroll container resizes, as
+   *  when the soft keyboard opens. `interactive-widget=resizes-content` keeps the
+   *  composer above the keys, but a resize leaves `scrollTop` alone and the newest
+   *  messages under the keyboard. Any resize: re-pinning at the bottom is a no-op.
+   *  Returns its teardown. */
   observeShrink(): () => void {
-    // jsdom has neither a ResizeObserver nor the layout to feed one. The unit
-    // suite covers the decision (`repinAfterResize`), the browser suite the
-    // geometry — same split as the rest of this file.
+    // jsdom has no ResizeObserver; `repinAfterResize` is unit-tested, the
+    // geometry browser-tested.
     if (typeof ResizeObserver === 'undefined') return () => undefined;
     const ro = new ResizeObserver(() => this.repinAfterResize());
     this.ro = ro;
@@ -384,24 +293,10 @@ export class ThreadWindow {
     };
   }
 
-  /** Also watch the MESSAGE BLOCK, whose growth is the other way the bottom moves
-   *  away from a reader who was at it: a lazily-loaded image finishing after the
-   *  open has already scrolled, with no reserved height standing in for it.
-   *
-   *  ⚠ **This is what the listener loop it replaces could not do.** That loop
-   *  (deleted with this change) attached `load` only to images not yet
-   *  `complete`, so one finishing
-   *  between the scroll and the loop gets no listener and its growth is never
-   *  compensated. Proved by perturbation 2026-09-11: delay the loop by 150ms, so
-   *  every image is complete before it runs, and the open lands **780px** short,
-   *  4 runs of 4 — all four images. The gate's own flake is the same bug with
-   *  whichever subset happened to win the race, which is why it measured 271px
-   *  and only about one run in five.
-   *
-   *  A box either changed size or it did not, so there is no window to fall into.
-   *
-   *  The element is new after every render that recreates it, so the caller
-   *  re-offers the current one and this re-points the observer. */
+  /** Watch the message block too: an image loading after the open has scrolled
+   *  grows it and pushes the bottom away. A size observer, unlike load listeners,
+   *  cannot miss an image that finished before it was attached. Re-pointed at
+   *  each new block the caller offers. */
   watchContent(el: HTMLElement | undefined): void {
     const next = el ?? null;
     if (!this.ro || next === this.watched) return;
@@ -410,9 +305,8 @@ export class ThreadWindow {
     if (next) this.ro.observe(next);
   }
 
-  /** The decision half of `observeShrink`: follow the end of the conversation
-   *  down to the new bottom, or leave a reader who is back in history exactly
-   *  where they are. Returns whether it moved the viewport. */
+  /** Follow the end down to the new bottom, or leave a reader in history where
+   *  they are. Returns whether it moved the viewport. */
   repinAfterResize(): boolean {
     if (!this.following) return false;
     this.withScrollLock(() => this.scrollToBottom());
@@ -420,8 +314,8 @@ export class ThreadWindow {
     return true;
   }
 
-  /** Set `adjusting` for the duration of a programmatic scroll change AND the
-   *  scroll event it triggers (dispatched before the next frame). */
+  /** Set `adjusting` for a programmatic scroll and the event it dispatches
+   *  before the next frame. */
   withScrollLock(fn: () => void): void {
     this.adjusting = true;
     fn();
@@ -454,9 +348,8 @@ export class ThreadWindow {
     return { above, below };
   }
 
-  /** Log when already-visible content shifts on its own — i.e. between two user
-   *  scroll frames the top message moved by more than the scroll delta explains.
-   *  That residual IS the visible jump. */
+  /** Log when visible content shifts on its own: the top message moved more than
+   *  the scroll delta explains. */
   private detectJump(): void {
     const a = this.topAnchor();
     const top = this.host.scrollTop;

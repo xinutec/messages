@@ -41,27 +41,21 @@ export class App {
   private api = inject(MessagesApi);
   private swUpdates = inject(AppSwUpdates);
 
-  /** Which build this is. Read from the bundle, never from the server — see the
-   *  note in app.html. */
+  /** Which build this is, from the bundle; see app.html. */
   protected readonly build = BUILD_INFO;
   protected readonly builtAt = new Date(BUILD_INFO.builtAt).toLocaleString();
   private store = inject(MessagesStore);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
-  // Instrumented from the shell alone: a trace each screen had to remember to
-  // join would have holes in exactly the screens nobody thought about.
+  // Instrumented once, in the shell, so no screen can forget to join.
   private telemetry = inject(Telemetry);
 
   readonly me = this.store.me;
   readonly loading = this.store.loading;
   readonly conversations = this.store.conversations;
 
-  /** One label per origin, and the order the filter buttons appear in.
-   *
-   *  A `Record` rather than a chain of ternaries. The template read
-   *  `origin === 'signal' ? 'Signal' : 'Google Chat'`, which does not fail when
-   *  a third origin arrives — it labels it as the second one. This is a type
-   *  error the day a fourth does. */
+  /** One label per origin, in filter-button order. A `Record`, so a new origin
+   *  is a type error until labelled. */
   readonly originLabels: Record<Origin, string> = {
     signal: 'Signal',
     gchat: 'Google Chat',
@@ -70,18 +64,16 @@ export class App {
   };
   readonly origins: readonly Origin[] = ['signal', 'gchat', 'irc', 'telegram'];
 
-  // ?origin filters the list — view-state on the route, like health's ?date.
+  // `?origin` filters the list.
   private params = toSignal(this.route.queryParamMap);
   readonly originFilter = computed<Origin | 'all'>(() => {
     const o = this.params()?.get('origin');
-    // Matched against the list rather than compared to literals, so an origin
-    // added above is filterable without touching this.
+    // Matched against the list, so a new origin is filterable automatically.
     return this.origins.find((known) => known === o) ?? 'all';
   });
 
-  // The open conversation is whatever the child route resolved to. Deriving it
-  // from the router (recomputed each navigation) lets the list highlight it and
-  // the mobile single-pane switch — without the shell owning that state.
+  // The open conversation, from the router, so the list can highlight it and
+  // the phone layout switch panes.
   private navEnd = toSignal(this.router.events.pipe(filter((e) => e instanceof NavigationEnd)));
   readonly active = computed<{ origin: string; id: string } | null>(() => {
     this.navEnd();
@@ -91,18 +83,12 @@ export class App {
     return origin != null && id != null ? { origin, id } : null;
   });
 
-  // Search overlays the list; it's transient UI, not URL state. Queries run
-  // through a Subject + switchMap so a slow response can't land after a newer
-  // one (the stale request is cancelled).
+  // Search overlays the list and is not URL state. `switchMap` cancels a stale
+  // request, so a slow answer cannot land after a newer one.
   readonly query = signal('');
   readonly results = signal<SearchHit[] | null>(null);
   readonly searching = signal(false);
-  /**
-   * The search did not run. ⚠ **A distinct state from "no hits", because the
-   * empty list is a CLAIM** — the template answers it with "No matches.", which
-   * says the messages are not there. A 500 or a dropped connection swallowed
-   * into that claim tells a reader their conversation does not exist.
-   */
+  /** The search failed, distinct from no hits: "No matches." is a claim. */
   readonly searchFailed = signal(false);
   private search$ = new Subject<string>();
 
@@ -117,9 +103,7 @@ export class App {
     this.store.init();
     this.telemetry.init();
 
-    // Re-read the list on the way back to it. Closing a conversation is the
-    // moment its unread count and last-message time are about to be read, and it
-    // is a deliberate act rather than a tick.
+    // Re-read the list on returning to it.
     let wasOpen = false;
     this.router.events
       .pipe(
@@ -132,16 +116,9 @@ export class App {
         wasOpen = open;
       });
 
-    // ⚠ The same moment, by a route the router never sees. Coming back from
-    // the Android launcher is a return to the list, but nothing navigates — it is
-    // already mounted and keeps showing what it last rendered. Measured on the
-    // Pixel 9: two hours old, ten behind on one channel, one row out of order,
-    // and nothing about it looking stale.
-    //
-    // Unconditional, deliberately: on a wide screen the list shares the window
-    // with the open thread, so an "only when the list is the visible screen" gate
-    // would skip the one case where a stale list sits beside a thread that
-    // refreshed itself.
+    // Also when the app returns to the foreground, which no navigation marks:
+    // the list would otherwise show whatever it last rendered. Unconditional,
+    // since on a wide screen the list sits beside the thread.
     fromEvent(document, 'visibilitychange')
       .pipe(takeUntilDestroyed())
       .subscribe(() => {
@@ -178,7 +155,7 @@ export class App {
   }
 
   setFilter(f: Origin | 'all'): void {
-    // Update ?origin on the current route (keep the open conversation, if any).
+    // Update `?origin`, keeping the open conversation.
     void this.router.navigate([], {
       relativeTo: this.leaf(),
       queryParams: { origin: f === 'all' ? null : f },
@@ -186,8 +163,8 @@ export class App {
     });
   }
 
-  /** Open a conversation = route to it; keep the origin filter, reset ?from so a
-   *  freshly-opened conversation starts at the most recent page. */
+  /** Open a conversation, keeping the origin filter and clearing `?from` so it
+   *  opens at the latest page. */
   open(c: Conversation): void {
     void this.router.navigate(['/conversation', c.origin, c.id], {
       queryParams: { from: null },
@@ -213,27 +190,9 @@ export class App {
   }
 
 
-  /** Open the conversation a search hit belongs to.
-   *
-   *  ⚠ **It routes from the HIT, not from the list.** This used to look the
-   *  conversation up in the store and do nothing at all when it was absent —
-   *  a tap that produced no navigation, no error and no explanation. The store
-   *  is loaded by `refresh()`, which swallows its errors deliberately (a stale
-   *  list beats an empty one), so a first load that fails leaves search working,
-   *  every result rendered, and every one of them dead.
-   *
-   *  Nothing was gained by the lookup: a route needs an origin and an id, both
-   *  of which the hit already carries, and the thread renders from a deep link
-   *  without the list — that is why `headTitle` has a fallback. */
-  /** Open a search result ON the message it found, not at the end of its
-   *  conversation — #1401.
-   *
-   *  ⚠ `at` and `from` are set together, and `from: null` is the load-bearing
-   *  half. `from` is a scroll position the reader left behind in some earlier
-   *  conversation and `queryParamsHandling: 'merge'` would carry it across;
-   *  arriving with both, the thread would restore a depth that has nothing to
-   *  do with this hit. `at` means "put me here", `from` means "I was here", and
-   *  a click on a result is unambiguously the first. */
+  /** Open a search result on the message it found. Routes from the hit, which
+   *  carries origin and id, so it works before the list loads. `from: null`: a
+   *  scroll position from another conversation must not come along. */
   openHit(h: SearchHit): void {
     void this.router.navigate(['/conversation', h.origin, h.conversation_id], {
       queryParams: { at: h.cursor, from: null },
@@ -241,37 +200,18 @@ export class App {
     });
   }
 
-  /** What to call the conversation a hit is in.
-   *
-   *  ⚠ **ONE NAMER, because there were three.** The list called an unnamed
-   *  conversation "Direct message" or "Group" (`MessagesStore.title`, which also
-   *  treats a whitespace-only name as no name); this list called it
-   *  "(unnamed)" and passed whitespace straight through; the thread header calls
-   *  it "Conversation". Three answers to one question, in three places, none
-   *  referencing the others — the shape of every defect found on 2026-09-03.
-   *
-   *  The hit's own `conversation_name` is the fallback rather than the source,
-   *  for the case `title` cannot serve: the list has not arrived, so there is no
-   *  `kind` to name a nameless conversation by. */
+  /** What to call the conversation a hit is in: `MessagesStore.title` when the
+   *  list has it, else the hit's own name. */
   hitTitle(h: SearchHit): string {
     const c = this.store.find(h.origin, h.conversation_id);
     if (c) return this.title(c);
-    // The explicit length check `MessagesStore.title` uses, and for its reason:
-    // an empty name is no name. `??` would be wrong here — after `trim` the case
-    // to catch is `''`, which a nullish fallback passes straight through.
+    // An empty name after `trim` is no name; `??` would pass `''` through.
     const name = h.conversation_name?.trim() ?? '';
     return name.length > 0 ? name : 'Conversation';
   }
 
-  /** Which archive a hit came from, and on which network — the two things the
-   *  conversation list shows and this one did not.
-   *
-   *  ⚠ Without the network, two IRC conversations with the same target are the
-   *  same row. That is not hypothetical: the layout suite's fixture carries
-   *  `s_20` on both `xinutec` and `euirc` precisely because the real archive
-   *  does, and the conversation list already prints the network for it. Search
-   *  showed the target alone, so the two were indistinguishable — and so were a
-   *  Signal and a Google Chat conversation with the same contact's name. */
+  /** Which archive a hit came from, and on which network, as the conversation
+   *  list shows: one IRC target can exist on two networks. */
   hitOrigin(h: SearchHit): string {
     const network = this.store.find(h.origin, h.conversation_id)?.network;
     return network ? `${this.originLabels[h.origin]} ${network}` : this.originLabels[h.origin];

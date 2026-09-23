@@ -1,6 +1,6 @@
 //! DB-backed sessions. Nextcloud is touched only at login; every later request
 //! authenticates against this opaque session. Cookie: `<id>.<hex hmac_sha256(id)>`,
-//! verified constant-time. Copied from the `life` app.
+//! verified constant-time.
 
 use anyhow::Result;
 use axum::extract::{FromRef, FromRequestParts};

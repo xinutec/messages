@@ -3,10 +3,8 @@
 /**
  * Whether a line was said or done.
  *
- * ⚠ Two variants, and the IRC table has four. Its column is
- * `ENUM('message','action','event','notice')`, but every query restricts to
- * message and action — joins, parts and server notices are not conversation.
- * Widening this would be claiming the reader shows things it does not. Signal
- * and Google Chat draw no such distinction and are always `message`.
+ * Two of `irc_messages.kind`'s four values: joins, parts and notices are not
+ * conversation. Telegram service events are `action`; Signal and Google Chat are
+ * always `message`.
  */
 export type MessageKind = "message" | "action";

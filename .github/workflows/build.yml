@@ -87,8 +87,7 @@ jobs:
           context: .
           push: true
           tags: xinutec/messages:latest
-          # What the running bundle reports as its version. Without it the image
-          # stamps `dev` and the footer cannot tell one deploy from another.
+          # The version the bundle reports; without it the stamp is `dev`.
           build-args: |
             GIT_SHA=${{ github.sha }}
           cache-from: type=registry,ref=xinutec/messages:cache

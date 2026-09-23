@@ -1,14 +1,9 @@
 //! Tests for the archive query/normalisation layer.
 //!
-//! Pure unit tests (timestamp/kind/LIKE-escape) always run. The end-to-end DB
-//! tests seed a known fixture into a MariaDB and assert the real queries —
-//! ordering, the pagination cursor, Signal reaction aggregation, edit/
-//! delete flags, the µs→ms conversion, and cross-origin search. They run when
-//! `MESSAGES_TEST_DATABASE_URL` points at a *throwaway* database (the test
-//! drops+recreates the archive tables), and are skipped otherwise. CI sets it
-//! from a MariaDB service; locally the gate's `tests` row runs the suite through
-//! `dev-lint`'s `with-test-db`, which starts one, so the pre-commit gate covers
-//! them too. NEVER point it at the real signal DB.
+//! Pure units always run. The database tests seed a fixture into
+//! `MESSAGES_TEST_DATABASE_URL`, which must be a throwaway database: the archive
+//! tables are dropped and recreated. Skipped when it is unset; CI and the gate
+//! supply one. Never point it at the real signal database.
 
 use messages::archive::{
     self, ConversationKind, DeliveryState, EXCERPT_CHARS, MessageKind, Origin, PageDir, call_text,
@@ -23,14 +18,8 @@ fn us_to_ms_truncates_to_millis() {
     assert_eq!(us_to_ms(1_584_389_732_190_514), 1_584_389_732_190);
 }
 
-/// ⚠ A CALL IS DRAWN `* Dana <body>`, so the body must be a VERB PHRASE.
-/// The first version of this said "a call" and rendered as `* Dana a call`.
-/// Every other service label the ingester writes is already phrased this way —
-/// "added a member", "joined Telegram" — and the calls were the exception only
-/// because nothing rendered them to notice.
-///
-/// ⚠ And an unanswered call has NO duration, which is the record of it not being
-/// answered. Reporting that as a zero-length call would claim it happened.
+/// An `Action` renders as `* Dana <body>`, so the body is a verb phrase. An
+/// unanswered call has no duration.
 #[test]
 fn a_call_reads_as_something_its_sender_did() {
     assert_eq!(
@@ -50,12 +39,10 @@ fn a_call_reads_as_something_its_sender_did() {
         Some("made a call that went unanswered"),
         "no duration is the record of nobody answering, not a call of no length"
     );
-    // A reason this reader has no phrasing for still happened.
     assert_eq!(
         call_text(None, Some("elsewhere"), false).as_deref(),
         Some("made a call (elsewhere)")
     );
-    // Not a call at all: the caller falls back to the stored label.
     assert_eq!(call_text(None, None, false), None);
 }
 
@@ -72,25 +59,18 @@ fn conversation_kind_parses_the_enum_column_and_nothing_else() {
         ConversationKind::parse("group"),
         Some(ConversationKind::Group)
     );
-    // ⚠ `channel` became a REAL kind when Telegram arrived, and this test asserted
-    // it was rejected. That is the whole difficulty with a "nothing else" test: the
-    // set it excludes shrinks, and the assertion goes on passing right up to the
-    // day the thing it rejects is something the schema stores.
     assert_eq!(
         ConversationKind::parse("channel"),
         Some(ConversationKind::Channel)
     );
-    // The columns are ENUM('dm','group') and ENUM('dm','group','channel'); anything
-    // else means the schema moved, and list_conversations errors rather than
-    // defaulting to a kind. Case included: MariaDB's ENUM values are what they are.
+    // Anything else means the schema moved. ENUM values are case-sensitive here.
     assert_eq!(ConversationKind::parse("DM"), None);
     assert_eq!(ConversationKind::parse("broadcast"), None);
     assert_eq!(ConversationKind::parse(""), None);
 }
 
-/// The wire spelling is the frontend's contract — `Origin` and `ConversationKind`
-/// are string unions in the generated TS, so a renamed variant would silently
-/// change the JSON. Serialised here so that change fails a test instead.
+/// The wire spelling is the frontend's contract: the generated TS has string
+/// unions.
 #[test]
 fn enums_serialise_to_the_spellings_the_frontend_expects() {
     assert_eq!(
@@ -121,8 +101,7 @@ fn enums_serialise_to_the_spellings_the_frontend_expects() {
 fn message_kind_parses_only_the_two_the_queries_admit() {
     assert_eq!(MessageKind::parse("message"), Some(MessageKind::Message));
     assert_eq!(MessageKind::parse("action"), Some(MessageKind::Action));
-    // The column also holds these two, and the queries filter them out. Parsing
-    // them would mean a join or a server notice could be drawn as speech.
+    // The queries filter these two out.
     assert_eq!(MessageKind::parse("event"), None);
     assert_eq!(MessageKind::parse("notice"), None);
 }
@@ -149,7 +128,7 @@ fn cursor_round_trips_and_rejects_garbage() {
         parse_cursor(&encode_cursor(1_717_000_000_000, 42)),
         Some((1_717_000_000_000, 42))
     );
-    // Malformed → None, so the API just falls back to the newest page.
+    // Malformed: `None`, and the API starts from the newest page.
     assert_eq!(parse_cursor("nope"), None);
     assert_eq!(parse_cursor("123_"), None);
     assert_eq!(parse_cursor("_9"), None);
@@ -160,27 +139,22 @@ fn cursor_round_trips_and_rejects_garbage() {
 fn an_excerpt_is_one_line_and_never_splits_a_character() {
     assert_eq!(excerpt(None), None);
     assert_eq!(excerpt(Some("")), None);
-    // Whitespace-only is nothing to quote, not a quote of nothing.
     assert_eq!(excerpt(Some("   \n  ")), None);
     assert_eq!(excerpt(Some("hoi")), Some("hoi".to_string()));
 
-    // A quote is ONE line: the body's own breaks are folded, because a preview
-    // that grows downwards pushes the message it belongs to off the screen.
+    // One line: the body's own breaks are folded.
     assert_eq!(
         excerpt(Some("two\nlines\there")),
         Some("two lines here".to_string())
     );
 
-    // Short enough → no ellipsis. Exactly at the bound is still short enough.
+    // Exactly at the bound: no ellipsis.
     let exact = "a".repeat(EXCERPT_CHARS);
     assert_eq!(excerpt(Some(&exact)), Some(exact.clone()));
     let over = "a".repeat(EXCERPT_CHARS + 1);
     assert_eq!(excerpt(Some(&over)), Some(format!("{exact}…")));
 
-    // ⚠ The truncation is by CHARACTER. These bodies are mostly emoji and
-    // non-Latin text, where a byte-offset slice panics mid-codepoint — the
-    // archive's Telegram half would have taken the app down on its first long
-    // quote. Each of these is multi-byte, so a byte-based cut lands inside one.
+    // By character: each of these is multi-byte, so a byte cut would panic.
     let emoji = "🐉".repeat(EXCERPT_CHARS + 10);
     let cut = excerpt(Some(&emoji)).unwrap();
     assert_eq!(cut.chars().count(), EXCERPT_CHARS + 1, "120 + the ellipsis");
@@ -211,29 +185,12 @@ async fn test_pool() -> Option<MySqlPool> {
     Some(pool)
 }
 
-/// The fixture is seeded once per process, not once per test.
+/// The fixture is seeded once per process: `seed` drops and recreates the
+/// tables, so per-test seeding races under parallel tests.
 ///
-/// `seed` DROPs and recreates the archive tables, so seeding per test races when
-/// the tests run in parallel against the one database — each dropping the tables
-/// another has just filled. That was survivable only because the single place
-/// these tests ran, CI, passed `--test-threads=1`; the moment the local gate ran
-/// them the way cargo runs tests by default, five of six failed on the DDL.
-///
-/// Seeding once removes the need for that flag, so CI and the local gate can run
-/// the suite the same way — a race is worth catching wherever it appears, not
-/// suppressing in the one environment that had learned to avoid it.
-///
-/// ⚠ THIS IS NO LONGER A READ-ONLY SUITE, and the rule that replaced "nothing
-/// writes" is narrower: a test that writes must confine itself to rows no other
-/// test asserts on. The send-path tests archive an echo into `irc_messages` and
-/// delete it again; they stay clear of the conversations the list and search
-/// tests read.
-///
-/// ⚠ `irc_conversation_stats` is seeded ONCE from the rows and is NOT maintained
-/// here — production keeps it current with triggers this suite has no copy of.
-/// So a test that inserts a line and then asserts on `list_conversations` would
-/// be reading a count that deliberately did not move. Assert on `irc_messages`
-/// directly, as the send-path tests do.
+/// A test that writes must touch only rows no other test asserts on.
+/// `irc_conversation_stats` is seeded once and not maintained here (production
+/// uses triggers), so assert on `irc_messages` after inserting a line.
 static FIXTURE: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
 
 /// A pool onto the seeded fixture, or None when the DB tests are being skipped.
@@ -244,7 +201,6 @@ async fn seeded_pool() -> Option<MySqlPool> {
 }
 
 async fn seed(pool: &MySqlPool) {
-    // Throwaway DB: start from a clean slate every run.
     for t in [
         "reactions",
         "signal_receipts",
@@ -273,10 +229,6 @@ async fn seed(pool: &MySqlPool) {
     }
     let ddl = [
         "CREATE TABLE conversations (thread_id VARCHAR(80) PRIMARY KEY, type ENUM('dm','group') NOT NULL, name VARCHAR(255) NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
-        // ⚠ `display_name`, not `profile_name`. What signal-cli resolves is a
-        // DISPLAY name — the contact name it has for somebody, falling back to
-        // their profile name — and the column it lands in was renamed in the
-        // archive's v41 migration to stop saying otherwise.
         "CREATE TABLE contacts (uuid VARCHAR(64) PRIMARY KEY, phone VARCHAR(32) NULL, display_name VARCHAR(255) NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE signal_receipts (id BIGINT AUTO_INCREMENT PRIMARY KEY, target_ts BIGINT NOT NULL, author_uuid VARCHAR(64) NOT NULL, kind ENUM('delivery','read','viewed') NOT NULL, when_ts BIGINT NOT NULL, observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uniq_signal_receipt (target_ts, author_uuid, kind)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, thread_id VARCHAR(80) NOT NULL, sender_uuid VARCHAR(64) NOT NULL, server_ts BIGINT NOT NULL, body TEXT NULL, quote_target_ts BIGINT NULL, is_outgoing TINYINT(1) NOT NULL DEFAULT 0, deleted TINYINT(1) NOT NULL DEFAULT 0, edited TINYINT(1) NOT NULL DEFAULT 0, edit_of_ts BIGINT NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, deleted_at TIMESTAMP NULL, expires_in_seconds INT NULL, server_delivered_ts BIGINT NULL, server_received_ts BIGINT NULL) DEFAULT CHARSET=utf8mb4",
@@ -286,37 +238,20 @@ async fn seed(pool: &MySqlPool) {
         "CREATE TABLE gchat_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, group_id VARCHAR(64) NOT NULL, msg_id VARCHAR(64) NOT NULL, thread_id VARCHAR(64) NULL, reply_to_msg_id VARCHAR(64) NULL, sender_id VARCHAR(32) NULL, sender_name VARCHAR(255) NULL, is_self TINYINT(1) NOT NULL DEFAULT 0, ts_us BIGINT NOT NULL, sent_at DATETIME(6) NULL, text TEXT NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE gchat_reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL, emoji VARCHAR(64) NULL, cnt INT NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE irc_conversations (id INT AUTO_INCREMENT PRIMARY KEY, network VARCHAR(64) NOT NULL, target VARCHAR(255) NOT NULL, is_channel TINYINT(1) NOT NULL DEFAULT 0, is_status TINYINT(1) NOT NULL DEFAULT 0, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
-        // ⚠ `uniq_irc_line` IS NOT DECORATION HERE. It is the archive's dedupe
-        // key, and the send path writes a row that the hourly importer will
-        // later write again from the same log line — the constraint is the only
-        // thing that makes those one row instead of two. A fixture without it
-        // lets a dedupe test pass while proving nothing, which is what this
-        // table did until the send path needed to rely on it.
+        // `uniq_irc_line` is the archive's dedupe key, which the send-path
+        // tests rely on.
         "CREATE TABLE irc_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id INT NOT NULL, source_tag VARCHAR(64) NOT NULL, file_date DATE NOT NULL, line_no INT NOT NULL, sent_at DATETIME NOT NULL, nick VARCHAR(255) NULL, is_self TINYINT(1) NOT NULL DEFAULT 0, kind ENUM('message','action','event','notice') NOT NULL, text TEXT NULL, UNIQUE KEY uniq_irc_line (conversation_id, source_tag, file_date, line_no), created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
-        // No trigger here: production maintains this from `signal`'s migrations
-        // v11-v14, and this suite seeds it from the rows instead (see `seed`).
+        // No trigger: `seed` computes this from the rows.
         "CREATE TABLE irc_conversation_stats (conversation_id INT NOT NULL PRIMARY KEY, cnt BIGINT NOT NULL DEFAULT 0, last_sent_at DATETIME NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
-        // ⚠ TELEGRAM'S TABLES ARE THE `signal` REPO'S, AND THIS IS A SECOND COPY
-        // OF THEM. So are the gchat and IRC ones above; the difference worth
-        // stating is what that copy is FOR. It is not only a fixture: dev-lint
-        // reads the CREATE TABLEs in this file to know which tables the queries in
-        // `src/` may name, so a table missing here is reported as a table nothing
-        // creates. Which means a column that drifts in `signal`'s migrations and
-        // not here produces a suite that passes against a schema production does
-        // not have — the `uniq_irc_line` note above is that lesson already learned
-        // once.
-        //
-        // `kind` carries `service` because the queries EXCLUDE it, and a fixture
-        // with no excludable rows cannot show that the exclusion works.
+        // A copy of the `signal` repo's tables, and dev-lint reads these
+        // CREATE TABLEs to know which tables `src/` may name, so keep them in
+        // step with signal's migrations.
         "CREATE TABLE telegram_conversations (id BIGINT PRIMARY KEY, kind ENUM('dm','group','channel') NOT NULL, name VARCHAR(255) NULL, username VARCHAR(255) NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, sent_at BIGINT NOT NULL, sender_id BIGINT NULL, sender_name VARCHAR(255) NULL, is_outgoing TINYINT(1) NOT NULL DEFAULT 0, kind ENUM('message','service') NOT NULL DEFAULT 'message', text TEXT NULL, media_kind VARCHAR(32) NULL, media_size BIGINT NULL, media_mime VARCHAR(128) NULL, edited_at BIGINT NULL, reply_to_msg_id INT NULL, fwd_from_name VARCHAR(255) NULL, edit_hidden TINYINT(1) NULL, deleted TINYINT(1) NOT NULL DEFAULT 0, deleted_at TIMESTAMP NULL, UNIQUE KEY uniq_tg_msg (conversation_id, msg_id), created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, fwd_channel_post INT NULL, fwd_date BIGINT NULL, fwd_from_id BIGINT NULL, grouped_id BIGINT NULL, reply_quote TEXT NULL, reply_to_peer_id BIGINT NULL, service_action VARCHAR(64) NULL, ttl_period INT NULL, via_bot_id BIGINT NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_message_edits (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, was_edited_at BIGINT NULL, text TEXT NULL, UNIQUE KEY uniq_tg_edit (conversation_id, msg_id, was_edited_at), recorded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_media (conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, state ENUM('offered','wanted','stored','failed') NOT NULL, stored_name VARCHAR(255) NULL, content_type VARCHAR(128) NULL, note VARCHAR(255) NULL, requested_at TIMESTAMP NULL, stored_at TIMESTAMP NULL, PRIMARY KEY (conversation_id, msg_id), updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, emoji VARCHAR(32) NULL, custom_emoji_id BIGINT NULL, cnt INT NOT NULL DEFAULT 0, chosen TINYINT(1) NOT NULL DEFAULT 0, removed_at TIMESTAMP NULL, reaction_key VARCHAR(64) GENERATED ALWAYS AS (COALESCE(emoji, CONCAT('custom:', custom_emoji_id), '')) STORED, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
-        // ⚠ Mirrors the archive's own shape, offsets included: `offset_utf16`
-        // and `length_utf16` are TELEGRAM's unit, not Rust's and not the
-        // reader's. The names carry the unit so a test cannot quietly compare
-        // them against a character count.
+        // Offsets in UTF-16 code units, as the archive stores them.
         "CREATE TABLE telegram_message_entities (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, kind VARCHAR(32) NOT NULL, offset_utf16 INT NOT NULL, length_utf16 INT NOT NULL, url TEXT NULL, user_id BIGINT NULL, language VARCHAR(32) NULL, document_id BIGINT NULL, removed_at TIMESTAMP NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_read_marks (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, direction ENUM('inbox','outbox') NOT NULL, max_id INT NOT NULL, observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uniq_tg_read (conversation_id, direction, max_id)) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE gchat_attachments (id BIGINT AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL, name VARCHAR(255) NULL, mime VARCHAR(128) NULL, width INT NULL, height INT NULL, uuid VARCHAR(64) NULL, token TEXT NULL, hash1 VARCHAR(128) NULL, hash2 VARCHAR(128) NULL, stored_path VARCHAR(255) NULL) DEFAULT CHARSET=utf8mb4",
@@ -342,10 +277,8 @@ async fn seed(pool: &MySqlPool) {
          ('dm:alice','me',4000,'gone',1,1,0),
          ('group:g1','alice',5000,'grp findme msg',0,0,0)",
     ).execute(pool).await.unwrap();
-    // Quotes, set by UPDATE so the thread keeps the four messages the ordering
-    // and pagination cases above assert on. Three shapes, which are all three a
-    // Signal quote has: one that resolves, one whose target was DELETED, and one
-    // pointing at a timestamp this archive holds nothing for.
+    // Quotes, by UPDATE so the thread keeps its four messages: one resolves, one
+    // targets a deleted message, one a timestamp the archive does not hold.
     sqlx::query(
         "UPDATE messages SET quote_target_ts = CASE server_ts
              WHEN 2000 THEN 1000
@@ -366,9 +299,7 @@ async fn seed(pool: &MySqlPool) {
          ('dm:alice',2000,'carol','😂',2300,1)",
     ).execute(pool).await.unwrap();
 
-    // A thread whose 4 messages ALL share one server_ts (1500) — the case a
-    // millisecond-only cursor would split and drop rows from. Ids ascend with
-    // insert order, so the id tie-break yields a,b,c,d.
+    // A thread whose 4 messages share server_ts 1500; the id orders them.
     sqlx::query("INSERT INTO conversations (thread_id, type, name) VALUES ('dm:tie','dm','Tie')")
         .execute(pool)
         .await
@@ -381,17 +312,8 @@ async fn seed(pool: &MySqlPool) {
          ('dm:tie','alice',1500,'tie d',0,0,0)",
     ).execute(pool).await.unwrap();
 
-    // A thread that exists for the RECEIPTS, because Signal's are the one read
-    // state in this archive that names a person and a time. Kept apart from
-    // `dm:alice` so the ordering and pagination cases above keep the four
-    // messages they count.
-    //
-    // ⚠ THE FLOOR IS THE POINT. `observed_at` is pinned to 1970-01-01
-    // 00:00:01, so `MIN(observed_at)` — when this archive started listening —
-    // is 1000ms, and `before we listened` at 900 sits just under it. Without a
-    // message on the wrong side of that line, "no receipt" and "we were not
-    // there" look identical and a reader could report our start date as
-    // somebody's phone being off.
+    // A thread for receipts. `observed_at` is 1970-01-01 00:00:01, so capture
+    // began at 1000ms, and the message at 900 predates it.
     sqlx::query(
         "INSERT INTO conversations (thread_id, type, name) VALUES ('dm:receipts','dm','Receipts')",
     )
@@ -406,11 +328,8 @@ async fn seed(pool: &MySqlPool) {
          ('dm:receipts','me',1300,'delivered only',1,0,0),
          ('dm:receipts','me',1400,'nothing back',1,0,0)",
     ).execute(pool).await.unwrap();
-    // ⚠ Two of these five are TRAPS, and both have real counterparts in the live
-    // archive. `(1200,'me','read')` is my own linked device syncing a read of a
-    // thread, my own messages included — it must not make me one of the people
-    // who read my message. `(1250,'me','read')` is the same event against a
-    // message ALICE sent, where "has it been read" is not a question about her.
+    // Two traps: `(1200,'me','read')` is my linked device reading my own
+    // message, and `(1250,'me','read')` a read of a message Alice sent.
     sqlx::query(
         "INSERT INTO signal_receipts (target_ts, author_uuid, kind, when_ts, observed_at) VALUES
          (1200,'alice','delivery',1210,FROM_UNIXTIME(1)),
@@ -423,18 +342,12 @@ async fn seed(pool: &MySqlPool) {
     .await
     .unwrap();
 
-    // Google Chat: a DM (Bob) with 2 messages + an aggregated reaction, and an
-    // empty group (no messages → last_ts None).
+    // Google Chat: a DM (Bob) with messages and a reaction, and an empty group.
     sqlx::query("INSERT INTO gchat_conversations (group_id, name, is_dm) VALUES ('gc1','Bob',1),('gc2','Team',0)").execute(pool).await.unwrap();
     sqlx::query(
-        // ⚠ `sender_id` is set here so a reactor can be RESOLVED to a name.
-        // `g-carol` deliberately belongs to nobody who has spoken, which is the
-        // other branch: an id the archive cannot put a name to still names a
-        // person, so it falls back to the id rather than to a blank.
-        // ⚠ `m2` QUOTE-REPLIES `m1`, and `m3` replies to a message this archive
-        // does not hold. Both shapes are here because the second is the one a
-        // careless resolver drops — rendering it as an ordinary message and
-        // losing the fact that it answered anything.
+        // `sender_id` lets a reactor resolve to a name; `g-carol` has never
+        // spoken, so falls back to the id. `m2` quote-replies `m1`; `m3` replies
+        // to a message the archive does not hold.
         "INSERT INTO gchat_messages (group_id, msg_id, reply_to_msg_id, sender_id, sender_name, is_self, ts_us, text) VALUES
          ('gc1','m1',NULL,'g-bob','Bob',0,6000000,'hello findme'),
          ('gc1','m2','m1','g-me','Me',1,7000000,'hey'),
@@ -448,11 +361,7 @@ async fn seed(pool: &MySqlPool) {
             .fetch_one(pool)
             .await
             .unwrap();
-    // ⚠ One picture whose bytes we HOLD and one we only know about. The second
-    // is the normal case for Google Chat and the one that must still render: the
-    // download URL is minted per render and expires, so the archive routinely
-    // knows a picture existed without having it. Drawing nothing would make that
-    // indistinguishable from a message that carried nothing.
+    // One picture whose bytes we hold and one we only know about.
     sqlx::query(
         "INSERT INTO gchat_attachments (message_id, name, mime, width, height, uuid, stored_path)
          VALUES (?, 'holiday.jpg', 'image/jpeg', 800, 600, 'u-1', 'abc123'),
@@ -468,10 +377,7 @@ async fn seed(pool: &MySqlPool) {
         .execute(pool)
         .await
         .unwrap();
-    // ⚠ TWO of the three reactors are named, deliberately. Google Chat's
-    // `list_topics` gives only `[emoji, count]`; who reacted comes from a second
-    // capture that may not have reached every message, so a SHORT list is the
-    // normal case and the count must stay the count.
+    // Two of three reactors are named, as when the second capture is partial.
     sqlx::query(
         "INSERT INTO gchat_reaction_authors (message_id, emoji, reactor_id) VALUES
          (?, '❤️', 'g-bob'), (?, '❤️', 'g-carol')",
@@ -482,8 +388,8 @@ async fn seed(pool: &MySqlPool) {
     .await
     .unwrap();
 
-    // Two attachments on the ts=1000 'hi' message: an image with bytes on the
-    // PVC (available), and a metadata-only PDF (history import, no bytes).
+    // Two attachments on the ts=1000 message: an image with bytes, and a
+    // metadata-only PDF.
     let hi: i64 =
         sqlx::query_scalar("SELECT id FROM messages WHERE thread_id='dm:alice' AND server_ts=1000")
             .fetch_one(pool)
@@ -495,19 +401,10 @@ async fn seed(pool: &MySqlPool) {
          (?, 'application/pdf', 'doc.pdf', 5678, NULL)",
     ).bind(hi).bind(hi).execute(pool).await.unwrap();
 
-    // IRC. Three conversations covering what the origin has that the others do
-    // not: a channel, a query, and the status pseudo-conversation irssi files
-    // server notices into — named after your own nick, and not a conversation.
-    //
-    // Every one carries non-speech rows (a join, a notice) because those are the
-    // bulk of the real archive: 385,012 notices against 425,748 messages in the
-    // tree this was built from. A query that forgets to exclude them looks fine
-    // against a fixture that has none.
+    // IRC: a channel, a query, and irssi's status window. Each carries
+    // non-speech rows (a join, a notice) the queries must exclude.
     sqlx::query(
-        // ⚠ The last two are the SAME TARGET ON TWO NETWORKS, which is real: an
-        // `s_20` on each of xinutec and euirc rendered as two identical rows
-        // until `network` was sent to the UI. Anything that drops the network
-        // from a conversation's identity fails here.
+        // The last two are one target on two networks.
         "INSERT INTO irc_conversations (network, target, is_channel, is_status) VALUES
          ('net','#chan',1,0),('net','carol',0,0),('net','me',0,1),
          ('xinutec','s_20',0,0),('euirc','s_20',0,0)",
@@ -527,10 +424,8 @@ async fn seed(pool: &MySqlPool) {
         .fetch_one(pool)
         .await
         .unwrap();
-    // 2020-01-01 00:00:00Z is 1577836800; each minute after it adds 60. Three of
-    // the channel's lines share 00:01 — irssi records `%H:%M` and no seconds, so
-    // a whole minute sharing one timestamp is the normal case here, not an edge
-    // one, and row id is what actually orders them.
+    // 2020-01-01 00:00:00Z is 1577836800. Three of the channel's lines share
+    // 00:01; the id orders them.
     sqlx::query(
         "INSERT INTO irc_messages (conversation_id, source_tag, file_date, line_no, sent_at, nick, is_self, kind, text) VALUES
          (?,'net','2020-01-01',1,'2020-01-01 00:00:00','alice',0,'event','alice has joined #chan'),
@@ -547,9 +442,7 @@ async fn seed(pool: &MySqlPool) {
     )
     .bind(carol)
     .execute(pool).await.unwrap();
-    // The `s_20` pair, one line each, in 2019 so they sort below the 2020 rows
-    // and above everything carrying a bare 1970 epoch. Distinct timestamps
-    // because ties here would order by whatever the SELECT happened to return.
+    // The `s_20` pair, in 2019, at distinct times.
     for (net, day) in [("xinutec", "2019-01-02"), ("euirc", "2019-01-01")] {
         let id: i32 = sqlx::query_scalar(
             "SELECT id FROM irc_conversations WHERE network=? AND target='s_20'",
@@ -565,17 +458,9 @@ async fn seed(pool: &MySqlPool) {
         .bind(id).bind(net).bind(day).bind(format!("{day} 12:00:00"))
         .execute(pool).await.unwrap();
     }
-    // The newest IRC rows of all, and neither may ever surface: the status log
-    // would otherwise sort to the top of the conversation list.
-    //
-    // ⚠ The second is a *message*, not a notice, and it is deliberate. In the
-    // real archive the status log holds nothing but notices, so excluding it by
-    // `is_status` and excluding notices by `kind` look like the same rule and
-    // one of them tests as redundant. They are not the same rule: `is_status`
-    // says this is not a conversation at all, whatever it contains. Without it,
-    // one message here — a nick you once held becoming a target, a note typed at
-    // yourself — becomes a search hit for a conversation the list refuses to
-    // show, which is a result you cannot open.
+    // The newest IRC rows, which must never surface. The second is a message:
+    // `is_status` excludes the window whatever it holds, separately from the
+    // `kind` filter.
     sqlx::query(
         "INSERT INTO irc_messages (conversation_id, source_tag, file_date, line_no, sent_at, nick, is_self, kind, text) VALUES
          (?,'net','2020-01-01',1,'2020-01-01 00:09:00','irc.example.invalid',0,'notice','findme motd'),
@@ -584,15 +469,8 @@ async fn seed(pool: &MySqlPool) {
     .bind(status).bind(status)
     .execute(pool).await.unwrap();
 
-    // The conversation list reads `irc_conversation_stats` rather than
-    // aggregating, so the fixture has to hold it too.
-    //
-    // ⚠ DERIVED FROM THE ROWS, never hand-written. In production this table is
-    // maintained by triggers that live in the `signal` repo — this suite cannot
-    // test those, and duplicating their logic here would let the copy drift into
-    // agreeing with a query that is wrong. Computing it with the documented
-    // backfill statement instead means the fixture asserts the one property that
-    // actually matters to this repo: the list agrees with the aggregate.
+    // Computed from the rows with signal's backfill statement, never written by
+    // hand, so the list is checked against the aggregate.
     sqlx::query(
         "INSERT INTO irc_conversation_stats (conversation_id, cnt, last_sent_at)
          SELECT conversation_id, COUNT(*), MAX(sent_at) FROM irc_messages
@@ -602,14 +480,9 @@ async fn seed(pool: &MySqlPool) {
     .await
     .unwrap();
 
-    // Telegram. A DM, a channel, and — deliberately — a message of each awkward
-    // kind: a service event the queries must leave out, one edited twice, one
-    // retracted whose words are still there, and two messages sharing a SECOND so
-    // the cursor's tie-break is exercised rather than assumed.
-    //
-    // The ids are the folded form the writer produces: a user is positive, a
-    // channel is -100 in front of its id. Written out rather than computed, because
-    // a fixture that reproduces the code's arithmetic cannot disagree with it.
+    // Telegram: a DM and a channel, with a service event, a message edited
+    // twice, a retracted one, and two sharing a second. Ids are written in their
+    // folded form rather than computed.
     sqlx::query(
         "INSERT INTO telegram_conversations (id, kind, name, username) VALUES
             (4242, 'dm', 'Tessa', 'tessa'),
@@ -635,12 +508,7 @@ async fn seed(pool: &MySqlPool) {
     .execute(pool)
     .await
     .unwrap();
-    // Formatting on msg 11, with one run RETRACTED.
-    //
-    // ⚠ The retracted row is the point. Editing a Telegram message replaces its
-    // entity list, and the archive dates the old rows rather than deleting them
-    // — so a reader that forgets `removed_at IS NULL` would bold a stretch that
-    // is no longer bold, or point a link at a URL the sender took back.
+    // Formatting on msg 11, one run retracted.
     sqlx::query(
         "INSERT INTO telegram_message_entities
             (conversation_id, msg_id, kind, offset_utf16, length_utf16, url, removed_at) VALUES
@@ -651,10 +519,8 @@ async fn seed(pool: &MySqlPool) {
     .execute(pool)
     .await
     .unwrap();
-    // Read marks. They have read up to msg 11 — so the outgoing 11 is read and
-    // anything of mine after it is not. The INBOX row is deliberately further
-    // along: it must not be mistaken for the outbox one, because it says how far
-    // *I* have read and nothing about them.
+    // Read marks: they have read up to msg 11. The inbox mark is further along
+    // and must not be mistaken for the outbox one.
     sqlx::query(
         "INSERT INTO telegram_read_marks (conversation_id, direction, max_id) VALUES
             (4242, 'outbox', 11),
@@ -664,10 +530,8 @@ async fn seed(pool: &MySqlPool) {
     .await
     .unwrap();
 
-    // Replies, by UPDATE for the same reason as Signal's quotes above. Four
-    // shapes: resolving, pointing at a DELETED message, pointing at a SERVICE
-    // event (which no page contains, so it must read as unresolved), and pointing
-    // at an id the archive does not hold.
+    // Replies, by UPDATE: one resolves, one targets a deleted message, one a
+    // service event, one an id the archive does not hold.
     sqlx::query(
         "UPDATE telegram_messages SET reply_to_msg_id = CASE msg_id
              WHEN 11 THEN 10
@@ -681,9 +545,7 @@ async fn seed(pool: &MySqlPool) {
     .await
     .unwrap();
 
-    // ⚠ The size lives on the MESSAGE, so the fixture puts it there — the media row
-    // records only what is on the volume. A fixture carrying it in both places would
-    // be reproducing the duplication that produced wrong sizes in production.
+    // The size lives on the message, as in the archive.
     sqlx::query(
         "UPDATE telegram_messages SET media_kind = 'photo', media_size = 204800, media_mime = 'image/jpeg'
           WHERE conversation_id = 4242 AND msg_id = 14",
@@ -699,9 +561,7 @@ async fn seed(pool: &MySqlPool) {
     .await
     .unwrap();
 
-    // Media: one photo whose bytes are held, one video that is only offered — the
-    // two states a reader has to tell apart, since `available` is what decides
-    // whether a picture is drawn or a "not stored" marker is.
+    // Media: a held photo and an offered video.
     sqlx::query(
         "INSERT INTO telegram_media (conversation_id, msg_id, state, stored_name, content_type) VALUES
             (4242, 14, 'stored', '4242_14', 'image/jpeg'),
@@ -711,9 +571,7 @@ async fn seed(pool: &MySqlPool) {
     .await
     .unwrap();
 
-    // ⚠ msg 16 carries an edit date AND Telegram's instruction to show it as
-    // unmodified, which is the case that printed "Edited" on a message Telegram
-    // itself shows as untouched.
+    // msg 16 has an edit date and `edit_hide`.
     sqlx::query(
         "UPDATE telegram_messages SET edit_hidden = 1 WHERE conversation_id = 4242 AND msg_id = 16",
     )
@@ -721,8 +579,7 @@ async fn seed(pool: &MySqlPool) {
     .await
     .unwrap();
 
-    // Two superseded versions of msg 13. The ORIGINAL carries no edit date — that
-    // is what makes it the oldest, and sorting it as an unknown would put it last.
+    // Two superseded versions of msg 13; the original has no edit date.
     sqlx::query(
         "INSERT INTO telegram_message_edits (conversation_id, msg_id, was_edited_at, text) VALUES
             (4242, 13, NULL, 'first go'),
@@ -731,7 +588,7 @@ async fn seed(pool: &MySqlPool) {
     .execute(pool)
     .await
     .unwrap();
-    // One drawable reaction and one custom emoji, which has no characters to show.
+    // A drawable reaction and a custom emoji.
     sqlx::query(
         "INSERT INTO telegram_reactions (conversation_id, msg_id, emoji, custom_emoji_id, cnt, chosen, removed_at) VALUES
             (4242, 10, '👍', NULL, 3, 0, NULL),
@@ -753,20 +610,10 @@ async fn conversations_normalise_and_sort_across_origins() {
     };
 
     let convs = archive::list_conversations(&pool).await.unwrap();
-    // Newest activity first. The TELEGRAM rows lead because their fixture carries
-    // real unix seconds (2023); then the IRC pair, whose fixture carries real
-    // datetimes (2020) — carol last spoke 00:03, #chan 00:01 — while the Signal and
-    // Google Chat rows carry bare epoch milliseconds in 1970. IRC ids are
-    // auto-increment, so they are looked up rather than written down here.
-    // Then: gc1(7000), group:g1(5000), dm:alice(4000), dm:tie(1500).
-    // Keyed on (network, target), not target — `s_20` alone matches two rows,
-    // which is the whole point of the pair.
-    //
-    // ⚠ The two conversations with NO messages tie at the end, and the order
-    // between them is the order they were collected in — `sort_by_key` is stable.
-    // That is a property of the implementation rather than of the answer, so it is
-    // named here: if the tail ever swaps, the collection order changed and nothing
-    // is broken.
+    // Newest activity first: Telegram (2023 seconds), then IRC (2020 datetimes),
+    // then Signal and Google Chat (1970 milliseconds). IRC ids are looked up.
+    // Keyed on (network, target), since `s_20` names two rows. The two empty
+    // conversations tie at the end in collection order (`sort_by_key` is stable).
     let irc_id = |network: &str, name: &str| {
         convs
             .iter()
@@ -800,8 +647,7 @@ async fn conversations_normalise_and_sort_across_origins() {
         "sort by last_ts desc"
     );
 
-    // ⚠ The regression: two rows that agree on everything the UI shows except
-    // the network. Without it they are indistinguishable on screen.
+    // Two rows differing only by network.
     let s20: Vec<_> = convs
         .iter()
         .filter(|c| c.name.as_deref() == Some("s_20"))
@@ -811,7 +657,6 @@ async fn conversations_normalise_and_sort_across_origins() {
     nets.sort_unstable();
     assert_eq!(nets, ["euirc", "xinutec"], "each carries its own network");
 
-    // And the other two origins have none to carry.
     for c in convs.iter().filter(|c| c.origin != Origin::Irc) {
         assert_eq!(c.network, None, "{} has no network", c.id);
     }
@@ -872,7 +717,6 @@ async fn signal_messages_flags_reactions_and_pagination() {
     assert!(page.messages[2].edited, "ts=3000 edited");
     assert!(page.messages[3].deleted, "ts=4000 deleted");
 
-    // Cursor walk with a tiny page size returns every message, in order, once.
     let mut seen = Vec::new();
     let mut cursor = None;
     loop {
@@ -902,10 +746,8 @@ async fn pagination_never_skips_messages_sharing_a_timestamp() {
         return;
     };
 
-    // dm:tie has 4 messages all at server_ts=1500. Walk two-at-a-time: a bare-ts
-    // cursor would fetch the first page, set the cursor to 1500, then `server_ts <
-    // 1500` returns nothing — losing two messages. The (ts,id) cursor recovers all
-    // four, in order.
+    // dm:tie's four messages share server_ts 1500; a timestamp-only cursor would
+    // lose two of them.
     let mut seen = Vec::new();
     let mut cursor = None;
     loop {
@@ -953,10 +795,8 @@ async fn signal_attachments_available_flag_and_blob_lookup() {
         .expect("pdf attachment");
     assert!(!pdf.available, "metadata-only attachment is not available");
 
-    // Other messages have no attachments.
     assert!(page.messages[1].attachments.is_empty());
 
-    // Blob lookup: present for the image (with bytes), absent for the PDF (none).
     let img_id: i64 = img.id.parse().unwrap();
     let pdf_id: i64 = pdf.id.parse().unwrap();
     assert_eq!(
@@ -987,11 +827,7 @@ async fn gchat_messages_convert_us_and_self() {
         (hey.reactions[0].emoji.as_str(), hey.reactions[0].count),
         ("❤️", 3)
     );
-    // ⚠ THREE REACTED, TWO ARE NAMED, AND THE COUNT STAYS THREE. Google Chat
-    // gives a reaction as `[emoji, count]` and never who; the names come from a
-    // second capture that has not reached every message. Deriving the count from
-    // the names would under-report every reaction that capture has not covered —
-    // which, before `import_gchat_reactors.py` ran, was all of them.
+    // Three reacted, two are named: the count stays three.
     assert_eq!(
         hey.reactions[0].who,
         vec!["Bob".to_owned(), "g-carol".to_owned()],
@@ -1009,12 +845,8 @@ async fn search_spans_origins_finds_deleted_newest_first() {
     let hits = archive::search(&pool, "findme", 50, archive::SearchScope::Everywhere)
         .await
         .unwrap();
-    // Three of the fixture's six 'findme' rows. The other three are IRC and must
-    // not surface: a server notice in #chan, a notice in the status log, and a
-    // *message* in the status log — the newest row of all, and the one that
-    // separates the two exclusions. Drop `kind` and the notices appear; drop
-    // `is_status` and that message appears, first, in a conversation the list
-    // will not show.
+    // Three of the six 'findme' rows. The IRC three must not surface: a server
+    // notice, and a notice and a message in the status window.
     assert_eq!(
         hits.len(),
         3,
@@ -1034,12 +866,7 @@ async fn search_spans_origins_finds_deleted_newest_first() {
     );
     assert_eq!(hits[2].conversation_id, "group:g1");
 
-    // ⚠ A RETRACTED MESSAGE IS FINDABLE, AND SAYS SO. It was filtered out in
-    // SQL until 2026-09-04, while a thread sent the same text and hid it behind a
-    // click: one concept, two policies. Both halves matter here — an empty result
-    // means search has silently gone back to deciding this for itself, and a hit
-    // with `deleted: false` means the flag stopped travelling and the reader will
-    // print somebody's retraction in the list.
+    // A retracted message is found, and flagged.
     let gone = archive::search(&pool, "gone", 50, archive::SearchScope::Everywhere)
         .await
         .unwrap();
@@ -1047,25 +874,16 @@ async fn search_spans_origins_finds_deleted_newest_first() {
     assert_eq!(gone[0].snippet, "gone");
     assert!(gone[0].deleted, "and the hit says it was retracted");
 
-    // Nothing else is: a flag that came back true for every row would satisfy the
-    // assertion above and mark the whole archive as retracted.
+    // And only that one.
     assert!(
         hits.iter().all(|h| !h.deleted),
         "the live 'findme' hits are not marked deleted"
     );
 }
 
-/// A short page must not be filled by rows that were going to be thrown away.
-///
-/// ⚠ This is the hazard the fast IRC query shape introduces, and nothing else in
-/// the suite would catch it. The scan has to happen *before* the join to
-/// `irc_conversations` — joined the other way round the optimizer reads 3.7M
-/// rows by index lookup and search takes 32s — so `is_status` moves inside the
-/// derived table as a subquery. Leave it outside, as a condition on the join,
-/// and it filters rows the `LIMIT` has already spent: the newest `findme` in
-/// the whole fixture is the status log's, so a limit of one would return the
-/// status row from the scan, drop it in the join, and hand back a page missing
-/// the hit it should have contained.
+/// `is_status` must filter inside the IRC scan, before `LIMIT`: the newest
+/// `findme` is the status window's, so filtering after the join would return a
+/// page one short.
 #[tokio::test]
 async fn search_applies_the_status_exclusion_before_the_limit() {
     let Some(pool) = seeded_pool().await else {
@@ -1083,11 +901,7 @@ async fn search_applies_the_status_exclusion_before_the_limit() {
     );
 }
 
-/// The status log is left out and only speech is counted.
-///
-/// Its notice is the newest IRC row in the fixture, so a query that dropped the
-/// `is_status` filter would not merely include it — it would put a conversation
-/// with yourself, containing nothing you wrote, at the top of the list.
+/// The status window is left out, and only speech is counted.
 #[tokio::test]
 async fn irc_conversations_leave_out_the_status_log_and_count_only_speech() {
     let Some(pool) = seeded_pool().await else {
@@ -1096,7 +910,6 @@ async fn irc_conversations_leave_out_the_status_log_and_count_only_speech() {
 
     let convs = archive::list_conversations(&pool).await.unwrap();
     let irc: Vec<_> = convs.iter().filter(|c| c.origin == Origin::Irc).collect();
-    // (network, target), because target alone does not identify one.
     let named: Vec<_> = irc
         .iter()
         .map(|c| (c.network.as_deref(), c.name.as_deref()))
@@ -1134,14 +947,8 @@ async fn irc_conversations_leave_out_the_status_log_and_count_only_speech() {
     assert_eq!(carol.kind, ConversationKind::Dm, "a query is a DM");
 }
 
-/// A page carries what was said and nothing else, and an action is marked as
-/// one — in `kind`, with the body left as the words alone.
-///
-/// ⚠ It used to arrive as `* waves`, the star folded into the text by the query.
-/// That made the two indistinguishable to any second reader: the copy formatter
-/// could not tell an action from a message beginning with a star, and neither
-/// could a test. Drawing the star is now the client's job, which is what every
-/// IRC client does with the same two fields.
+/// A page carries only speech; an action is marked in `kind`, its body the words
+/// alone.
 #[tokio::test]
 async fn irc_page_shows_speech_only_and_marks_actions() {
     let Some(pool) = seeded_pool().await else {
@@ -1192,10 +999,7 @@ async fn irc_page_shows_speech_only_and_marks_actions() {
     );
 }
 
-/// ⚠ Three of the channel's lines share one minute, which is the *normal* case
-/// for this origin rather than an edge one: irssi records `%H:%M` and no
-/// seconds. Ordering therefore rests entirely on row id, which the importer
-/// makes meaningful by walking files in sorted path order.
+/// Three of the channel's lines share a minute, so the id orders them.
 #[tokio::test]
 async fn irc_page_orders_lines_that_share_a_minute() {
     let Some(pool) = seeded_pool().await else {
@@ -1208,8 +1012,7 @@ async fn irc_page_orders_lines_that_share_a_minute() {
         .find(|c| c.origin == Origin::Irc && c.name.as_deref() == Some("#chan"))
         .unwrap();
 
-    // One at a time, paging back through a single shared timestamp: the case a
-    // ts-only cursor cannot express, because every row's ts is equal.
+    // One at a time through a shared timestamp.
     let mut seen = Vec::new();
     let mut cursor = None;
     loop {
@@ -1251,9 +1054,7 @@ async fn irc_target_names_the_network_and_flags_the_status_log() {
     assert_eq!(t.target, "carol");
     assert!(!t.is_status);
 
-    // The status pseudo-conversation is not in list_conversations at all — the
-    // reader hides it — so it is looked up by the id the fixture gave it. The
-    // sender has to refuse it, and can only do that if this says so.
+    // The status window is not listed, so it is looked up by the fixture's id.
     let status: i32 = sqlx::query_scalar("SELECT id FROM irc_conversations WHERE target='me'")
         .fetch_one(&pool)
         .await
@@ -1273,13 +1074,8 @@ async fn irc_target_names_the_network_and_flags_the_status_log() {
     );
 }
 
-/// ⚠ The one that matters: the row the send path writes and the row the hourly
-/// importer writes for the same log line must be THE SAME ROW.
-///
-/// They are written by different programs in different repositories, minutes to
-/// an hour apart, and nothing but the unique key makes them one message. Get the
-/// key wrong and nothing fails — the conversation just shows what Pippijn said
-/// twice.
+/// The row the send path writes and the row the importer later writes for the
+/// same log line are one row, by the unique key.
 #[tokio::test]
 async fn a_sent_message_and_its_later_import_are_one_row() {
     let Some(pool) = seeded_pool().await else {
@@ -1294,9 +1090,7 @@ async fn a_sent_message_and_its_later_import_are_one_row() {
     let id = carol.to_string();
 
     let sent = messages::irc_send::Sent {
-        // The tag irssi reported, which is what the importer takes from the log
-        // file's path — not the conversation's network, which `--map` may have
-        // rewritten.
+        // The tag irssi reported, as the importer takes it from the path.
         tag: "net".to_string(),
         nick: "me".to_string(),
         text: "sent from the phone".to_string(),
@@ -1313,8 +1107,7 @@ async fn a_sent_message_and_its_later_import_are_one_row() {
         .unwrap();
     assert!(wrote, "the echo is written so it can be shown at once");
 
-    // Now the importer, reading the same line out of irssi's log an hour later.
-    // This is exactly `insert_irc_line` in the signal repo: INSERT IGNORE on
+    // The importer's write: signal's `insert_irc_line`, INSERT IGNORE on
     // (conversation, source_tag, file_date, line_no).
     let importer = sqlx::query(
         "INSERT IGNORE INTO irc_messages
@@ -1340,8 +1133,7 @@ async fn a_sent_message_and_its_later_import_are_one_row() {
     .unwrap();
     assert_eq!(n, 1, "one message, however many times it is written");
 
-    // And the timestamp came from the log line, not from the clock — otherwise
-    // the message sorts by when the request happened to be served.
+    // The timestamp comes from the log line, not the clock.
     let at: String = sqlx::query_scalar(
         "SELECT DATE_FORMAT(sent_at, '%Y-%m-%d %H:%i:%s') FROM irc_messages
          WHERE conversation_id = ? AND file_date = '2020-01-02'",
@@ -1359,9 +1151,7 @@ async fn a_sent_message_and_its_later_import_are_one_row() {
         .unwrap();
 }
 
-/// A send that irssi could not find in the log is still a send. Recording
-/// nothing is right — the importer will pick the line up — and claiming failure
-/// would invite sending it twice.
+/// A send irssi could not find in the log records nothing; the importer will.
 #[tokio::test]
 async fn an_unlogged_send_records_nothing_and_is_not_an_error() {
     let Some(pool) = seeded_pool().await else {
@@ -1388,10 +1178,7 @@ async fn an_unlogged_send_records_nothing_and_is_not_an_error() {
     );
 }
 
-/// irssi records `%H:%M` and nothing finer, and the date comes from the log
-/// file's path — so `sent_at` has to be read off the line, not off the clock.
-/// Reading the clock would disagree with the importer for the same line whenever
-/// a send straddled a minute, and `sent_at` is what the reader orders by.
+/// `sent_at` is read off the log line, as the importer reads it.
 #[tokio::test]
 async fn the_echo_takes_its_timestamp_from_the_log_line() {
     let Some(pool) = seeded_pool().await else {
@@ -1405,9 +1192,7 @@ async fn the_echo_takes_its_timestamp_from_the_log_line() {
         .unwrap();
     let id = carol.to_string();
 
-    // ⚠ `< nick>` — the space is the CHANNEL MODE, not part of the name. It is
-    // how an unopped speaker appears in a channel, and it must not throw the
-    // timestamp off.
+    // `< nick>`: the space is the channel mode column.
     let sent = messages::irc_send::Sent {
         tag: "net".to_string(),
         nick: "me".to_string(),
@@ -1434,10 +1219,7 @@ async fn the_echo_takes_its_timestamp_from_the_log_line() {
     .unwrap();
     assert_eq!(at, "2020-01-03 09:05:00");
 
-    // A line that is not shaped like a log line records nothing rather than
-    // guessing a time: a guessed one puts the message in the wrong place in the
-    // conversation, where leaving it to the import puts it in the right place,
-    // late.
+    // Not a log line: record nothing rather than guess a time.
     for line in ["--- Log opened", "", "1:01 x", "aa:bb x"] {
         let odd = messages::irc_send::Sent {
             tag: "net".to_string(),
@@ -1467,29 +1249,13 @@ async fn the_echo_takes_its_timestamp_from_the_log_line() {
 
 // ---- the send guard, through the real router --------------------------------
 
-/// ⚠ THIS LIVES HERE RATHER THAN IN `tests/api_routes.rs`, AND THAT IS THE
-/// CHEAPER HALF OF A REAL CHOICE. The guard needs a row in
-/// `irc_conversations`, and `api_routes.rs` deliberately touches no archive
-/// table: `seed` below DROPs and recreates them, and cargo runs test binaries in
-/// parallel against the one database named by `MESSAGES_TEST_DATABASE_URL`, so a
-/// fixture there would race this file's DDL. The alternative is a second
-/// database, which means teaching `dev-lint`'s `with-test-db` to take more than
-/// one `--database` — a shared tool three repositories gate on. That is the right
-/// move when a SECOND route test needs archive rows; it is not worth it for the
-/// first. The cost of being here is that one HTTP-level test sits among the
-/// query-layer ones, which this comment is paying.
+/// Here rather than in `tests/api_routes.rs`, which touches no archive table:
+/// the two binaries share one database and `seed` drops tables.
 ///
-/// ⚠ THE FILED REASON WAS HALF OF IT. #1392 said the guard was uncovered for
-/// want of a row. True and insufficient: `routes/api.rs::send` reads
-/// `let Some(sender) = app.irc` BEFORE it looks the conversation up, and
-/// `api_routes.rs` builds its state with `irc_send: None`, so every send case
-/// there stops at that line and reaches no guard whatever the database holds.
-/// Covering this needs a CONFIGURED SENDER as well as the row. The sender never
-/// connects — the guard returns before `send()` is called — so a key that could
-/// not authenticate anywhere is exactly right.
+/// `send` checks for a configured sender before looking the conversation up, so
+/// this needs one. It never connects.
 async fn sending_state(pool: &MySqlPool) -> AppState {
-    // Under `nix develop` TMPDIR has been unreadable, so use the directory cargo
-    // hands integration tests, as `tests/irc_send_key.rs` does.
+    // TMPDIR can be unreadable under `nix develop`.
     let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("send-guard");
     let (keys, work) = (root.join("secret"), root.join("run"));
     let _ = std::fs::remove_dir_all(&root);
@@ -1503,10 +1269,7 @@ async fn sending_state(pool: &MySqlPool) -> AppState {
     .unwrap();
 
     let send = messages::config::IrcSend {
-        // ⚠ Port 1, so the ordinary-conversation half FAILS FAST and locally
-        // rather than reaching for anything. What that half asserts is "got past
-        // the guard", and an unreachable host proves that better than a reachable
-        // one would — nothing can be sent by accident.
+        // Port 1: the ordinary half fails fast, after the guard.
         host: "127.0.0.1".to_string(),
         port: 1,
         key_dir: keys.display().to_string(),
@@ -1529,8 +1292,6 @@ async fn sending_state(pool: &MySqlPool) -> AppState {
         link_images_dir: "/link-images".into(),
         telegram_media_dir: "/telegram-media".into(),
         link_fetcher_url: "http://link-fetch.invalid".into(),
-        // Unread by the handler, which consults `app.irc` — the prepared sender
-        // above is what decides whether sending is configured.
         irc_send: None,
     };
     AppState::new(pool.clone(), cfg, reqwest::Client::new(), sender)
@@ -1541,11 +1302,7 @@ const SEND_SECRET: &str = "test session secret";
 async fn send_to(pool: &MySqlPool, conversation_id: i32) -> axum::http::StatusCode {
     use tower::ServiceExt;
 
-    // ⚠ `seed` DROPs `sessions` along with the archive tables, and recreates only
-    // the archive ones — `sessions` is the app's own table and `db::ensure_schema`
-    // is the single place that builds it. Without this the request arrives with a
-    // cookie naming a row in a table that does not exist, which fails as a
-    // database error rather than as the 401 it looks like.
+    // `seed` drops `sessions` and recreates only the archive tables.
     messages::db::ensure_schema(pool)
         .await
         .expect("sessions table");
@@ -1579,14 +1336,8 @@ async fn send_to(pool: &MySqlPool, conversation_id: i32) -> axum::http::StatusCo
         .status()
 }
 
-/// The status log is refused, and an ordinary conversation is NOT.
-///
-/// ⚠ BOTH HALVES, because the first alone passes against a handler that 404s
-/// every send. That is not a hypothetical failure: a one-sided test is exactly
-/// what would have let a broken send path read as a working guard. The second
-/// half asserts only "not 404" — it goes on to attempt a real ssh to a closed
-/// port and fails there, which is the distinction being drawn: refused BY THE
-/// GUARD versus refused LATER.
+/// The status window is refused and an ordinary conversation is not; the
+/// second half asserts only "not 404", since the send then fails at ssh.
 #[tokio::test]
 async fn sending_to_the_status_log_is_refused_and_to_a_conversation_is_not() {
     let Some(pool) = seeded_pool().await else {
@@ -1618,12 +1369,7 @@ async fn sending_to_the_status_log_is_refused_and_to_a_conversation_is_not() {
 
 // ---- what a leading slash means (no DB) -------------------------------------
 
-/// ⚠ `/me` WENT OUT AS FOUR LITERAL CHARACTERS, measured 2026-08-14: typed
-/// into the composer it reached `#linux` as the text `/me …` rather than as an
-/// action. The send path hands the composer's words to irssi as DATA that never
-/// reaches a command parser — that is what makes `/exec` and an embedded newline
-/// harmless from a web request — and the price was that the one "command" which
-/// is really content went out verbatim.
+/// The send path gives irssi data, never commands, so `/me` is translated here.
 #[test]
 fn a_leading_slash_means_an_action_an_escape_or_nothing() {
     use messages::irc_send::parse_slash;
@@ -1631,42 +1377,26 @@ fn a_leading_slash_means_an_action_an_escape_or_nothing() {
     assert_eq!(parse_slash("/me waves"), ("waves", true));
     assert_eq!(parse_slash("/me  padded "), (" padded ", true));
 
-    // IRC's own escape, so a literal leading slash is still sayable.
+    // IRC's escape for a literal leading slash.
     assert_eq!(parse_slash("//me waves"), ("/me waves", false));
     assert_eq!(parse_slash("//quit"), ("/quit", false));
 
-    // ⚠ NOT refused, and this is the case that matters in #linux: a message
-    // that happens to start with a path is ordinary text, and rejecting every
-    // unknown slash word would break it to catch a typo that is harmless
-    // anyway — none of these reach a parser.
+    // A message starting with a path is ordinary text.
     assert_eq!(
         parse_slash("/usr/bin/foo is broken"),
         ("/usr/bin/foo is broken", false)
     );
     assert_eq!(parse_slash("/quit"), ("/quit", false));
 
-    // A bare `/me` with nothing after it is not an action with an empty body —
-    // the plugin would refuse empty text and the send would fail for a reason
-    // the person could not act on.
+    // A bare `/me` is not an action with an empty body.
     assert_eq!(parse_slash("/me"), ("/me", false));
     assert_eq!(parse_slash("/me   "), ("/me   ", false));
 
     assert_eq!(parse_slash("ordinary words"), ("ordinary words", false));
 }
 
-/// A hit must be able to say WHERE it is, not only what it says.
-///
-/// #1401: clicking a search result opens the conversation at its NEWEST page,
-/// and the hit may be years back. Landing on it needs a position, and the
-/// position has to be the same opaque `(native_ts, id)` the pager already
-/// speaks — a bare `ts` cannot express each origin's native precision (Signal
-/// ms, Google Chat µs, IRC whole seconds), and a bare row id cannot be compared
-/// across a page boundary.
-///
-/// The test that matters is the ROUND TRIP, one origin at a time: a cursor is
-/// only useful if `messages_page` accepts it and the page it returns is the one
-/// containing the hit. Asserting the string's shape would pass while the two
-/// halves disagreed about units, which is the failure that costs an afternoon.
+/// A search hit's cursor, passed to `messages_page`, lands on the hit, for each
+/// origin.
 #[tokio::test]
 async fn a_search_hit_carries_a_cursor_the_pager_accepts() {
     let Some(pool) = seeded_pool().await else {
@@ -1680,10 +1410,7 @@ async fn a_search_hit_carries_a_cursor_the_pager_accepts() {
         let cursor = archive::parse_cursor(&hit.cursor)
             .unwrap_or_else(|| panic!("{:?} hit minted an unparseable cursor", hit.origin));
 
-        // Paging strictly OLDER than the hit must not return the hit itself: an
-        // off-by-one here is a cursor pointing one row past where it claims,
-        // which shows up as the reader landing next to the message rather than
-        // on it.
+        // Strictly older than the hit excludes it.
         let older = archive::messages_page(
             &pool,
             hit.origin,
@@ -1702,34 +1429,15 @@ async fn a_search_hit_carries_a_cursor_the_pager_accepts() {
     }
 }
 
-/// Walking FORWARD returns the same messages as walking back, and no others.
-///
-/// #1401: the thread's loaded window is anchored to the newest message, so the
-/// only direction it can grow is backwards. Landing on a 2005 search hit needs
-/// the other end — without it the hit is a dead end you can only scroll away
-/// from, which is half a conversation and usually the half being searched for.
-///
-/// The property, rather than a hand-written expected list: read the whole
-/// conversation, then walk it forward two at a time, and the two must agree
-/// message for message. A direction that skips a row, repeats one, or stops
-/// early differs from the whole — and each of those is a real way to get `>` and
-/// `ASC` wrong, where a fixed list catches only the one the author thought of.
+/// Walking forward returns the same messages as walking back, and no others.
 #[tokio::test]
 async fn paging_forward_mirrors_reading_the_whole_conversation() {
     let Some(pool) = seeded_pool().await else {
         return;
     };
 
-    // ⚠ `gc1`, not `group:g1` — the latter is a SIGNAL thread. Each origin
-    // spells a conversation id its own way, and picking the wrong one gives an
-    // empty page, which reads as "the fixture is small" rather than as a typo.
-    //
-    // ⚠ `dm:tie` is the row that makes this test bite. Its four messages all
-    // share `server_ts = 1500`, so the ONLY thing ordering them is the id
-    // tie-break — which is the half of the comparison a forward query gets wrong
-    // by copying the backward one. Without it, flipping `m.id > ?` to `m.id < ?`
-    // passed: the other conversations have distinct timestamps, so the ts
-    // comparison alone carried the whole walk. Measured, not assumed.
+    // `gc1` is the Google Chat id; `group:g1` is Signal's. `dm:tie` is what
+    // makes this bite: only the id orders its four messages.
     for (origin, cid) in [
         (Origin::Signal, "dm:alice"),
         (Origin::Signal, "dm:tie"),
@@ -1739,20 +1447,15 @@ async fn paging_forward_mirrors_reading_the_whole_conversation() {
         let whole = archive::messages_page(&pool, origin, cid, None, 1000, PageDir::Older)
             .await
             .unwrap();
-        // By ID, not by ts. `dm:tie`'s four messages share a timestamp, so a ts
-        // list is [1500, 1500, 1500, 1500] and reads identical however the rows
-        // are ordered — the assertion would hold while the order was wrong.
+        // By id: `dm:tie`'s timestamps are all equal.
         let all: Vec<String> = whole.messages.iter().map(|m| m.id.clone()).collect();
         assert!(all.len() >= 2, "{origin:?}: fixture too small to page");
 
-        // `next_cursor` of a page that reached the start IS the oldest row, so
-        // it is where a forward walk begins — and that row is behind the walk,
-        // which is why it is seeded by hand rather than fetched.
+        // The oldest row starts the walk, so it is seeded by hand.
         let mut fwd = vec![all[0].clone()];
         let mut cursor = whole.next_cursor.as_deref().and_then(parse_cursor);
         while let Some(c) = cursor {
-            // ONE at a time: every step is then a page boundary, which is where
-            // an off-by-one in `>` or a mis-minted `prev_cursor` actually lives.
+            // One at a time, so every step is a page boundary.
             let p = archive::messages_page(&pool, origin, cid, Some(c), 1, PageDir::Newer)
                 .await
                 .unwrap();
@@ -1770,11 +1473,8 @@ async fn paging_forward_mirrors_reading_the_whole_conversation() {
     }
 }
 
-/// Both ends, on one page. `next_cursor` addresses the OLDEST row and
-/// `prev_cursor` the NEWEST, whichever way the page was fetched — a window that
-/// can grow in two directions needs a handle on each, and a `prev_cursor` that
-/// silently tracked the fetch direction instead of the page would send a
-/// forward scroll backwards.
+/// `next_cursor` addresses the oldest row and `prev_cursor` the newest,
+/// whichever way the page was fetched.
 #[tokio::test]
 async fn a_page_addresses_both_of_its_ends() {
     let Some(pool) = seeded_pool().await else {
@@ -1795,7 +1495,6 @@ async fn a_page_addresses_both_of_its_ends() {
     let newest = parse_cursor(whole.prev_cursor.as_deref().unwrap()).unwrap();
     assert!(oldest.0 < newest.0, "the two ends are not the same row");
 
-    // Older than the oldest is the start of the conversation: nothing before it.
     let before = archive::messages_page(
         &pool,
         Origin::Signal,
@@ -1811,7 +1510,6 @@ async fn a_page_addresses_both_of_its_ends() {
         "nothing precedes the first message"
     );
 
-    // Newer than the newest is the present: nothing after it either.
     let after = archive::messages_page(
         &pool,
         Origin::Signal,
@@ -1828,19 +1526,8 @@ async fn a_page_addresses_both_of_its_ends() {
     );
 }
 
-/// A landing must contain the message it landed on.
-///
-/// ⚠ THE BUG THIS EXISTS FOR, shipped 2026-09-08 and found by looking at a real
-/// phone. `messages_page` is strict in BOTH directions — `Older` is `< cursor`
-/// and `Newer` is `> cursor` — so a landing composed of one of each skipped the
-/// row the cursor addresses. The reader was put one message PAST the hit, and
-/// the marker naming "the message you searched for" pointed at its neighbour.
-///
-/// Nothing caught it. The backend tests were right about each direction on its
-/// own; the frontend test mocked a backend whose forward half included the hit,
-/// which is what the author believed and not what the code did. A belief written
-/// into a mock cannot be contradicted by the thing it stands for — so the
-/// contract needs a test on THIS side, where both halves are real.
+/// A landing contains the message it landed on. `Older` and `Newer` are both
+/// strict, so this needs `AtAndNewer`.
 #[tokio::test]
 async fn a_landing_contains_the_message_it_landed_on() {
     let Some(pool) = seeded_pool().await else {
@@ -1873,10 +1560,7 @@ async fn a_landing_contains_the_message_it_landed_on() {
         .await
         .unwrap();
 
-        // ⚠ By ID, not by ts. IRC records whole SECONDS — irssi's default format
-        // has no seconds at all — so several rows share a timestamp and a ts
-        // comparison cannot name a row: the first version of this assertion
-        // counted three "occurrences" of a hit that appeared once.
+        // By id: IRC rows share timestamps.
         let want = cursor.1.to_string();
         let landed: Vec<&str> = older
             .messages
@@ -1889,8 +1573,7 @@ async fn a_landing_contains_the_message_it_landed_on() {
             "{:?}: the landing is missing the hit (row {want}) — loaded {landed:?}",
             hit.origin
         );
-        // And exactly once: two inclusive halves would draw the message twice,
-        // which reads as the archive repeating itself.
+        // Exactly once.
         assert_eq!(
             landed.iter().filter(|&&i| i == want).count(),
             1,
@@ -1902,18 +1585,10 @@ async fn a_landing_contains_the_message_it_landed_on() {
 
 // ---- an edited message is one message --------------------------------------
 
-/// ⚠ A THREAD PER TEST, because these run in PARALLEL. One shared thread id
-/// had three tests deleting and re-inserting each other's rows, and the page came
-/// back with three messages where two were expected — a failure that reads
-/// exactly like the collapsing being wrong.
-///
-/// Each is its own thread, so the fixture's counts and conversation list are
-/// untouched too: there is no `conversations` row for these, and every existing
-/// assertion is about threads that have one.
+/// A thread per test, since they run in parallel. No `conversations` row, so
+/// the fixture's lists are untouched.
 async fn seed_edits(pool: &MySqlPool, thread: &str) {
-    // The archive's own shape: an original, two revisions of it, and an
-    // untouched message after — because a page must keep its order and its
-    // neighbours while one of its messages collapses three rows into one.
+    // An original, two revisions, and a message after.
     sqlx::query("DELETE FROM messages WHERE thread_id = ?")
         .bind(thread)
         .execute(pool)
@@ -1940,10 +1615,7 @@ async fn seed_edits(pool: &MySqlPool, thread: &str) {
     }
 }
 
-/// ⚠ AN EDIT IS A SEPARATE ROW, AND BOTH WERE DRAWN. Signal sends a revision
-/// carrying `edit_of_ts`, so a thread showed the same message twice — the old
-/// text where it was said, the new text minutes later, nothing saying they were
-/// one thing. 254 messages in the live archive are in that state.
+/// A revision row is not drawn as a second message.
 #[tokio::test]
 async fn an_edited_message_is_one_message_saying_what_it_says_now() {
     let Some(pool) = seeded_pool().await else {
@@ -1971,10 +1643,8 @@ async fn an_edited_message_is_one_message_saying_what_it_says_now() {
     assert_eq!(page.messages[1].body.as_deref(), Some("a later message"));
 }
 
-/// ⚠ Each version is stamped with when IT was sent, which is the row BEFORE it:
-/// a version was current until the next one arrived. Stamping each with the row
-/// carrying its text is the obvious way to write this and dates every version
-/// wrong — it was the first thing this code got wrong.
+/// Each version is dated by the row before it: it was current until the next
+/// arrived.
 #[tokio::test]
 async fn the_history_is_every_earlier_version_in_order() {
     let Some(pool) = seeded_pool().await else {
@@ -2009,13 +1679,8 @@ async fn a_message_nobody_edited_has_no_history() {
     assert!(page.messages[1].edits.is_empty());
 }
 
-/// The Telegram conversations reach the list with the kind they were stored with,
-/// and the count leaves out what nobody said.
-///
-/// ⚠ `channel` is the assertion that matters. It is a THIRD `ConversationKind`, and
-/// the cheap thing to have done was fold it into `group` — which would have passed
-/// every other test in this file and left a broadcast feed indistinguishable from
-/// the people in it.
+/// Telegram conversations keep their stored kind, `channel` included, and the
+/// count leaves out service events.
 #[tokio::test]
 async fn telegram_conversations_keep_their_kind_and_count_only_speech() {
     let Some(pool) = seeded_pool().await else {
@@ -2033,33 +1698,18 @@ async fn telegram_conversations_keep_their_kind_and_count_only_speech() {
     let dm = tg("4242");
     assert_eq!(dm.kind, ConversationKind::Dm);
     assert_eq!(dm.name.as_deref(), Some("Tessa"));
-    // Seven rows in the fixture; the service event is not one of them.
     assert_eq!(dm.message_count, 6, "the service event must not be counted");
-    // The newest SPEECH, in milliseconds. Still not the service event at
-    // 1700000240 — msg 16 sits after it, which is what makes that assertion mean
-    // something rather than passing because nothing followed the event.
+    // The newest speech, in milliseconds; msg 16 follows the service event.
     assert_eq!(dm.last_ts, Some(1_700_000_260_000));
 
     assert_eq!(tg("-1000000000055").kind, ConversationKind::Channel);
     assert_eq!(tg("-77").kind, ConversationKind::Group);
-    // A conversation with no messages still appears, as the other origins' do.
     assert_eq!(tg("-77").message_count, 0);
     assert_eq!(tg("-77").last_ts, None);
 }
 
-/// A page of a Telegram conversation: oldest-first, SERVICE EVENTS INCLUDED, and
-/// the two messages sharing a second both present and in a stable order.
-///
-/// ⚠ The service event used to be filtered out here, and that was the bug.
-/// `kind = 'service'` excluded 73 events from the only thing that reads them —
-/// every call in the archive among them — so they were captured, stored, and
-/// then made invisible. They arrive as `Action`, the shape IRC already uses for
-/// something done rather than said.
-///
-/// ⚠ The shared second is the point. Telegram's timestamps are SECONDS — all it
-/// gives — so a page boundary inside one second is not a rare case here the way a
-/// shared millisecond is elsewhere. A cursor comparing the timestamp alone would
-/// either repeat one of those two messages or lose it.
+/// A Telegram page: oldest first, service events as actions, and the two
+/// messages sharing a second both present in a stable order.
 #[tokio::test]
 async fn a_telegram_page_is_speech_in_order_including_a_shared_second() {
     let Some(pool) = seeded_pool().await else {
@@ -2069,7 +1719,6 @@ async fn a_telegram_page_is_speech_in_order_including_a_shared_second() {
     let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 3, PageDir::Older)
         .await
         .unwrap();
-    // The newest three, ascending, the service event among them.
     let bodies: Vec<Option<&str>> = page.messages.iter().map(|m| m.body.as_deref()).collect();
     assert_eq!(
         bodies,
@@ -2081,8 +1730,6 @@ async fn a_telegram_page_is_speech_in_order_including_a_shared_second() {
     );
     assert!(page.has_more);
 
-    // Page back one more, through the cursor rather than by guessing an offset. The
-    // boundary lands inside 1700000060, which two messages share.
     let older = archive::messages_page(
         &pool,
         Origin::Telegram,
@@ -2100,12 +1747,7 @@ async fn a_telegram_page_is_speech_in_order_including_a_shared_second() {
         "both messages of the shared second, once each"
     );
 
-    // ⚠ AND ONE MORE PAGE, WHICH IS WHERE THE SHARED SECOND ACTUALLY BITES.
-    // This boundary sits ON 1700000060 with another row at the same second just
-    // above it, so a cursor comparing only the timestamp would hand `ook hoi`
-    // back a second time or drop `hoi` entirely. Adding the service event to the
-    // page shifted the earlier boundary off that second, and without this the
-    // test would still have passed while no longer testing the thing it is for.
+    // This boundary sits on 1700000060 with another row in the same second.
     let oldest = archive::messages_page(
         &pool,
         Origin::Telegram,
@@ -2125,13 +1767,7 @@ async fn a_telegram_page_is_speech_in_order_including_a_shared_second() {
     assert!(!oldest.has_more, "that is the start of the conversation");
 }
 
-/// Telegram's edit history, oldest first, with the ORIGINAL first.
-///
-/// ⚠ This is where Telegram differs from Signal and where one function for both
-/// would have been wrong. Signal's versions each carry their own send time;
-/// Telegram's superseded versions carry the `edit_date` they were replaced at, and
-/// the original carries NONE. Sorting NULL as unknown puts the first thing said at
-/// the end of its own history.
+/// Telegram's edit history, the original first: it carries no edit date.
 #[tokio::test]
 async fn a_telegram_edit_history_starts_with_what_was_said_first() {
     let Some(pool) = seeded_pool().await else {
@@ -2155,12 +1791,10 @@ async fn a_telegram_edit_history_starts_with_what_was_said_first() {
             .collect::<Vec<_>>(),
         vec![Some("first go"), Some("second go")]
     );
-    // The original's stamp is when the MESSAGE was sent; the second version's is
-    // the edit date it carried.
+    // The original is dated by the message; the next by its edit date.
     assert_eq!(edited.edits[0].ts, 1_700_000_120_000);
     assert_eq!(edited.edits[1].ts, 1_700_000_400_000);
 
-    // And a message nobody edited carries no history rather than an empty version.
     let plain = page
         .messages
         .iter()
@@ -2170,8 +1804,8 @@ async fn a_telegram_edit_history_starts_with_what_was_said_first() {
     assert!(plain.edits.is_empty());
 }
 
-/// A Telegram reaction reaches the reader only if it can be drawn, and a retracted
-/// message still carries its words for the reader to hide.
+/// Only drawable, current reactions reach the reader, and a retracted message
+/// keeps its words.
 #[tokio::test]
 async fn telegram_reactions_are_drawable_and_a_retraction_keeps_its_words() {
     let Some(pool) = seeded_pool().await else {
@@ -2187,15 +1821,8 @@ async fn telegram_reactions_are_drawable_and_a_retraction_keeps_its_words() {
         .iter()
         .find(|m| m.body.as_deref() == Some("hoi"))
         .expect("the reacted message");
-    // ⚠ ONE, of THREE stored, and each of the other two is left out for its own
-    // reason. A custom-emoji reaction has no characters to render, so the archive
-    // keeps it and the screen omits it rather than drawing a blank bubble with a 1
-    // beside it. And a reaction that was TAKEN BACK keeps its row with a
-    // `removed_at` — the ingester dates it instead of deleting it, so a re-walk
-    // cannot forget that it happened — but it is not on the message now.
-    //
-    // Both are the same distinction: what the archive HOLDS and what the screen
-    // SHOWS are different questions.
+    // One of three stored: the custom emoji cannot be drawn, and the other was
+    // taken back.
     assert_eq!(reacted.reactions.len(), 1);
     assert_eq!(reacted.reactions[0].emoji, "👍");
     assert_eq!(reacted.reactions[0].count, 3);
@@ -2212,12 +1839,7 @@ async fn telegram_reactions_are_drawable_and_a_retraction_keeps_its_words() {
     );
 }
 
-/// Search finds Telegram messages, and the cursor it mints lands on the hit.
-///
-/// ⚠ The cursor is the assertion. It has to be in SECONDS, because that is what
-/// `telegram_messages` pages on; minting it from the millisecond `ts` beside it
-/// would produce a landing that misses by a factor of a thousand — and the only
-/// symptom would be a search result that opens the wrong part of a conversation.
+/// A Telegram search hit's cursor is in seconds and lands on the hit.
 #[tokio::test]
 async fn a_telegram_search_hit_lands_on_its_own_message() {
     let Some(pool) = seeded_pool().await else {
@@ -2252,8 +1874,7 @@ async fn a_telegram_search_hit_lands_on_its_own_message() {
     );
 }
 
-/// A conversation id that is not a number pages as empty rather than erroring —
-/// the answer the other origins give for an id nothing matches.
+/// A non-numeric conversation id pages as empty.
 #[tokio::test]
 async fn a_non_numeric_telegram_id_is_an_empty_page() {
     let Some(pool) = seeded_pool().await else {
@@ -2274,14 +1895,7 @@ async fn a_non_numeric_telegram_id_is_an_empty_page() {
     assert!(!page.has_more);
 }
 
-/// ⚠ An edit date is not an edit to SHOW. Telegram's `edit_hide` means "the
-/// message should be shown as not modified to the user, even if an edit date is
-/// present"; it sets a date for its own reasons and its own apps honour the flag.
-/// This reader did not, and printed `edited` on a photo Telegram showed as
-/// untouched — found by Pippijn reading a live conversation, not by any test.
-///
-/// The date is still in the archive. What this pins is that the READER honours the
-/// instruction, and that an ordinary edit is unaffected.
+/// `edit_hide` suppresses the edited mark; an ordinary edit keeps it.
 #[tokio::test]
 async fn a_hidden_telegram_edit_is_not_shown_as_edited() {
     let Some(pool) = seeded_pool().await else {
@@ -2308,21 +1922,11 @@ async fn a_hidden_telegram_edit_is_not_shown_as_edited() {
         "and no history panel is offered for it either"
     );
 
-    // The ordinary edit is untouched by the change — the flag governs one message,
-    // not the feature.
     assert!(by("third go").edited);
 }
 
-/// ⚠ `attachments` means "bytes this archive holds for this message", and Telegram
-/// is now a second origin that has some. It was Signal-only because Signal was the
-/// only origin with files, not because the field was Signal's — so Telegram's media
-/// arrives in the same field rather than a parallel one, and the copied-log namer,
-/// the is-image test and the not-stored marker all keep working without a second
-/// implementation.
-///
-/// The two states are what matter: a file on the volume is `available` and gets
-/// drawn, and one still at Telegram is not and gets a marker. Conflating them would
-/// draw a broken image for 3.8 GB of video nobody has fetched.
+/// Telegram media arrives as `attachments`: held files are `available`, files
+/// still at Telegram are not.
 #[tokio::test]
 async fn telegram_media_arrives_as_attachments_with_availability() {
     let Some(pool) = seeded_pool().await else {
@@ -2339,17 +1943,15 @@ async fn telegram_media_arrives_as_attachments_with_availability() {
             .unwrap_or_else(|| panic!("no message {body:?}"))
     };
 
-    // msg 14 — held.
     let held = by("forget it");
     assert_eq!(held.attachments.len(), 1);
     assert!(held.attachments[0].available);
     assert!(held.attachments[0].is_image);
     assert_eq!(held.attachments[0].size, Some(204_800));
-    // ⚠ The MESSAGE's api id, because that is the only id the client has and the
-    // route resolves a file by it.
+    // The message's API id, which the media route takes.
     assert_eq!(held.attachments[0].id, held.id);
 
-    // msg 13 — offered, not held. A video, so not an image either.
+    // msg 13: offered, not held, and not an image.
     let offered = by("third go");
     assert_eq!(offered.attachments.len(), 1);
     assert!(
@@ -2358,15 +1960,11 @@ async fn telegram_media_arrives_as_attachments_with_availability() {
     );
     assert!(!offered.attachments[0].is_image);
 
-    // A message with no media has no attachments, rather than an empty placeholder.
     assert!(by("hoi").attachments.is_empty());
 }
 
-/// ⚠ A request moves only what has NOT been fetched. Against something already
-/// stored it would queue a re-download that overwrites a good file; against something
-/// already `wanted` it would restart its place in the queue every time a reader
-/// tapped twice. Both would look like success, which is why the call reports whether
-/// anything actually changed.
+/// A request queues only what is not stored or already wanted, and reports
+/// whether it did.
 #[tokio::test]
 async fn requesting_media_queues_only_what_is_not_held() {
     let Some(pool) = seeded_pool().await else {
@@ -2386,16 +1984,13 @@ async fn requesting_media_queues_only_what_is_not_held() {
             .expect("a numeric api id")
     };
 
-    // The offered video: queued, and the reader is told it was.
     let video = id_of("third go");
     assert!(archive::request_telegram_media(&pool, video).await.unwrap());
-    // Asking again changes nothing — it is already in the queue.
     assert!(
         !archive::request_telegram_media(&pool, video).await.unwrap(),
         "a second tap must not re-queue it"
     );
 
-    // And the reader now sees it as wanted rather than as something to ask for.
     let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 50, PageDir::Older)
         .await
         .unwrap();
@@ -2410,7 +2005,6 @@ async fn requesting_media_queues_only_what_is_not_held() {
     );
     assert!(!after.attachments[0].available);
 
-    // The stored photo is untouchable: requesting it would overwrite a good file.
     let photo = id_of("forget it");
     assert!(
         !archive::request_telegram_media(&pool, photo).await.unwrap(),
@@ -2420,12 +2014,8 @@ async fn requesting_media_queues_only_what_is_not_held() {
 
 // ---- what a message was a reply to ------------------------------------------
 
-/// Signal's quote names a TIMESTAMP, and the three things that can mean.
-///
-/// ⚠ The unresolved case is not an error path to be tolerated — it is ordinary.
-/// A quote of anything older than this archive has nothing to match, and the
-/// answer "this replied to something, from then" is both true and useful, so it
-/// is asserted here as a RESULT rather than as an absence.
+/// Signal's quote names a timestamp: resolved, deleted, or not held. An
+/// unresolved quote is an ordinary result.
 #[tokio::test]
 async fn a_signal_quote_resolves_withholds_a_deletion_and_survives_a_miss() {
     let Some(pool) = seeded_pool().await else {
@@ -2442,39 +2032,32 @@ async fn a_signal_quote_resolves_withholds_a_deletion_and_survives_a_miss() {
             .unwrap_or_else(|| panic!("no message at {ts}"))
     };
 
-    // Resolves: ts=2000 quotes ts=1000, which Alice said and which is held.
     let r = by_ts(2000).reply_to.as_ref().expect("2000 quotes 1000");
     assert_eq!(r.ts, Some(1000));
     assert_eq!(r.sender.as_deref(), Some("Alice"));
     assert_eq!(r.excerpt.as_deref(), Some("hi"));
     assert!(!r.deleted);
-    // The id is what makes it clickable, and the cursor is what a click uses.
-    // They are minted together, so one without the other is a bug in the making.
+    // The id and the cursor come together.
     let id = r.id.as_deref().expect("held → an id to go to");
     let cursor = r.cursor.as_deref().expect("held → a cursor to land on");
     assert_eq!(parse_cursor(cursor), Some((1000, id.parse().unwrap())));
 
-    // ⚠ The target is DELETED, and its words stay behind a click in this app —
-    // so the quote carries none either. Withholding it here is the same rule the
-    // bubble follows, applied in the one other place the text could escape.
+    // The target is deleted, so its words are withheld.
     let r = by_ts(3000).reply_to.as_ref().expect("3000 quotes 4000");
     assert!(r.deleted, "the quoted message was deleted");
     assert_eq!(r.excerpt, None, "a deleted message is not quoted verbatim");
     assert!(r.id.is_some(), "still somewhere to go");
 
-    // Unresolved: nothing sits at ts=999. The timestamp is still reported,
-    // because for Signal the timestamp IS the quote.
+    // Nothing at ts=999; the timestamp is still reported.
     let r = by_ts(1000).reply_to.as_ref().expect("1000 quotes 999");
     assert_eq!((r.id.as_ref(), r.cursor.as_ref()), (None, None));
     assert_eq!(r.ts, Some(999), "when, even with no what");
     assert_eq!(r.excerpt, None);
 
-    // A message that quoted nothing says so.
     assert!(by_ts(4000).reply_to.is_none());
 }
 
-/// Telegram's reply names an ID, and the fourth shape Signal cannot have: a
-/// reply to a SERVICE event.
+/// Telegram's reply names an id, and can target a service event.
 #[tokio::test]
 async fn a_telegram_reply_resolves_and_refuses_to_point_at_a_service_event() {
     let Some(pool) = seeded_pool().await else {
@@ -2496,11 +2079,7 @@ async fn a_telegram_reply_resolves_and_refuses_to_point_at_a_service_event() {
     let r = by_body("ook hoi").expect("11 replies to 10");
     assert_eq!(r.sender.as_deref(), Some("Tessa"));
     assert_eq!(r.excerpt.as_deref(), Some("hoi"));
-    // ⚠ The cursor's timestamp is Telegram's NATIVE unit — seconds — because that
-    // is what the page query compares `sent_at` against, while `ts` beside it is
-    // the milliseconds the API speaks. Minting the cursor from `ts` would address
-    // a row a thousandfold into the future and page from the wrong end of the
-    // conversation, which is the same trap `a_search_hit_carries_a_cursor` guards.
+    // The cursor in Telegram's seconds; `ts` in milliseconds.
     let (cur_ts, _) = parse_cursor(r.cursor.as_deref().unwrap()).unwrap();
     assert_eq!(cur_ts, 1_700_000_000, "seconds, not milliseconds");
     assert_eq!(r.ts, Some(1_700_000_000_000), "milliseconds on the wire");
@@ -2508,17 +2087,7 @@ async fn a_telegram_reply_resolves_and_refuses_to_point_at_a_service_event() {
     let r = by_body("same second").expect("12 replies to 14");
     assert!(r.deleted && r.excerpt.is_none(), "deleted target, no words");
 
-    // ⚠ A REPLY TO A SERVICE EVENT NOW RESOLVES, AND THE RULE DID NOT CHANGE.
-    // It used to read as unresolved because `kind = 'service'` kept the event off
-    // every page, so an id would have been a quote clicking through to something
-    // the reader could never be shown. The page returns service events now, so
-    // the destination exists.
-    //
-    // The promise is the same one it always was — an id in a ReplyTo means the
-    // reader can be taken there — and what satisfies it moved from "it is speech"
-    // to "the page query returns it". This assertion is here so that narrowing
-    // the page again without narrowing this fails loudly rather than handing out
-    // dead links.
+    // A reply to a service event resolves, since the page returns the event.
     let r = by_body("third go").expect("13 replies to the service event 15");
     assert!(
         r.id.is_some() && r.cursor.is_some() && r.ts.is_some(),
@@ -2526,26 +2095,14 @@ async fn a_telegram_reply_resolves_and_refuses_to_point_at_a_service_event() {
     );
     assert_eq!(r.excerpt.as_deref(), Some("changed the photo"));
 
-    // Unresolved: no message 999. Unlike Signal's, a Telegram miss has no
-    // timestamp to fall back on — the reply named an id, which says nothing
-    // about when.
+    // No message 999, and a Telegram reply names no time.
     let r = by_body("telegram touched this").expect("16 replies to 999");
     assert_eq!((r.id.as_ref(), r.ts), (None, None));
 
     assert!(by_body("hoi").is_none(), "10 replied to nothing");
 }
 
-/// ⚠ THIS TEST USED TO INCLUDE GOOGLE CHAT, AND THAT WAS THE BUG IT PROTECTED.
-///
-/// It was named `gchat_and_irc_carry_no_reply` and asserted that every Google
-/// Chat message had `reply_to: None` — which passed, because nothing read the
-/// field, and which made a gap in the capture look like a property of the
-/// service. 126 real quote-replies existed the whole time. A green test stating
-/// the wrong rule is worse than no test: it answers the question before anybody
-/// asks it.
-///
-/// IRC genuinely has none. A log line is a line; irssi records no association
-/// between one and another, and there is nothing in the format to have missed.
+/// IRC records no reply association.
 #[tokio::test]
 async fn irc_carries_no_reply() {
     let Some(pool) = seeded_pool().await else {
@@ -2563,11 +2120,7 @@ async fn irc_carries_no_reply() {
 
 // ---- who has read how far ---------------------------------------------------
 
-/// ⚠ THREE STATES, and the third is the one worth protecting. `None` means
-/// the archive cannot say, and it is not the same as unread: read-mark capture
-/// began 2026-09-17 and Telegram keeps no history of reading, so a conversation
-/// nobody has opened since has no mark at all. Drawing that as "not read" would
-/// turn this archive's own late start into a claim about someone's behaviour.
+/// Telegram read state: read, sent, or `None` when the archive cannot say.
 #[tokio::test]
 async fn telegram_read_state_is_mine_only_and_silent_without_a_mark() {
     let Some(pool) = seeded_pool().await else {
@@ -2586,24 +2139,16 @@ async fn telegram_read_state_is_mine_only_and_silent_without_a_mark() {
             .map(|d| d.state)
     };
 
-    // Mine, at or before the mark (11): read.
     assert_eq!(state_of("ook hoi"), Some(DeliveryState::Read));
 
-    // ⚠ Mine, AFTER the mark: sent and not yet read. This is also the assertion
-    // that pins WHICH mark is read — the fixture's inbox mark is 16, so a reader
-    // asking the wrong direction turns this one read.
+    // Mine, after the mark: sent. Would be read if the inbox mark (16) were used.
     assert_eq!(state_of("telegram touched this"), Some(DeliveryState::Sent));
 
-    // ⚠ Theirs — `None`, not `Sent`. "Have they read this?" is not a question
-    // about a message they sent, and answering it with the mark meant for my own
-    // messages would report their own words back as unread.
+    // Theirs: `None`.
     assert_eq!(state_of("hoi"), None);
     assert_eq!(state_of("same second"), None);
 
-    // ⚠ `Delivered` IS UNREACHABLE HERE, and that is Telegram rather than a
-    // bug. A read mark is a position in the conversation; nothing in it says a
-    // message ARRIVED, so the rung between sent and read has no evidence behind
-    // it. Signal fills it because Signal sends a delivery receipt.
+    // Telegram cannot report `Delivered`.
     assert!(
         page.messages
             .iter()
@@ -2611,7 +2156,6 @@ async fn telegram_read_state_is_mine_only_and_silent_without_a_mark() {
         "Telegram cannot report delivery"
     );
 
-    // And it names nobody, in either state.
     assert!(
         page.messages
             .iter()
@@ -2620,8 +2164,7 @@ async fn telegram_read_state_is_mine_only_and_silent_without_a_mark() {
     );
 }
 
-/// The other half: a conversation with no mark says nothing at all, rather than
-/// saying "unread" about every message in it.
+/// A conversation with no mark says nothing.
 #[tokio::test]
 async fn a_conversation_with_no_read_mark_reports_nothing() {
     let Some(pool) = seeded_pool().await else {
@@ -2644,12 +2187,7 @@ async fn a_conversation_with_no_read_mark_reports_nothing() {
     );
 }
 
-/// The origins that report nothing, and it is not a gap to be filled.
-///
-/// ⚠ SIGNAL IS NO LONGER ONE OF THEM — it was, until receipt capture landed,
-/// and this case asserted its silence. Google Chat and IRC stay: neither carries
-/// per-message read state at all, so there is nothing to capture rather than
-/// something not yet captured.
+/// Google Chat and IRC carry no read state.
 #[tokio::test]
 async fn the_other_origins_report_no_read_state() {
     let Some(pool) = seeded_pool().await else {
@@ -2669,11 +2207,8 @@ async fn the_other_origins_report_no_read_state() {
 
 // ---- Signal: who read it, and when ------------------------------------------
 
-/// ⚠ THE LADDER, AND THE TWO WAYS IT LIES IF NOBODY CHECKS. Signal is the one
-/// origin here that reports a message ARRIVING separately from it being READ, and
-/// the one that names the person. Both are easy to lose: flatten the kinds and
-/// `delivered` becomes `read`; skip the self-filter and my own linked device
-/// becomes a person who read my message.
+/// Signal's ladder: delivered and read are distinct, readers are named, and my
+/// own linked device is not one of them.
 #[tokio::test]
 async fn signal_receipts_climb_the_ladder_and_name_the_reader() {
     let Some(pool) = seeded_pool().await else {
@@ -2697,29 +2232,22 @@ async fn signal_receipts_climb_the_ladder_and_name_the_reader() {
     };
     let state_of = |body: &str| msg(body).delivery.as_ref().map(|d| d.state);
 
-    // Delivered AND read: the top rung wins, and it is not the last row seen.
+    // Delivered and read: the higher wins.
     assert_eq!(state_of("read by her"), Some(DeliveryState::Read));
 
-    // ⚠ The rung Telegram cannot reach. Delivered, not read — and emphatically
-    // not `Read`, which is what a reader that treats any receipt as a read would
-    // report.
+    // Delivered, not read.
     assert_eq!(state_of("delivered only"), Some(DeliveryState::Delivered));
 
-    // Nothing came back, but we WERE listening.
+    // No receipt, but we were listening.
     assert_eq!(state_of("nothing back"), Some(DeliveryState::Sent));
 
-    // ⚠ We were not listening yet, so there is nothing to say. This is the
-    // assertion that keeps the archive's own start date out of a claim about
-    // somebody's phone: at 900 it predates the first `observed_at` (1000).
+    // Before capture began (900 < 1000): nothing to say.
     assert_eq!(state_of("before we listened"), None);
 
-    // Hers. "Has it been read" is not a question about a message she sent, even
-    // though a receipt targeting it exists — it is my own device's read sync.
+    // Hers: `None`, despite my read sync targeting it.
     assert_eq!(state_of("her words"), None);
 
-    // ⚠ NAMED, AND MY OWN READ SYNC IS NOT ONE OF THE NAMES. The fixture
-    // carries `(1200,'me','read')` beside Alice's; including it would say I read
-    // my own message, which is true and says nothing about whether she did.
+    // Named, without my own read sync.
     let read_by: Vec<_> = msg("read by her")
         .delivery
         .as_ref()
@@ -2730,7 +2258,7 @@ async fn signal_receipts_climb_the_ladder_and_name_the_reader() {
         .collect();
     assert_eq!(read_by, [("Alice", 1220)], "her read, at her timestamp");
 
-    // A delivery names nobody: it says the device has it, not that a person saw it.
+    // A delivery names nobody.
     assert!(
         msg("delivered only")
             .delivery
@@ -2741,17 +2269,8 @@ async fn signal_receipts_climb_the_ladder_and_name_the_reader() {
     );
 }
 
-/// ⚠ GOOGLE CHAT WAS REPORTED AS HAVING NO REPLIES, AND THE REPORT WAS WRONG.
-///
-/// `thread_id` groups messages into topics and every DM message is its own
-/// topic, so a diff of topic-replies against topic-starters found nothing a
-/// reply carried — and an inline quote-reply in a DM IS a starter, so the field
-/// sat inside the control group. 126 real pointers went undrawn.
-///
-/// The unresolvable case is asserted too, and is the more important half: a
-/// reply whose target the archive does not hold must still render AS a reply.
-/// Dropping it would turn "he answered that" into an ordinary message, which is
-/// the same silent loss one layer up.
+/// Google Chat quote-replies resolve, and an unresolvable one still renders as
+/// a reply.
 #[tokio::test]
 async fn a_gchat_quote_reply_points_at_the_message_it_answers() {
     let Some(pool) = seeded_pool().await else {
@@ -2772,9 +2291,7 @@ async fn a_gchat_quote_reply_points_at_the_message_it_answers() {
     assert_eq!(r.sender.as_deref(), Some("Bob"));
     assert_eq!(r.excerpt.as_deref(), Some("hello findme"));
     assert!(r.id.is_some(), "the target is held, so it is a destination");
-    // ⚠ MICROSECONDS in the cursor — Google Chat's own unit, which is what the
-    // page query compares `ts_us` against — and milliseconds on the wire. The
-    // same trap Telegram's seconds set one origin over.
+    // The cursor in Google Chat's microseconds; `ts` in milliseconds.
     let (cur_ts, _) = archive::parse_cursor(r.cursor.as_deref().unwrap()).unwrap();
     assert_eq!(cur_ts, 6_000_000, "µs, the page query's unit");
     assert_eq!(r.ts, Some(6000), "ms, the API's unit");
@@ -2791,16 +2308,7 @@ async fn a_gchat_quote_reply_points_at_the_message_it_answers() {
     );
 }
 
-/// ⚠ THE VIEWER SAID GOOGLE CHAT HAD NO ATTACHMENTS, AND 326 MESSAGES CARRIED
-/// ONE. The comment in `archive.rs` read "Google Chat export carries no
-/// attachments" — true of nothing except that the capture had never looked at
-/// index 10. Only 20 of the 326 are wordless, so the rest rendered as an
-/// ordinary message with a caption and no picture.
-///
-/// ⚠ `available: false` IS THE POINT, not a degraded case. The download URL
-/// is minted while the page renders, bound to a session and expiring, so the
-/// archive routinely knows a picture existed without holding it. Drawing nothing
-/// for those would restore exactly the bug above.
+/// Google Chat attachments render whether or not their bytes are held.
 #[tokio::test]
 async fn a_gchat_picture_is_shown_even_when_its_bytes_are_not_held() {
     let Some(pool) = seeded_pool().await else {
@@ -2830,39 +2338,26 @@ async fn a_gchat_picture_is_shown_even_when_its_bytes_are_not_held() {
         !known.available,
         "no bytes — but the archive still says a picture was here"
     );
-    // ⚠ Nothing to ask for: fetching needs a URL the client mints while
-    // rendering, which this app never sees. `Some(_)` would offer the reader a
-    // button that cannot work.
+    // Nothing a reader could ask for.
     assert!(known.fetch.is_none());
 }
 
 // ---- searching inside one conversation --------------------------------------
 
-/// ⚠ THE SCOPE IS IN THE SQL, AND THIS IS THE CASE THAT PROVES IT MATTERS.
-/// The obvious implementation — search globally, then keep the hits whose
-/// conversation matches — is bounded by `limit` BEFORE the conversation is
-/// considered. A term that is common elsewhere and rare here comes back EMPTY
-/// while the messages sit in the archive, and the reader is told there is
-/// nothing rather than that the tool gave up.
-///
-/// `limit = 1` makes that concrete: globally, 'findme' matches three rows and
-/// the newest is IRC's, so a client-side filter asking for Google Chat gets that
-/// one IRC row and discards it.
+/// The scope is in the SQL. At `limit = 1`, a global search's hit is IRC's, so
+/// filtering it afterwards for Google Chat would find nothing.
 #[tokio::test]
 async fn a_scoped_search_is_not_a_global_search_filtered_afterwards() {
     let Some(pool) = seeded_pool().await else {
         return;
     };
 
-    // The global answer at limit 1: one IRC hit, the newest of the three.
     let global = archive::search(&pool, "findme", 1, archive::SearchScope::Everywhere)
         .await
         .unwrap();
     assert_eq!(global.len(), 1);
     assert_eq!(global[0].origin, Origin::Irc, "newest wins globally");
 
-    // The same limit, scoped to Google Chat, still finds gchat's row — because
-    // the limit was applied to gchat's rows and not to everybody's.
     let scoped = archive::search(
         &pool,
         "findme",
@@ -2883,10 +2378,7 @@ async fn a_scoped_search_is_not_a_global_search_filtered_afterwards() {
     assert_eq!(scoped[0].conversation_id, "gc1");
 }
 
-/// ⚠ THE OTHER ORIGINS ARE NOT QUERIED AT ALL, which is the half that makes
-/// a scoped IRC search FASTER than the global one rather than slower: the global
-/// query is a 10s substring scan of 3.7M rows because `LIKE '%term%'` cannot use
-/// an index, and `conversation_id` can.
+/// Origins outside the scope are not queried.
 #[tokio::test]
 async fn a_scope_admits_only_its_own_origin() {
     let Some(pool) = seeded_pool().await else {
@@ -2894,7 +2386,7 @@ async fn a_scope_admits_only_its_own_origin() {
     };
     for (origin, id, expect_any) in [
         (Origin::Gchat, "gc1", true),
-        // A real conversation of the WRONG origin: the id exists, just not here.
+        // An id that exists, in another origin.
         (Origin::Gchat, "dm:alice", false),
         (Origin::Signal, "group:g1", true),
     ] {
@@ -2915,9 +2407,7 @@ async fn a_scope_admits_only_its_own_origin() {
     }
 }
 
-/// A conversation that holds the term nowhere answers with nothing, rather than
-/// falling back to the global result — the failure that would make the whole
-/// feature look like it worked while doing nothing.
+/// A conversation without the term returns nothing, not the global result.
 #[tokio::test]
 async fn a_scope_with_no_match_is_empty_not_global() {
     let Some(pool) = seeded_pool().await else {
@@ -2946,20 +2436,16 @@ async fn a_scope_with_no_match_is_empty_not_global() {
 
 // ---- jumping to a date ------------------------------------------------------
 
-/// ⚠ THE FOUR ORIGINS DISAGREE ABOUT WHAT A TIMESTAMP IS, which is the whole
-/// of #1562: the cursor could always express a date, but only in the unit that
-/// origin counts in. A caller minting its own would carry all four conventions
-/// and be wrong for three of them the moment it got one right.
+/// Each origin's cursor for a day is in its own unit.
 #[test]
 fn a_day_cursor_is_minted_in_each_origins_own_unit() {
-    // 2026-01-02T00:00:00Z, the fixture's day, in the unit the API speaks.
+    // 2026-01-02T00:00:00Z in milliseconds.
     let ms = 1_767_312_000_000i64;
     assert_eq!(
         archive::cursor_for_day(Origin::Signal, ms),
         "1767312000000_0"
     );
-    // ⚠ The only one that MULTIPLIES. Getting this backwards lands in 1970 and
-    // the page comes back empty, which reads as "nothing was said that day".
+    // The only one that multiplies.
     assert_eq!(
         archive::cursor_for_day(Origin::Gchat, ms),
         "1767312000000000_0"
@@ -2971,11 +2457,7 @@ fn a_day_cursor_is_minted_in_each_origins_own_unit() {
     assert_eq!(archive::cursor_for_day(Origin::Irc, ms), "1767312000_0");
 }
 
-/// ⚠ `id = 0` IS A FLOOR, NOT A ROW. The paging predicate admits
-/// `ts = cursor_ts AND id >= cursor_id`, so any id above the smallest real one
-/// silently drops messages from the landing second — and only on days whose
-/// first message happens to have a low id, which is exactly the kind of bug that
-/// survives a casual look.
+/// The id is 0, a floor, so no message in the landing second is skipped.
 #[test]
 fn a_day_cursor_admits_the_whole_first_second() {
     let (ts, id) = archive::parse_cursor(&archive::cursor_for_day(Origin::Irc, 1_767_312_000_000))
@@ -2984,15 +2466,13 @@ fn a_day_cursor_admits_the_whole_first_second() {
     assert_eq!(id, 0, "a floor under every real id");
 }
 
-/// The landing itself, against the real fixture: asking for a day returns that
-/// day's messages reading FORWARDS, not the ones before it.
+/// Landing on a day returns that day's messages, reading forwards.
 #[tokio::test]
 async fn a_day_lands_on_that_day_and_reads_forwards() {
     let Some(pool) = seeded_pool().await else {
         return;
     };
-    // The IRC fixture spans 2020; its conversations are the only ones with real
-    // dates rather than epoch-1970 milliseconds.
+    // IRC is the fixture with real dates.
     let day_ms = 1_577_836_800_000i64; // 2020-01-01T00:00:00Z
     let cursor = archive::parse_cursor(&archive::cursor_for_day(Origin::Irc, day_ms));
     let id = sqlx::query_scalar::<_, i32>(
@@ -3016,7 +2496,6 @@ async fn a_day_lands_on_that_day_and_reads_forwards() {
         page.messages.iter().all(|m| m.ts >= day_ms),
         "nothing from BEFORE the day asked for"
     );
-    // Ascending, like every page this API returns.
     let mut sorted = page.messages.iter().map(|m| m.ts).collect::<Vec<_>>();
     sorted.sort_unstable();
     assert_eq!(
@@ -3026,12 +2505,7 @@ async fn a_day_lands_on_that_day_and_reads_forwards() {
     );
 }
 
-/// ⚠ A RETRACTED FORMATTING RUN MUST NOT BE DRAWN. Editing a Telegram
-/// message replaces its entity list; the archive dates the old rows rather than
-/// deleting them, the same shape `telegram_reactions` uses. Without
-/// `removed_at IS NULL` the reader bolds text that is no longer bold — or, for a
-/// `textUrl`, points a link at an address the sender took back, which is the
-/// version that actually matters.
+/// A retracted formatting run is not drawn.
 #[tokio::test]
 async fn telegram_formatting_is_attached_and_a_retracted_run_is_not() {
     let Some(pool) = seeded_pool().await else {
@@ -3049,9 +2523,7 @@ async fn telegram_formatting_is_attached_and_a_retracted_run_is_not() {
     let kinds: Vec<_> = m.entities.iter().map(|e| e.kind.as_str()).collect();
     assert_eq!(kinds, ["bold", "textUrl"], "the italic run was retracted");
 
-    // ⚠ Ordered by offset, because the reader walks them in ONE pass to cut the
-    // body into segments. Out of order, a later-starting run truncates an
-    // earlier one and the tail of the message disappears.
+    // Ordered by offset, for the reader's single pass.
     let offsets: Vec<_> = m.entities.iter().map(|e| e.offset).collect();
     let mut sorted = offsets.clone();
     sorted.sort_unstable();
@@ -3063,7 +2535,7 @@ async fn telegram_formatting_is_attached_and_a_retracted_run_is_not() {
         "a textUrl carries where it points; the text alone does not say"
     );
 
-    // The other origins carry none — nothing else records formatting at all.
+    // No other origin records formatting.
     for (origin, id) in [(Origin::Signal, "dm:alice"), (Origin::Gchat, "gc1")] {
         let p = archive::messages_page(&pool, origin, id, None, 100, PageDir::Older)
             .await

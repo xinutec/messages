@@ -3,11 +3,10 @@ import type { FetchState } from "./FetchState";
 
 export type Attachment = { id: string, content_type: string | null, file_name: string | null, size: number | null, 
 /**
- * Whether the bytes are present (downloaded to the PVC). Metadata-only
- * history rows are `false` — the UI shows them but can't fetch the blob.
+ * Whether the bytes are held.
  */
 available: boolean, is_image: boolean, 
 /**
- * Whether these bytes can be asked for — `None` when there is nothing to ask.
+ * Whether these bytes can be asked for.
  */
 fetch: FetchState | null, };

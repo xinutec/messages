@@ -5,7 +5,6 @@
  */
 export type ReadBy = { who: string, 
 /**
- * Epoch milliseconds, as SIGNAL reported it — this is when they read it,
- * not when we heard about it.
+ * Epoch milliseconds, as Signal reported the read.
  */
 at: number, };

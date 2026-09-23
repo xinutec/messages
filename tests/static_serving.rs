@@ -1,19 +1,5 @@
-//! A missing FILE must 404, not be handed the page.
-//!
-//! #1478, measured across the fleet 2026-09-08: `GET /media/nope.woff2` came
-//! back `200 text/html` — the SPA shell, to a browser that asked for a font. It
-//! renders broken icons and reports nothing at all, so the failure is silent on
-//! both sides, and the wrong answer being a `200` is exactly what makes it
-//! invisible.
-//!
-//! ⚠ This app was NOT in the task's original list. That list came from probing
-//! two names; asking every host in `frontdoor.json` found eight, this one among
-//! them — the same defect #881 was reopened for, one week later.
-//!
-//! The rule is a dot in the last path segment: `/c/irc/7` is a route and
-//! `/main-ABC123.js` is a file. A heuristic, and the alternative — enumerating
-//! the bundle's own asset names — would have to be rebuilt whenever `ng build`
-//! changes a hash.
+//! A missing file must 404, not be handed the page as a 200. A dot in the last
+//! path segment marks a file: `/c/irc/7` is a route, `/main-ABC123.js` a file.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -92,8 +78,7 @@ async fn a_missing_asset_is_a_404_and_not_the_page() {
     );
 }
 
-/// The other half, and the one a careless fix breaks: a client-side route has
-/// no dot and must still load the shell, or every deep link 404s.
+/// A client-side route still loads the shell.
 #[tokio::test]
 async fn a_deep_link_still_gets_the_page() {
     let (status, ct) = get("/c/irc/7").await;
@@ -104,7 +89,7 @@ async fn a_deep_link_still_gets_the_page() {
     );
 }
 
-/// And a file that EXISTS is still served as itself.
+/// A file that exists is served as itself.
 #[tokio::test]
 async fn a_real_asset_is_still_served() {
     let (status, ct) = get("/main-ABC123.js").await;

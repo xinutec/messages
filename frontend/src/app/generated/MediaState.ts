@@ -2,9 +2,7 @@
 import type { FetchState } from "./FetchState";
 
 /**
- * The two fields of an attachment that change while a fetch is in flight.
- *
- * Deliberately the same shape those fields have on `Attachment`, so the reader
- * applies an answer by copying rather than by translating between two vocabularies.
+ * The attachment fields that change while a fetch is in flight, shaped as on
+ * `Attachment`.
  */
 export type MediaState = { available: boolean, fetch: FetchState | null, content_type: string | null, };

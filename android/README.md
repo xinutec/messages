@@ -1,18 +1,17 @@
 # messages web viewer (Android)
 
 The `messages.xinutec.org` archive viewer presented as a native-feeling app: a
-single full-screen **WebView**, no address bar, no tabs, a home-screen icon. It
+single full-screen WebView, no address bar, no tabs, a home-screen icon. It
 avoids browser chrome while showing the UI exactly as designed (the system WebView
 is Chromium, so it renders like Chrome).
 
-The site is **private** — reachable over the VPN — and **behind a login**. The
-WebView keeps the session cookie, so it's a **one-time sign-in**; the app needs
+The site is private (VPN only) and behind a login. The WebView keeps the session
+cookie, so sign-in is once; the app needs
 only `INTERNET` (the VPN is set up at the OS/network level, not by this app).
 
 ## What it does
 
-- Loads `https://messages.xinutec.org/` — **hardcoded** (`MainActivity.MESSAGES_URL`);
-  this app is single-purpose.
+- Loads `https://messages.xinutec.org/`, hardcoded (`MainActivity.MESSAGES_URL`).
 - JavaScript + DOM storage on (Angular), all navigation kept in-app, Back walks the
   SPA history; reopens on the last in-app page.
 - Insets the WebView from the system bars by padding a wrapper, and paints the
@@ -32,13 +31,11 @@ nix develop ~/Code/recall#android --command ./gradlew :app:assembleDebug
 # → app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Install onto a phone over WiFi (Pixel 9 is at `192.168.1.133:5555`):
+Install onto the Pixel 9 with `deploy.sh`, which connects over the VPN or LAN,
+checks the device model, and installs by serial:
 
 ```sh
-ADB="$ANDROID_HOME/platform-tools/adb"   # inside the nix shell above
-"$ADB" connect 192.168.1.133:5555
-"$ADB" -s 192.168.1.133:5555 install -r app/build/outputs/apk/debug/app-debug.apk
-"$ADB" -s 192.168.1.133:5555 shell am start -n org.xinutec.messages/.MainActivity
+nix develop ~/Code/recall#android --command ./deploy.sh [<ip[:port]>]
 ```
 
 The APK is signed with the auto-generated debug key — fine for sideloading, the

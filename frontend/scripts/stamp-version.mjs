@@ -1,16 +1,6 @@
-// Writes src/app/build-info.ts with the current git sha + build time, so the
-// running bundle can say WHICH BUILD IT IS.
-//
-// ⚠ **Embedded at build time rather than fetched at runtime, and that is the whole
-// point.** A stale cached page then shows its OWN old stamp instead of being
-// reassured by whatever the server currently reports. On 2026-09-14 the Android
-// WebView served an `index.html` cached despite `cache-control: no-cache`, running
-// a bundle from before Telegram existed while the API returned live data — and
-// answering "is what I am looking at current?" took a CDP session against the
-// phone. This makes it a glance.
-//
-// Mirrors memview's and life's scripts/stamp-version.mjs. The build context has no
-// .git (Docker), so CI passes the commit as GIT_SHA; local builds fall back to git.
+// Writes src/app/build-info.ts with the git sha and build time, embedded so a
+// stale cached page shows its own old stamp. Docker has no .git, so CI passes
+// GIT_SHA; local builds read git.
 import { execSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -27,11 +17,9 @@ function git(cmd) {
   }
 }
 
-// Prefer the CI-provided commit (Docker has no .git); else read it locally.
 const envSha = (process.env.GIT_SHA ?? '').slice(0, 7);
 const sha = envSha || git('rev-parse --short HEAD') || 'nogit';
-// build-info.ts is gitignored, so it cannot dirty the tree itself; any other
-// uncommitted change marks the build. Only meaningful locally — Docker has no git.
+// build-info.ts is gitignored; any other uncommitted change marks the build.
 const dirty = git('status --porcelain') ? '+' : '';
 const builtAt = new Date().toISOString();
 

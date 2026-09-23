@@ -3,15 +3,7 @@
 /**
  * Whether a conversation is one-to-one, a group, or a broadcast.
  *
- * The first two are the distinction the writer calls `ThreadKind` (see the
- * `signal` repo's `parse.rs`) and the `conversations.type` ENUM stores; named for
- * the reader's model, where it is a field of [`Conversation`] and where "thread"
- * already means Google Chat's in-group threading.
- *
- * `channel` is Telegram's alone and is not a conversation at all — it is a feed
- * with an audience. It is stored rather than filtered because whether to show one
- * is the reader's question, and it is a THIRD value rather than folded into
- * `group` because a reader that wants people, not announcements, has no way back
- * once they are the same thing.
+ * Whether a conversation is one-to-one, a group, or a broadcast. `channel` is
+ * Telegram's alone, kept separate so a reader can leave broadcasts out.
  */
 export type ConversationKind = "dm" | "group" | "channel";

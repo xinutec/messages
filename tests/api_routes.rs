@@ -1,20 +1,12 @@
 //! The API surface, through the real router.
 //!
-//! Everything else tests the DECISIONS the handlers make; this tests that a
-//! request actually reaches them, and that the wiring in `routes::mod` puts the
-//! auth extractor in front of every route that needs one. `routes/api.rs` had no
-//! test exercising it through an HTTP request until 2026-09-03.
+//! That a request reaches the handlers, and that `routes::mod` puts the auth
+//! extractor in front of every route that needs one.
 //!
-//! ⚠ These deliberately touch no archive table. `tests/archive.rs` DROPs and
-//! recreates them, and cargo runs test binaries in parallel against the one
-//! database, so a fixture here would race its DDL. Every case below is decided
-//! before the handler reaches the archive — an unknown origin, a non-IRC send, an
-//! empty search, a missing or forged cookie — which is the auth-and-routing
-//! surface and exactly what was untested. The one guard left uncovered for this
-//! reason is `is_status`, which needs `irc_conversations`.
-//!
-//! Skipped without `MESSAGES_TEST_DATABASE_URL`, like the other DB tests. The
-//! only table used is `sessions`, which this app owns.
+//! No archive table is touched: `tests/archive.rs` drops and recreates them in
+//! the same database, in parallel. Every case is decided before the handler
+//! reads the archive; the `is_status` guard is tested in `tests/archive.rs`.
+//! Only `sessions` is used. Skipped without `MESSAGES_TEST_DATABASE_URL`.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -55,8 +47,7 @@ fn cfg() -> Config {
         link_images_dir: "/link-images".into(),
         telegram_media_dir: "/telegram-media".into(),
         link_fetcher_url: "http://link-fetch.invalid".into(),
-        // No send key: the archive still serves and every send is refused. The
-        // send cases below are all decided before this is consulted.
+        // No send key; the send cases below are decided before it matters.
         irc_send: None,
     }
 }
@@ -95,13 +86,8 @@ async fn signed_in(pool: &MySqlPool) -> String {
     .expect("create session")
 }
 
-/// ⚠ THE POSITIVE HALF of `/healthz/deep`, and it needs a real database.
-/// `tests/deep_health.rs` proves the 503 against a pool pointed at nothing,
-/// which is reachable anywhere — but a test suite that only ever sees the
-/// failure would pass just as well against an endpoint that is always 503, and
-/// the fleet would read this name as permanently broken.
-///
-/// So: a reachable archive answers 200, here, where a database exists.
+/// The 200 half of `/healthz/deep`, which needs a database;
+/// `tests/deep_health.rs` has the 503.
 #[tokio::test]
 async fn a_reachable_archive_reports_itself_healthy() {
     let Some(pool) = pool().await else { return };
@@ -111,8 +97,7 @@ async fn a_reachable_archive_reports_itself_healthy() {
     );
 }
 
-/// ⚠ The whole API is private. A route added without the extractor would serve
-/// the archive to anyone who asked, and nothing but this would say so.
+/// Every API route requires a session.
 #[tokio::test]
 async fn every_api_route_refuses_a_request_with_no_cookie() {
     let Some(pool) = pool().await else { return };
@@ -135,7 +120,7 @@ async fn every_api_route_refuses_a_request_with_no_cookie() {
 #[tokio::test]
 async fn a_forged_cookie_is_refused_like_no_cookie_at_all() {
     let Some(pool) = pool().await else { return };
-    // A plausible-looking id with a signature this secret never produced.
+    // A plausible id with a signature this secret never produced.
     let forged = format!("{}.{}", "a".repeat(64), "0".repeat(64));
     assert_eq!(
         go(&pool, "GET", "/api/me", Some(&forged)).await,
@@ -153,14 +138,8 @@ async fn a_real_session_gets_in() {
     );
 }
 
-/// An unknown origin is a 404, not a 400: the URL names a conversation that does
-/// not exist. Signed in, so this cannot pass for the 401 reason.
-///
-/// ⚠ The name here has to be one that will never become real. This test said
-/// `telegram` until Telegram became an origin, at which point it went on passing
-/// for a different reason — the conversation genuinely did not exist — and stopped
-/// testing unknown-origin rejection at all. A test that survives the thing it
-/// tests being implemented is worse than no test, because it reports success.
+/// An unknown origin is a 404. Signed in, so it cannot pass as a 401. The name
+/// must never become a real origin.
 #[tokio::test]
 async fn an_unknown_origin_is_not_found() {
     let Some(pool) = pool().await else { return };
@@ -177,21 +156,9 @@ async fn an_unknown_origin_is_not_found() {
     );
 }
 
-/// ⚠ Signal and Telegram cannot be sent to, and that is a DECISION rather than
-/// a gap. `signal-cli-rest-api` is a linked device in the same namespace and
-/// could send; what stops it is that an IRC echo is confirmable against irssi's
-/// log where a Signal echo would be the only evidence the message existed.
-///
-/// Telegram is the case where that reasoning does NOT apply and the answer is
-/// still no: an outgoing message comes straight back down the same update stream,
-/// so it is as confirmable as IRC's. What holds it back is only that the origin
-/// arrived read-only and sending has not been thought through — which makes it a
-/// deliberate omission with a known remedy rather than an impossibility. A future
-/// change that widens this check should have to delete this test and read why.
-///
-/// ⚠ These names are REAL origins, unlike the one in the test above. The claim is
-/// "a known origin that is not IRC is refused", so a fictional name would prove
-/// nothing here.
+/// Only IRC can be sent to. Signal is read-only by decision (see `api::send`);
+/// Telegram's echo would be confirmable, but sending there is not designed yet.
+/// These are real origins: the claim is that a known non-IRC origin is refused.
 #[tokio::test]
 async fn sending_is_refused_for_every_origin_but_irc() {
     let Some(pool) = pool().await else { return };
@@ -211,7 +178,7 @@ async fn sending_is_refused_for_every_origin_but_irc() {
     }
 }
 
-/// Health is deliberately outside the gate — a probe has no cookie.
+/// Health needs no session; a probe has no cookie.
 #[tokio::test]
 async fn healthz_needs_no_session() {
     let Some(pool) = pool().await else { return };

@@ -3,26 +3,17 @@
 /**
  * One run of formatting inside a message body — bold, a link, a spoiler.
  *
- * ⚠ THE OFFSETS ARE UTF-16 CODE UNITS, WHICH IS TELEGRAM'S UNIT AND NOT
- * RUST'S. Slicing a Rust `String` by them lands mid-character on any body
- * containing an emoji, and this archive's Telegram half is full of them. They
- * are carried out to the browser UNCONVERTED on purpose: a JavaScript string
- * index IS a UTF-16 code unit, so the arithmetic is native there and no
- * conversion — and no conversion bug — exists anywhere.
- *
- * ⚠ THE VIEWER MUST NOT BUILD HTML FROM THESE. `url` comes from whoever sent
- * the message. It is rendered through Angular's `[href]` binding, which
- * sanitises, and never through `innerHTML`.
+ * Offsets are UTF-16 code units, Telegram's unit and JavaScript's string
+ * index, so they reach the browser unconverted. `url` comes from the sender and
+ * is only ever bound through Angular's sanitising `[href]`.
  */
 export type Entity = { 
 /**
- * Telegram's own name for it: `bold`, `italic`, `url`, `textUrl`,
- * `strike`, `code`, `spoiler`, … Passed through rather than mapped to an
- * enum, because an unknown kind must render as plain text rather than
- * failing the page — Telegram adds them faster than this archive learns.
+ * Telegram's own name: `bold`, `italic`, `url`, `textUrl`, `strike`,
+ * `code`, `spoiler`, … A string, so an unknown kind renders as plain text.
  */
 kind: string, offset: number, length: number, 
 /**
- * Where a `textUrl` points. `None` for `url`, where the text IS the link.
+ * Where a `textUrl` points; `None` for `url`, whose text is the link.
  */
 url: string | null, };

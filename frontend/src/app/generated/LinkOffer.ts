@@ -5,11 +5,10 @@
  */
 export type LinkOffer = { 
 /**
- * The link as typed — what the control is offering to show.
+ * The link as typed.
  */
 url: string, 
 /**
- * Its handle: `POST /api/link-images/{id}/request`, which answers with what
- * the link turned out to be.
+ * Its handle for `POST /api/link-images/{id}/request`.
  */
 id: string, };

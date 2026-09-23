@@ -4,19 +4,9 @@ import { describe, expect, it } from 'vitest';
 import { Message } from './models';
 import { MAX_RENDERED, ThreadWindow } from './thread-window';
 
-/** What these pin, and what they deliberately do not.
- *
- *  The engine does two separable things: it MEASURES the page, and it keeps
- *  BOOKKEEPING about which run of messages is rendered and how tall the spacers
- *  standing in for the rest should be. jsdom has no layout, so every rect here
- *  would be zero and any test of the measuring half would be a test of a fake.
- *  That half stays with `e2e/thread-scroll.spec.ts`, in a real browser.
- *
- *  The bookkeeping half needs no layout at all, and it is where the cap, the
- *  window arithmetic and the reveal/collapse ordering live. Before the engine
- *  came out of `thread.ts` none of it could be reached without standing up a
- *  component, a router and an API; that was the argument for moving it, so this
- *  file is the argument being cashed. */
+/** The bookkeeping half of the engine: the cap, window arithmetic, and
+ *  reveal/collapse order. jsdom has no layout, so the measuring half is in
+ *  `e2e/thread-scroll.spec.ts`. */
 
 function msgs(n: number): Message[] {
   return Array.from({ length: n }, (_, i) => ({
@@ -53,12 +43,10 @@ describe('ThreadWindow', () => {
 
   it('caps the DOM by collapsing the end away from the viewport', () => {
     const { win } = harness(1000);
-    // 'bottom' = grew at the top, so the newest end is the one off-screen.
+    // 'bottom': it grew at the top, so the newest end is off-screen.
     win.enforceMax('bottom');
     expect(win.renderCount()).toBe(MAX_RENDERED);
-    // ⚠ The KEPT end is the one the user is looking at. Collapsing the wrong end
-    // would leave the cap satisfied and the viewport empty, which is the failure
-    // this direction exists to avoid.
+    // The end kept is the one the reader is looking at.
     expect(win.rendered()[0].id).toBe('0');
     expect(win.rendered().at(-1)?.id).toBe(String(MAX_RENDERED - 1));
   });
@@ -72,14 +60,8 @@ describe('ThreadWindow', () => {
   });
 
   it('leaves the window whole when nothing is off-screen to collapse', () => {
-    // A viewport taller than the cap. Nothing is rendered into this container,
-    // so no message counts as off-screen — the same shape as that case, and the
-    // window must come back untouched rather than collapsed blindly to the cap.
-    //
-    // ⚠ This pins the OUTCOME, not the `break` that produces it: deleting that
-    // break leaves this green (measured), because the loop's guard then spins to
-    // the same answer. Covering the mechanism would mean counting iterations,
-    // which is a test of how it is written rather than what it does.
+    // A viewport taller than the cap: nothing is off-screen, so the window stays
+    // as it is. (Pins the outcome; the `break` itself is not observable here.)
     const { win } = harness(1000);
     win.trimToWindow();
     expect(win.renderCount()).toBe(1000);
@@ -87,9 +69,8 @@ describe('ThreadWindow', () => {
 
   // ---- following the end of the conversation --------------------------------
   //
-  // The half of the keyboard fix that needs no layout: WHETHER a resize should
-  // re-pin to the bottom. Whether it then lands there is geometry, and lives in
-  // `e2e/ui-pages.spec.ts` at a real phone viewport with a real 350px shrink.
+  // Whether a resize re-pins to the bottom; whether it lands there is geometry,
+  // in `e2e/ui-pages.spec.ts`.
 
   it('re-pins to the end when the container resizes under a reader who was at it', () => {
     const { win } = harness(10);
@@ -99,9 +80,7 @@ describe('ThreadWindow', () => {
 
   it('leaves a reader who is back in history where they are', () => {
     const { win } = harness(10);
-    // ⚠ The case that makes the flag worth having. A search hit lands the reader
-    // in 2013; the keyboard opening must not then throw them to the present,
-    // which is what an unconditional re-pin does.
+    // A reader back in history stays there.
     win.scrollToTs(1_000_005);
     expect(win.repinAfterResize()).toBe(false);
   });

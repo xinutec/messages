@@ -33,8 +33,7 @@ function setup(): { thread: Thread; ref: ComponentRef<Thread>; fixture: Componen
       { provide: MessagesApi, useValue: makeApi() },
     ],
   });
-  // createComponent (not `new Thread()`): the component injects ElementRef, which
-  // only exists for a real component instance.
+  // createComponent, since the component injects ElementRef.
   const fixture = TestBed.createComponent(Thread);
   return { thread: fixture.componentInstance, ref: fixture.componentRef, fixture, router: TestBed.inject(Router) };
 }
@@ -48,12 +47,8 @@ function page(
   return of({ messages, has_more, next_cursor, prev_cursor });
 }
 
-/** A thread routed to an IRC conversation and settled on `held`.
- *
- *  ⚠ The initial load has to be let finish. Routing the inputs starts it, and
- *  `pollNewer` deliberately declines to run while a load is in flight — so a
- *  test that set `messages` by hand and polled immediately measured the guard
- *  rather than the merge, and passed for the wrong reason. */
+/** A thread routed to an IRC conversation and settled on `held`. The initial
+ *  load must finish first: `pollNewer` declines to run during one. */
 async function opened(held: Message[]): Promise<{ thread: Thread; api: { messages: ReturnType<typeof vi.fn> } }> {
   const { thread, ref, fixture } = setup();
   const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
@@ -72,7 +67,6 @@ describe('Thread', () => {
     const d1 = new Date(2026, 5, 1, 9, 0, 0).getTime();
     const d1b = new Date(2026, 5, 1, 18, 0, 0).getTime();
     const d2 = new Date(2026, 5, 2, 9, 0, 0).getTime();
-    // With nothing collapsed, the rendered window is the whole retained list.
     thread.messages.set([msg('a', d1), msg('b', d1b), msg('c', d2)]);
     const groups = thread.dayGroups();
     expect(groups.length).toBe(2);
@@ -93,7 +87,7 @@ describe('Thread', () => {
     const { thread, router } = setup();
     const nav = vi.spyOn(router, 'navigate').mockResolvedValue(true);
     thread.back();
-    // origin filter preserved (merge); from cleared.
+    // Origin filter kept; `from` cleared.
     expect(nav).toHaveBeenCalledWith(['/'], expect.objectContaining({ queryParams: { from: null }, queryParamsHandling: 'merge' }));
   });
   it('offers a composer for IRC only — the other origins have no live client', () => {
@@ -116,16 +110,14 @@ describe('Thread', () => {
     ref.setInput('id', '7');
     fixture.detectChanges();
 
-    // The far side refuses — most often because irssi has no tab open with
-    // that target, which is what decides.
+    // irssi refuses, usually for want of an open tab.
     api.send.mockReturnValueOnce(of({ sent: false, error: 'refused: no conversation open with that target', archived: false }));
     thread.draft.set('please keep me');
     await thread.send();
     expect(thread.draft()).toBe('please keep me');
     expect(thread.sendError()).toContain('no conversation open');
 
-    // ⚠ The box is emptied only on a real send. Clearing on failure loses what
-    // was typed at the exact moment the person has to type it again.
+    // The box empties only on a real send.
     api.send.mockReturnValueOnce(of({ sent: true, error: null, archived: true }));
     await thread.send();
     expect(thread.draft()).toBe('');
@@ -138,9 +130,7 @@ describe('Thread', () => {
     ref.setInput('id', '7');
     fixture.detectChanges();
 
-    // Sent, but irssi could not find the echo in its log — the hourly import
-    // will bring it. Silence would show a conversation that appears not to
-    // contain the message just sent.
+    // Sent, but the echo was not in irssi's log.
     api.send.mockReturnValueOnce(of({ sent: true, error: null, archived: false }));
     thread.draft.set('gone, but not seen');
     await thread.send();
@@ -150,7 +140,6 @@ describe('Thread', () => {
 
   it('merges messages that arrived since the page was loaded', async () => {
     const { thread, api } = await opened([msg('1', 100), msg('2', 200)]);
-    // The newest page overlaps what is held and carries one more.
     api.messages.mockReturnValueOnce(page([msg('1', 100), msg('2', 200), msg('3', 300)]));
     await thread.pollNewer();
     expect(thread.messages().map((m) => m.id)).toEqual(['1', '2', '3']);
@@ -158,9 +147,7 @@ describe('Thread', () => {
 
   it('puts a late-arriving older line in its place rather than at the end', async () => {
     const { thread, api } = await opened([msg('1', 100), msg('3', 300)]);
-    // An import can write a line with an older timestamp — a backfilled day
-    // landing after a newer one. Appending it would show it as the latest thing
-    // said, which is worse than not showing it at all.
+    // An import can land an older line late.
     api.messages.mockReturnValueOnce(page([msg('1', 100), msg('2', 200), msg('3', 300)]));
     await thread.pollNewer();
     expect(thread.messages().map((m) => m.id)).toEqual(['1', '2', '3']);
@@ -168,10 +155,7 @@ describe('Thread', () => {
 
   it('reloads instead of merging when the newest page overlaps nothing held', async () => {
     const { thread, api } = await opened([msg('1', 100)]);
-    // ⚠ Not one message of the page is known, so more arrived than a page holds
-    // and there is a gap between '1' and what came back. Merging would leave a
-    // hole in the middle of the thread that scrolling could never fill and
-    // nothing would report — so this must re-load the thread instead.
+    // None of the page is known, so there is a gap: reload rather than merge.
     api.messages.mockReturnValue(page([msg('8', 800), msg('9', 900)], true, 'c'));
     await thread.pollNewer();
     expect(thread.messages().map((m) => m.id)).toEqual(['8', '9']);
@@ -183,8 +167,6 @@ describe('Thread', () => {
     const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
     api.messages.mockClear();
     await thread.pollNewer();
-    // A backgrounded phone app that keeps asking is a battery cost with no
-    // screen left to show the answers on.
     expect(api.messages).not.toHaveBeenCalled();
     visibility.mockRestore();
   });
@@ -204,10 +186,8 @@ describe('Thread', () => {
 
 // ---- copying a selection as a chat log --------------------------------------
 //
-// The formatting itself is covered by copy-log.spec.ts, which needs no DOM.
-// What these check is the half that only a document can answer: that a real
-// Range across real bubbles picks the right messages, and that the two-message
-// threshold holds.
+// Formatting is covered by copy-log.spec.ts; these check that a real Range picks
+// the right messages and the two-message threshold holds.
 
 /** Three rendered messages over two days, attached to the document so a real
  *  Range can be laid across them. */
@@ -254,15 +234,8 @@ function fireCopy(fixture: ComponentFixture<Thread>): { written: Map<string, str
   return { written, prevented: ev.defaultPrevented };
 }
 
-/** Going to the message a reply answers.
- *
- *  ⚠ **Two paths, and which one runs is the whole behaviour.** A reply to
- *  something still on screen must NOT navigate — a fetch and a re-land to reach
- *  a bubble already visible would throw away the reader's position to arrive
- *  where they already were. A reply to something outside the rendered window
- *  must navigate, because `scrollToTs` answers with the nearest RENDERED message
- *  when the one asked for is absent, which lands the reader on a neighbour and
- *  marks it as the message they asked for. */
+/** A reply to something rendered scrolls without navigating; one outside the
+ *  rendered window lands via `?at`, since `scrollToTs` would pick a neighbour. */
 describe('Thread reply jump', () => {
   const replyTo = (over: Partial<ReplyTo> = {}): ReplyTo => ({
     id: '1',
@@ -282,8 +255,7 @@ describe('Thread reply jump', () => {
     thread.jumpToReply(replyTo());
 
     expect(nav).not.toHaveBeenCalled();
-    // Marked, because landing on the right message is not the same as showing
-    // which one — the same rule a search hit follows.
+    // Marked, as a search landing is.
     expect(thread.landedId()).toBe('1');
   });
 
@@ -297,8 +269,7 @@ describe('Thread reply jump', () => {
     expect(nav).toHaveBeenCalledWith(
       [],
       expect.objectContaining({
-        // `from` goes with it: two competing answers to "where should the reader
-        // be" would otherwise both be in the URL.
+        // `from` goes with it.
         queryParams: { at: '100_1', from: null },
         queryParamsHandling: 'merge',
       }),
@@ -320,10 +291,7 @@ describe('Thread reply jump', () => {
 
 describe('Thread rendering', () => {
   it('draws an action with its star, which the backend no longer sends', async () => {
-    // ⚠ The star moved from `archive.rs` to here when `kind` reached the API.
-    // On screen nothing was supposed to change, and nothing else would say so:
-    // the body now arrives as the words alone, so a template that forgot the
-    // star would render `waves` and look like ordinary speech.
+    // The body is the words alone; the template supplies the star.
     const { thread, ref, fixture } = setup();
     const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
     api.messages.mockReturnValue(
@@ -370,8 +338,7 @@ describe('Thread edit history', () => {
   }
 
   it('shows only what the message says now', async () => {
-    // ⚠ The archive holds a row per version, and both were drawn — the old text
-    // where it was said, the new text minutes later, nothing joining them.
+    // One bubble for the versions, not two.
     const el = (await withEdited()).nativeElement as HTMLElement;
     expect(el.querySelector('.msg .body')?.textContent).toContain('what it says now');
     expect(el.textContent).not.toContain('first thought');
@@ -385,7 +352,7 @@ describe('Thread edit history', () => {
     f.detectChanges();
     const said = [...el.querySelectorAll('.edit-history .said')].map((e) => e.textContent?.trim());
     expect(said).toEqual(['first thought', 'second thought']);
-    // And the current text is still the last thing in the bubble.
+    // The current text is last in the bubble.
     expect(el.querySelector('.msg .body')?.textContent).toContain('what it says now');
   });
 
@@ -400,8 +367,7 @@ describe('Thread edit history', () => {
   });
 
   it('an edited message with no stored history is still marked, without a control', async () => {
-    // Google Chat and IRC carry no versions; the tag must not become a button
-    // that opens nothing.
+    // No versions: the tag must not become a button that opens nothing.
     const { thread, ref, fixture } = setup();
     const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
     api.messages.mockReturnValue(page([{ ...msg('e', 100), edited: true, edits: [] }]));
@@ -443,8 +409,7 @@ describe('Thread link offers', () => {
   }
 
   it('offers a control and fetches NOTHING until it is tapped', async () => {
-    // ⚠ The whole shape of the feature. Opening a conversation must not reach
-    // anybody's server: it only says which links we could fetch.
+    // Opening a conversation only offers links; it contacts no other server.
     const { f, api } = await withOffer();
     const el = f.nativeElement as HTMLElement;
     expect(el.querySelector('.link-offer button')?.textContent).toContain('Show picture');
@@ -453,7 +418,6 @@ describe('Thread link offers', () => {
   });
 
   it('asks by the id the page offered, never by a URL', async () => {
-    // The browser naming an address would make this a fetch-anything endpoint.
     const { f, api } = await withOffer();
     (f.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('.link-offer button')!.click();
     f.detectChanges();
@@ -461,9 +425,7 @@ describe('Thread link offers', () => {
   });
 
   it('shows the picture the request answered with, in place', async () => {
-    // ⚠ The answer arrives ON the request. There is no queue to poll: the web pod
-    // asks the fetch service, which holds no credentials and no storage, and
-    // hands the bytes back.
+    // The answer arrives on the request.
     const { f } = await withOffer();
     (f.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('.link-offer button')!.click();
     f.detectChanges();
@@ -485,9 +447,7 @@ describe('Thread link offers', () => {
 
 describe('Thread linked pictures', () => {
   it('serves a linked picture from us, never from the other server', async () => {
-    // ⚠ The src is the WHOLE point of the feature. An <img> pointed at the
-    // original link would announce every reader of the conversation to whoever
-    // hosts it, on every render, years after the line was typed.
+    // Served by us, never from the original link.
     const f = await withLinkImage();
     const img = (f.nativeElement as HTMLElement).querySelector('.msg[data-id="d"] img')!;
     expect(img.getAttribute('src')).toBe('/api/link-images/abc123');
@@ -497,7 +457,6 @@ describe('Thread linked pictures', () => {
     const f = await withLinkImage();
     const a = (f.nativeElement as HTMLElement).querySelector('.msg[data-id="d"] .link-image a')!;
     expect(a.getAttribute('href')).toBe('https://cloud.example.org/nc/s/TOKEN');
-    // noopener/noreferrer: following it must not hand the other server this app.
     expect(a.getAttribute('rel')).toContain('noreferrer');
   });
 });
@@ -526,8 +485,7 @@ describe('Thread copy', () => {
   });
 
   it('takes a message the selection only clips, whole', async () => {
-    // Half a bubble selected is that message selected: a log line is whole or
-    // it is a misquote.
+    // Half a bubble selected is that message selected.
     const fixture = await threeRendered();
     select(fixture, ['a', 6], ['b', 1]);
     expect(fireCopy(fixture).written.get('text/plain')).toBe(
@@ -536,8 +494,6 @@ describe('Thread copy', () => {
   });
 
   it('leaves a selection inside one message to the browser', async () => {
-    // Picking a phrase out of a sentence and being handed a timestamped log
-    // line is a surprise; attribution starts mattering at two.
     const fixture = await threeRendered();
     select(fixture, ['a', 0], ['a', 5]);
     const { written, prevented } = fireCopy(fixture);
@@ -551,13 +507,7 @@ describe('Thread copy', () => {
     expect(fireCopy(fixture).prevented).toBe(false);
   });
 
-  /** ⚠ The screen and the clipboard must call an attachment the same thing, and
-   *  they did not. Each composed the label itself — the template with a
-   *  `file_name || content_type || 'attachment'` chain, `copy-log.ts` with a
-   *  rule about when the type is worth printing — so a stored-less image with no
-   *  filename read `image/jpeg (not stored)` on screen and `[image (not stored)]`
-   *  in the paste. Naming lives in `attachment.ts` now; this is the case that
-   *  told the two copies apart, so it is the case that has to stay pinned. */
+  /** Screen and clipboard name an attachment the same way (`attachment.ts`). */
   it('calls a nameless unavailable image what it is, as the clipboard does', async () => {
     const { thread, ref, fixture } = setup();
     const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
@@ -583,11 +533,8 @@ describe('Thread copy', () => {
   });
 });
 
-/** A thread holding one ordinary message and one deleted one, rendered.
- *  `withImage` gives the deleted message an available image instead of a body —
- *  the attachment-only shape, which renders no `.body` div at all. */
-/** A message whose text carries a link we hold a picture for. `deleted` puts the
- *  same message behind the reveal, which is what the gating case needs. */
+/** A message whose text links a picture we hold; `deleted` puts it behind the
+ *  reveal. */
 async function withLinkImage(deleted = false): Promise<ComponentFixture<Thread>> {
   const { thread, ref, fixture } = setup();
   const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
@@ -609,6 +556,8 @@ async function withLinkImage(deleted = false): Promise<ComponentFixture<Thread>>
   return fixture;
 }
 
+/** One ordinary message and one deleted one, rendered. `withImage` gives the
+ *  deleted one an image instead of a body. */
 async function withDeleted(withImage = false): Promise<ComponentFixture<Thread>> {
   const { thread, ref, fixture } = setup();
   const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
@@ -648,14 +597,8 @@ describe('Thread deleted messages', () => {
     expect(bubble.textContent).toContain('the retracted words');
   });
 
-  /** ⚠ THE HALF THAT WAS NEVER HIDDEN. The attachment loop was not gated on
-   *  `m.deleted`, so a deleted message drew its pictures in full while its words
-   *  read `(deleted)`. Measured against the live archive on 2026-09-03: 17 stored
-   *  images on 3 deleted messages, 16 with loaded pixels on screen.
-   *
-   *  ⚠ And this is the shape that hides from a careless check: with no body,
-   *  `@if (m.body)` renders no `.body` div, so a DOM probe keyed on
-   *  `.body.deleted` reports zero of exactly these. Key on the bubble. */
+  /** A deleted message's pictures are hidden too. With no body there is no
+   *  `.body` div, so this keys on the bubble. */
   it('does not render a deleted message\'s images until it is revealed', async () => {
     const f = await withDeleted(true);
     const bubble = (f.nativeElement as HTMLElement).querySelector('.msg[data-id="d"]')!;
@@ -666,12 +609,7 @@ describe('Thread deleted messages', () => {
     expect(bubble.querySelectorAll('img').length).toBe(1);
   });
 
-  /** ⚠ **THE SAME HALF, FOR A LINKED PICTURE.** A deletion hides the pictures
-   *  too — that was learned once already, when the attachment loop was not gated
-   *  on `m.deleted` and 17 stored images stayed on screen under the word
-   *  `(deleted)`. A picture fetched from a LINK is the same fact arriving by a
-   *  different route, and it would have been just as easy to render outside the
-   *  gate. Keyed on the bubble, because a deleted message has no `.body` div. */
+  /** Likewise a picture fetched for a link. */
   it('does not render a deleted message\'s LINKED pictures until it is revealed', async () => {
     const f = await withLinkImage(true);
     const bubble = (f.nativeElement as HTMLElement).querySelector('.msg[data-id="d"]')!;
@@ -693,10 +631,7 @@ describe('Thread deleted messages', () => {
     expect(bubble.textContent).not.toContain('the retracted words');
   });
 
-  /** Revealing is a decision about THIS screen. The clipboard is a different
-   *  place with a different audience, so it keeps saying `(deleted)` — and it
-   *  does because the log is built from the model, which the reveal never
-   *  touches. This test exists to keep it that way. */
+  /** Revealing is for this screen only; the clipboard keeps `(deleted)`. */
   it('still copies a revealed message as (deleted)', async () => {
     const f = await withDeleted();
     revealBtn(f)!.click();
@@ -719,17 +654,14 @@ describe('Thread copy — saying what was left out', () => {
     return f;
   }
 
-  /** ⚠ A select-all that quietly returns a fraction is the whole bug. The DOM
-   *  holds a bounded window, so "everything" means "everything loaded". */
+  /** A select-all copies only the rendered window, and says so. */
   it('a whole-window copy in a truncated thread says what was left out', async () => {
     const f = await opened3(401794);
     select(f, ['a', 0], ['c', 7]);
     expect(fireCopy(f).written.get('text/plain')).toContain('copied 3 of 401794 messages');
   });
 
-  /** ⚠ And it must NOT fire for an ordinary selection. Picking two lines out of
-   *  a long conversation is not a truncated copy; it is a quote, and appending
-   *  "copied 2 of 401794" to it would be noise on every paste. */
+  /** An ordinary selection gets no such note. */
   it('a deliberate two-message copy says nothing about the rest', async () => {
     const f = await opened3(401794);
     select(f, ['a', 0], ['b', 2]);
@@ -763,31 +695,18 @@ describe('Thread composer — typing with an IME', () => {
   const enter = (over: KeyboardEventInit = {}): KeyboardEvent =>
     new KeyboardEvent('keydown', { key: 'Enter', cancelable: true, ...over });
 
-  /** ⚠ **THE ANDROID ONE.** While an IME has a composition in flight — a word
-   *  still underlined under predictive text, a swipe-typed word, anything in a
-   *  language that composes — Enter means "accept the candidate", not "send".
-   *  The browser says so with `isComposing`, and a handler that does not ask
-   *  sends half a word the moment the user reaches for their own keyboard's
-   *  autocomplete. Nothing about this is visible on a desktop with a hardware
-   *  keyboard, which is where it was written. */
+  /** While an IME is composing, Enter accepts the candidate rather than sending. */
   it('leaves a composing Enter to the IME rather than answering it', async () => {
     const { thread, api } = await composer();
     thread.draft.set('hello wor');
     const e = enter({ isComposing: true });
     thread.onComposerKey(e);
     expect(api.send).not.toHaveBeenCalled();
-    // The key is left to the IME, which needs it to commit the candidate.
     expect(e.defaultPrevented).toBe(false);
   });
 
-  /** ⚠ **AND THAT IS NOT ENOUGH, WHICH THIS LAYER CANNOT SEE.** The test above
-   *  passed against a version that still sent the composed word: not answering
-   *  the key leaves the browser to submit the `<form>` implicitly, and `send`
-   *  was reached that way instead. Calling the handler in isolation never
-   *  involves a form, so jsdom reported a fix that a real browser refuted —
-   *  `e2e/ui-pages.spec.ts` drives an actual composition through CDP and is the
-   *  evidence. What IS worth pinning here is the backstop it led to: `send`
-   *  refuses on its own, whichever route reached it. */
+  /** `send` itself refuses mid-composition: an Enter the handler ignores still
+   *  submits the form. The real composition is driven in e2e/ui-pages.spec.ts. */
   it('refuses to send while composing, whatever route reached send', async () => {
     const { thread, api } = await composer();
     thread.draft.set('hello wor');
@@ -810,9 +729,8 @@ describe('Thread composer — typing with an IME', () => {
   });
 });
 describe('restoring a saved scroll depth', () => {
-  /** An `?from` older than anything the API will ever return, with the API
-   *  always claiming another page. That is a stale bookmark: the loop cannot
-   *  reach the timestamp and nothing else stops it. */
+/** A stale `?from` older than anything returned, with the API always claiming
+ *  another page. */
   async function openWithFrom(from: string): Promise<{ calls: number }> {
     TestBed.configureTestingModule({
       providers: [
@@ -830,16 +748,8 @@ describe('restoring a saved scroll depth', () => {
     });
     const fixture = TestBed.createComponent(Thread);
     const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
-    // Every page is newer than `from`, so nothing but the bound ends the loop.
-    //
-    // ⚠ THE SUPPLY IS FINITE ON PURPOSE, and it is not a weaker test for it.
-    // Against a server that never runs out — the real shape of this — removing
-    // the bound does not fail this test, it HANGS: the loop is driven by
-    // resolved promises, so it starves the macrotask queue and the wait below
-    // never gets a turn. Verified by ablation 2026-09-07 (no output in 240s).
-    // A suite that wedges is a worse instrument than one that fails, so the
-    // supply stops a few pages past the budget: the bound makes
-    // MAX_RESTORE_PAGES + 1 requests, and its absence makes more and says so.
+    // Every page is newer than `from`, so only the bound ends the loop. The
+    // supply is finite so that removing the bound fails rather than hangs.
     let n = 1000;
     let left = MAX_RESTORE_PAGES + 5;
     api.messages.mockImplementation(() => page([msg(String(n--), 5000)], left-- > 0, 'c'));
@@ -852,40 +762,23 @@ describe('restoring a saved scroll depth', () => {
     return { calls: api.messages.mock.calls.length };
   }
 
-  /** ⚠ Without the bound this does not fail, it HANGS — the loop has more pages
-   *  and has not reached the timestamp, forever. A bookmark into a busy channel
-   *  is the real shape of it. */
   it('stops after a bounded number of requests when `from` is unreachable', async () => {
     const { calls } = await openWithFrom('1');
-    // The first page, plus at most the restore budget.
     expect(calls).toBeLessThanOrEqual(MAX_RESTORE_PAGES + 1);
-    // And it did page back rather than giving up at the first turn — a bound
-    // that stopped immediately would pass the line above and break restoring.
+    // It did page back, not stop at once.
     expect(calls).toBeGreaterThan(1);
   });
 
   it('stops as soon as the saved depth is reached, well inside the bound', async () => {
-    // `from` is at the first page's own timestamp, so the loop never runs.
     const { calls } = await openWithFrom('5000');
     expect(calls).toBe(1);
   });
 });
 
-/** Landing on a search hit — #1401.
- *
- *  Clicking a result opened the conversation at its NEWEST page while the hit
- *  itself might be years back, and nothing scrolled to it. That became
- *  load-bearing on 2026-09-04, when search started returning retracted messages
- *  with `(deleted)` in place of the snippet: the reveal lives in the thread, so
- *  the row's whole job is to deliver you to the message.
- *
- *  `?at` is the hit's opaque cursor. It means "put me here"; `?from` means "I
- *  was here". They never meaningfully coexist — `at` wins on load and
- *  `commitFromParam` writes `from` as soon as the reader scrolls. */
+/** Landing on a search hit. `?at` means "put me here", `?from` "I was here";
+ *  `at` wins on load and `commitFromParam` replaces it on the first scroll. */
 describe('landing on a search hit', () => {
-  /** `newerHasMore` is the whole difference between the two situations a
-   *  landing can be in: a hit with the conversation still running on after it,
-   *  and a hit that happens to be near the end. */
+/** `newerHasMore`: whether the conversation runs on past the hit. */
   async function openAt(at: string, newerHasMore = true): Promise<{
     thread: Thread;
     calls: { cursor?: string; dir?: string }[];
@@ -910,14 +803,8 @@ describe('landing on a search hit', () => {
     api.messages.mockImplementation(
       (_o: unknown, _i: unknown, cursor?: string, _limit?: number, dir?: string) => {
         calls.push({ cursor, dir });
-        // Older-half: the two before the hit. Newer-half: the hit and the two
-        // after it, which is what makes the landing readable in both
-        // directions rather than an end with nothing past it.
-        // ⚠ `at`, not `newer`. A landing asks for the INCLUSIVE direction; a
-        // mock that answered `newer` was standing in for a backend that
-        // included the hit, which is what the author believed and not what the
-        // code did — and that belief passing as a test is how the skipped-hit
-        // bug reached a phone.
+        // The two before the hit, and the hit with the two after it. The
+        // forward half is `at`, inclusive of the hit.
         return dir === 'at'
           ? page([msg('h', 5000), msg('n1', 6000), msg('n2', 7000)], newerHasMore, 'newer-c')
           : page([msg('o1', 3000), msg('o2', 4000)], true, 'older-c');
@@ -933,9 +820,7 @@ describe('landing on a search hit', () => {
 
   it('asks for the messages on BOTH sides of the hit', async () => {
     const { calls } = await openAt('5000_9');
-    // Not the newest page. Opening at the end is what the bug was.
     expect(calls.every((c) => c.cursor === '5000_9')).toBe(true);
-    // `at`, not `newer` — the forward half of a landing must INCLUDE the hit.
     expect(calls.map((c) => c.dir).sort()).toEqual(['at', 'older']);
   });
 
@@ -943,47 +828,29 @@ describe('landing on a search hit', () => {
     const { thread } = await openAt('5000_9');
     const ids = thread.messages().map((m) => m.id);
     expect(ids).toEqual(['o1', 'o2', 'h', 'n1', 'n2']);
-    // ⚠ The half that matters. A landing with only older messages loaded is
-    // half a conversation, and usually the half being searched for — a reply
-    // is what tells you whether the message you found meant anything.
+    // Messages after the hit are loaded too.
     expect(ids.indexOf('h')).toBeLessThan(ids.length - 1);
   });
 
   it('is not treated as being at the latest message', async () => {
     const { thread } = await openAt('5000_9');
-    // A floating window has no overlap with the newest page, so `pollNewer`'s
-    // gap guard would call the whole thread unfillable and reload it — landing
-    // the reader back in the present within POLL_MS. Nothing about that reads
-    // as a bug from the outside; the thread just leaves.
+    // Floating, so `pollNewer` does not reload into the present.
     expect(thread.floating()).toBe(true);
   });
 
-  /** ⚠ The mirror, and it is not a formality. `floating` is what suppresses
-   *  `pollNewer`, so a landing that reports it unconditionally would leave a
-   *  reader who arrived at the END of a conversation never seeing another
-   *  message — the poll silenced for a window that was at the present all
-   *  along. The forward half running out is what says so. */
+  /** A landing at the end is not floating, so polling continues. */
   it('a hit near the end of the conversation is at the latest message', async () => {
     const { thread } = await openAt('5000_9', false);
     expect(thread.floating()).toBe(false);
   });
 });
 
-/** ⚠ **A HIT IN THE CONVERSATION ALREADY ON SCREEN.** The reload effect keys on
- *  origin+id, and Angular reuses this component across navigations — so
- *  clicking a result from the thread you are already looking at changed only
- *  the query string, the key was equal, and nothing reloaded. The row did
- *  nothing at all, which is the same symptom #1401 was filed for and the one a
- *  fix aimed only at other conversations would leave behind.
- *
- *  Search is reachable beside an open thread on a wide screen, so this is a
- *  click somebody makes, not a contrived route. */
+/** A hit in the conversation already open changes only the query string, which
+ *  must still reload. */
 describe('landing again without changing conversation', () => {
   it('re-lands when only ?at changes', async () => {
     const params: Record<string, string> = { at: '5000_9' };
-    // ⚠ The real `queryParamMap` stream, not a hand-called handler. A test that
-    // invoked the method directly would pass with nothing subscribed to it,
-    // which is the wiring this is about.
+    // The real `queryParamMap` stream, so the subscription is tested.
     const qp = new BehaviorSubject(convertToParamMap(params));
     TestBed.configureTestingModule({
       providers: [
@@ -1015,19 +882,13 @@ describe('landing again without changing conversation', () => {
     for (let i = 0; i < 40 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
     expect(loads).toBe(1);
 
-    // Same conversation, a different hit in it.
     qp.next(convertToParamMap({ at: '9000_11' }));
     for (let i = 0; i < 40 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
     expect(loads).toBe(2);
   });
 });
 
-/** Scrolling FORWARD off a landing — the other half of #1401.
- *
- *  Before this the window could only grow backwards: the sole route by which
- *  newer messages reached a thread was `pollNewer` asking for the newest page.
- *  A reader put on a 2005 hit could scroll back for ever and not forward one
- *  line, so the hit was a dead end. */
+/** Scrolling forward off a landing. */
 describe('growing a landing forwards', () => {
   async function landed(newerPages: Message[][]): Promise<{
     thread: Thread;
@@ -1054,18 +915,12 @@ describe('growing a landing forwards', () => {
     api.messages.mockImplementation(
       (_o: unknown, _i: unknown, _c?: string, _l?: number, dir?: string) => {
         dirs.push(dir);
-        // THREE directions, and the landing's is `at` — inclusive of the hit.
-        //
-        // ⚠ The older half is exhausted ON PURPOSE. Every rect is zero in
-        // jsdom, so `step()` reports the viewport as at BOTH edges at once and
-        // `onScroll` would take the backward path as well, leaving these
-        // assertions measuring `fetchOlder`. `has_more: false` retires it.
+        // The landing's direction is `at`. The older half is exhausted: every
+        // rect is zero in jsdom, so `step()` sees both edges and would fetch
+        // older too.
         if (dir === 'older') return page([msg('o1', 3000)], false, null);
-        // `newerPages[0]` opens the landing (it contains the hit); the rest are
-        // what scrolling forward fetches. ⚠ `prev_cursor` is what `fetchNewer`
-        // continues from — left null, the helper's default, it returns at its
-        // guard and the fetch never happens, which reads as the append being
-        // wrong rather than absent.
+        // `newerPages[0]` opens the landing; the rest are fetched by scrolling.
+        // `prev_cursor` must be set, or `fetchNewer` returns at its guard.
         const batch = newerPages[n] ?? [];
         const more = n < newerPages.length - 1;
         n++;
@@ -1077,9 +932,7 @@ describe('growing a landing forwards', () => {
     fixture.detectChanges();
     const thread = fixture.componentInstance;
     for (let i = 0; i < 40 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
-    // The message block is a viewChild, and `step()` returns "nothing needed"
-    // when it has not been rendered — so without this the scroll below measures
-    // an engine that declined to look.
+    // Render the message block, or `step()` has nothing to measure.
     fixture.detectChanges();
     return { thread, dirs };
   }
@@ -1092,11 +945,7 @@ describe('growing a landing forwards', () => {
     expect(thread.messages().map((m) => m.id)).toEqual(['o1', 'h', 'n1']);
   });
 
-  /** ⚠ **Running out is how a landing rejoins the present**, and this is the
-   *  test that says so. `floating` suppresses `pollNewer`; a reader who scrolled
-   *  all the way forward would otherwise sit at the live end of the
-   *  conversation and never see another message arrive — a stranger failure
-   *  than the one #1401 is about, and one nothing on screen would explain. */
+  /** The forward page running out ends `floating`, so polling resumes. */
   it('rejoins the present once the forward pages run out', async () => {
     const { thread } = await landed([[msg('h', 5000)], [msg('n1', 6000)]]);
     thread.fetchNewer();
@@ -1104,8 +953,7 @@ describe('growing a landing forwards', () => {
     expect(thread.floating()).toBe(false);
   });
 
-  /** A window anchored to the present has nothing to fetch forwards, and asking
-   *  would be a request per scroll that can only ever answer "nothing". */
+  /** A window at the present fetches nothing forwards. */
   it('does not fetch forwards when it is not floating', async () => {
     const { thread, dirs } = await landed([[msg('h', 5000)]]);
     expect(thread.floating()).toBe(false);
@@ -1116,17 +964,8 @@ describe('growing a landing forwards', () => {
   });
 });
 
-/** ⚠ **A `?at` THE SERVER CANNOT READ MUST NOT BUILD A NONSENSE THREAD.**
- *
- *  The backend treats a malformed cursor as absent, which is right for a
- *  backward page — it means "start at the newest". For a FORWARD page it means
- *  "everything after nothing", and the query answers with the OLDEST page. So
- *  the two halves of a landing come back from opposite ends of the archive and
- *  concatenate into a thread that jumps years mid-scroll, in order nowhere.
- *
- *  Reachable from a hand-edited URL or a bookmark predating the cursor format.
- *  The halves not joining is the signal, and a plain newest-page load is the
- *  answer — the same thing the app does with no `?at` at all. */
+/** An unreadable `?at` makes the halves the archive's two ends (a malformed
+ *  cursor reads as absent), so the landing falls back to the newest page. */
 describe('landing with a cursor the server could not read', () => {
   it('falls back to the newest page rather than joining two ends', async () => {
     TestBed.configureTestingModule({
@@ -1147,7 +986,6 @@ describe('landing with a cursor the server could not read', () => {
     const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
     api.messages.mockImplementation(
       (_o: unknown, _i: unknown, cursor?: string, _l?: number, dir?: string) => {
-        // What the server really does with an unreadable cursor.
         if (dir === 'at') return page([msg('oldest', 1000)], true, null, 'c');
         if (dir === 'older') return page([msg('newest', 9_000_000)], true, 'c');
         return page([msg('newest', 9_000_000)], true, 'c');
@@ -1159,23 +997,14 @@ describe('landing with a cursor the server could not read', () => {
     const thread = fixture.componentInstance;
     for (let i = 0; i < 40 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
 
-    // Not ['newest', 'oldest'] — a thread that runs backwards.
     expect(thread.messages().map((m) => m.id)).toEqual(['newest']);
-    // And not floating: this is the newest page, so the poll must keep running.
+    // Not floating: this is the newest page.
     expect(thread.floating()).toBe(false);
   });
 });
 
-/** **Landing on the right message is not the same as SHOWING which one.**
- *
- *  `scrollToTs` puts the hit flush under the sticky header and nothing marked
- *  it, so in a busy channel — `#netchat` at 1:07 PM has a dozen lines that look
- *  alike — you arrive in the right place and then have to work out which line
- *  you came for. Measured on the phone 2026-09-08 against a hit from 2013.
- *
- *  The marker's lifetime is the SAME as `?at`'s, deliberately: both mean "this
- *  is where you were put", and both stop being true the moment the reader
- *  scrolls. One rule, cleared in one place. */
+/** The landed message is marked, and the mark clears with `?at` on the first
+ *  scroll. */
 describe('marking the message that was landed on', () => {
   async function land(): Promise<Thread> {
     TestBed.configureTestingModule({
@@ -1220,20 +1049,15 @@ describe('marking the message that was landed on', () => {
     expect(thread.landedId()).toBeNull();
   });
 
-  /** Opening a thread normally marks nothing — there is no message the reader
-   *  was "put on", and a tint on the newest line would be noise on every open. */
+  /** An ordinary open marks nothing. */
   it('marks nothing when the thread was opened without a hit', async () => {
     const { thread } = await opened([msg('1', 100), msg('2', 200)]);
     expect(thread.landedId()).toBeNull();
   });
 });
 
-/** ⚠ **THE TAG IS A CLAIM ABOUT SOMEBODY ELSE, so every case here is about what
- *  it REFUSES to say.** Read state arrives from two origins with different
- *  shapes: Telegram's is a position in the conversation and names nobody,
- *  Signal's is a per-person receipt with a time. Rendering both through one tag
- *  is only safe while the group case stays counted rather than absolute — "read"
- *  in a group of six, from two receipts, would be an invention. */
+/** The delivery tag claims only what is known: in a group, a count of readers
+ *  rather than "read". */
 describe('the delivery tag', () => {
   function outgoing(id: string, delivery: Message['delivery']): Message {
     return { ...msg(id, 1000), is_outgoing: true, delivery };
@@ -1263,9 +1087,7 @@ describe('the delivery tag', () => {
   };
 
   it('says nothing at all when the archive cannot tell', async () => {
-    // ⚠ The case the whole three-state shape exists for: capture began after
-    // these were sent, and no amount of re-reading will fill it in. A tag here
-    // would report our own start date as somebody's phone being off.
+    // Sent before capture began: no tag.
     const tag = await render([outgoing('a', null)]);
     expect(tag('a')).toBeNull();
   });
@@ -1279,7 +1101,6 @@ describe('the delivery tag', () => {
     expect(tag('s')?.textContent?.trim()).toBe('sent');
     expect(tag('d')?.textContent?.trim()).toBe('delivered');
     expect(tag('r')?.textContent?.trim()).toBe('read');
-    // Sent and delivered are both "not read yet", which is what the dimming says.
     expect(tag('s')?.classList.contains('unread')).toBe(true);
     expect(tag('d')?.classList.contains('unread')).toBe(true);
     expect(tag('r')?.classList.contains('unread')).toBe(false);
@@ -1290,16 +1111,11 @@ describe('the delivery tag', () => {
     const tag = await render([outgoing('r', { state: 'read', read_by: [{ who: 'Alice', at }] })], [dm]);
     const title = tag('r')?.getAttribute('title') ?? '';
     expect(title).toContain('Alice');
-    // The time comes with the name: "who read it" without "when" is half the
-    // fact Signal sends, and the only half Telegram could already give.
     expect(title).toMatch(/\d/);
   });
 
   it('carries an EMPTY title when the origin names nobody', async () => {
-    // ⚠ Telegram's read mark is a position, not a person. Asserted as the empty
-    // string rather than skipped: a title reading "undefined" would look fine on
-    // screen and wrong on hover, which is exactly the kind of thing nobody
-    // notices until somebody hovers.
+    // Telegram names nobody: an empty string, not "undefined".
     const bare = await render([outgoing('t', { state: 'read', read_by: [] })], [dm]);
     expect(bare('t')?.getAttribute('title')).toBe('');
   });
@@ -1315,8 +1131,7 @@ describe('the delivery tag', () => {
   });
 
   it('counts rather than asserts when the conversation is not loaded yet', async () => {
-    // A deep link renders the thread before the list arrives. The unknown case
-    // takes the form that cannot overclaim.
+    // The kind is unknown before the list loads: the counted form.
     const tag = await render([outgoing('g', { state: 'read', read_by: [{ who: 'Alice', at: 1100 }] })]);
     expect(tag('g')?.textContent?.trim()).toBe('read by 1');
   });
@@ -1327,18 +1142,12 @@ describe('the delivery tag', () => {
   });
 });
 
-/** ⚠ **THE OFFSETS ARE UTF-16, WHICH IS WHY THIS MATH IS IN JAVASCRIPT.** Telegram
- *  counts code units and so does `String.prototype.slice`, so the arithmetic is
- *  native here — the same numbers applied to a Rust `String` land mid-character
- *  on any body with an emoji, and the Telegram half of this archive is full of
- *  them. Every case below is about what the reader must NOT be shown. */
+/** Entity offsets are UTF-16 code units, as `String.prototype.slice` counts. */
 describe('formatted message bodies', () => {
   function withEntities(body: string, entities: Message['entities']): Message {
     return { ...msg('m', 1000), body, entities };
   }
-  /** ⚠ ONE TestBed per test: `setup()` configures the testing module, and a
-   *  second call in the same test throws "already instantiated". The splitter is
-   *  pure, so one component instance answers every case. */
+  /** One TestBed per test; the splitter is pure, so one instance answers all. */
   interface Seg { text: string; kind: string; url: string | null }
   const segsWith = (t: Thread, m: Message): Seg[] =>
     (t as unknown as { segments(m: Message): Seg[] }).segments(m);
@@ -1356,9 +1165,7 @@ describe('formatted message bodies', () => {
   });
 
   it('counts an emoji as TWO, because Telegram does', () => {
-    // '👋' is one code POINT and two code UNITS. Telegram's offset 2 therefore
-    // means "after the wave", and a reader counting characters would start one
-    // short and bold the wrong text.
+    // '👋' is two code units, so offset 2 is after it.
     const { thread } = setup();
     const m = withEntities('👋 bold', [{ kind: 'bold', offset: 3, length: 4, url: null }]);
     expect(segsWith(thread, m).map((s) => s.text)).toEqual(['👋 ', 'bold']);
@@ -1367,13 +1174,10 @@ describe('formatted message bodies', () => {
   it('never lets an entity change how much of the message is shown', () => {
     const { thread } = setup();
     const body = 'short';
-    // A run reaching past the end — clamped, not allowed to throw away the tail
-    // or repeat it.
+    // Past the end: clamped.
     const over = withEntities(body, [{ kind: 'bold', offset: 2, length: 99, url: null }]);
     expect(segsWith(thread, over).map((s) => s.text).join('')).toBe(body);
-    // ⚠ OVERLAPPING runs: Telegram nests them (bold inside a link) and this
-    // renders one flat pass. The second is SKIPPED rather than rewinding, which
-    // would emit the overlap twice and show more text than was said.
+    // Overlapping: the second run is skipped, not re-emitted.
     const nested = withEntities('abcdefgh', [
       { kind: 'bold', offset: 0, length: 5, url: null },
       { kind: 'italic', offset: 2, length: 3, url: null },

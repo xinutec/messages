@@ -1,8 +1,7 @@
 //! Hanging held pictures onto the messages that linked them.
 //!
-//! No fixture: the join reads links out of the message bodies it is handed and
-//! consults one table, so the test hands it messages directly rather than
-//! seeding a conversation to reach the same three lines.
+//! No fixture: the join reads links from the bodies it is handed, so the tests
+//! hand it messages directly.
 
 use messages::archive::{Message, MessageKind, attach_link_images, link_image_state, offered_url};
 use messages::link_fetch::url_hash;
@@ -26,10 +25,7 @@ async fn pool() -> Option<MySqlPool> {
         (HELD, "ok", Some("image/jpeg"), Some("held.jpg")),
         (REFUSED, "not_image", None, None),
     ] {
-        // ⚠ Idempotent, because these tests run in PARALLEL against one database
-        // and each one seeds. A delete-then-insert setup raced and three of four
-        // died on the primary key — the rows are identical every time, so saying
-        // so is both the fix and the truth.
+        // Idempotent: these tests seed in parallel.
         sqlx::query(
             "INSERT INTO link_images (url_hash, url, state, content_type, size_bytes, stored_name, wanted_at, fetched_at, decided_by)
              VALUES (?, ?, ?, ?, 10, ?, NOW(), NOW(), 2)
@@ -84,8 +80,8 @@ async fn a_link_we_hold_a_picture_for_is_hung_on_its_message() {
 
 #[tokio::test]
 async fn a_link_we_decided_against_stays_a_link() {
-    // ⚠ The row EXISTS — it is a decision, not an absence. Joining on the row
-    // rather than on its state would inline a 404 page as a picture.
+    // The row exists, as a decision. Joining on the row alone would inline a
+    // 404 page.
     let Some(pool) = pool().await else { return };
     let mut msgs = [msg(&format!("and {REFUSED} here"))];
     attach_link_images(&pool, &mut msgs).await.unwrap();
@@ -102,10 +98,7 @@ async fn a_message_with_no_link_costs_no_query() {
 
 #[tokio::test]
 async fn a_deleted_message_still_reports_what_we_hold() {
-    // The HIDING is the template's job and has its own test there. The API
-    // reporting it is what lets a reveal show the picture without a refetch —
-    // and what would make a careless template leak it, which is why the gate
-    // has a case on both sides of that line.
+    // The template hides it; the API reports it, so a reveal needs no refetch.
     let Some(pool) = pool().await else { return };
     let mut msgs = [Message {
         deleted: true,
@@ -146,18 +139,14 @@ async fn an_offered_link_resolves_to_the_address_the_archive_gave_it() {
 
 #[tokio::test]
 async fn a_hash_nobody_offered_resolves_to_no_address() {
-    // ⚠ The refusal the whole tap rests on. A request carries a hash; the address
-    // comes from the row serving a page created. An invented hash therefore names
-    // nothing, and there is no path by which a caller can introduce a URL to
-    // fetch — which is what would turn this into an open proxy with a button.
+    // An invented hash names nothing: a caller cannot introduce a URL.
     let Some(pool) = pool().await else { return };
     assert!(offered_url(&pool, &"f".repeat(64)).await.unwrap().is_none());
 }
 
 #[tokio::test]
 async fn a_decided_link_is_not_offered_again() {
-    // Decided BY THIS READER, so there is nothing to ask for. A verdict from an
-    // older reader is a different matter and has its own test in link_image.rs.
+    // Decided by this reader, so nothing to ask. Older readers: link_image.rs.
     let Some(pool) = pool().await else { return };
     let hash = url_hash(&Url::parse(REFUSED).unwrap());
     assert!(offered_url(&pool, &hash).await.unwrap().is_none());
@@ -171,11 +160,8 @@ const FRESH: &str = "https://cloud.example.org/nc/s/FRESH";
 
 #[tokio::test]
 async fn serving_a_message_offers_its_undecided_links() {
-    // ⚠ THE PATH THAT MAKES A TAP POSSIBLE, and every other test here seeds a
-    // link that is already decided — so this one was never exercised until it
-    // was written. Serving a page must leave the link offered: a row with the
-    // URL from the archive, nothing fetched, and the message carrying the offer
-    // so the UI can draw a control.
+    // Serving a page offers the link: a row with the archive's URL, nothing
+    // fetched, and an offer on the message.
     let Some(pool) = pool().await else { return };
     let hash = url_hash(&Url::parse(FRESH).unwrap());
     sqlx::query("DELETE FROM link_images WHERE url_hash = ?")
@@ -197,8 +183,7 @@ async fn serving_a_message_offers_its_undecided_links() {
 
 #[tokio::test]
 async fn offering_a_link_twice_leaves_a_decision_alone() {
-    // A second reading of a conversation must not undo what is known about its
-    // links — serving a page is a read with one insert, never an update.
+    // Serving a page again changes nothing known about its links.
     let Some(pool) = pool().await else { return };
     let hash = url_hash(&Url::parse(REFUSED).unwrap());
     let mut msgs = [msg(&format!("and {REFUSED} here"))];

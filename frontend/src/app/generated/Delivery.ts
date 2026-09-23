@@ -7,14 +7,7 @@ import type { ReadBy } from "./ReadBy";
  */
 export type Delivery = { state: DeliveryState, 
 /**
- * Who read it and when, for the origin that records people rather than a
- * position.
- *
- * ⚠ EMPTY IS NOT "NOBODY", AND A FULL LIST IS NOT "EVERYONE". Telegram
- * leaves this empty always — it names no one. Signal names only those who
- * have sent a receipt, so in a GROUP this is who has read it so far and
- * never the membership; there is no row anywhere saying who has not. The
- * reader is careful to say "read by" rather than "read" when it could be
- * taken as a claim about a whole group.
+ * Who read it and when, Signal only. Only those who sent a receipt: in a
+ * group it is never the membership. Telegram names nobody, so it is empty.
  */
 read_by: Array<ReadBy>, };

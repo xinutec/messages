@@ -1,23 +1,15 @@
 import { expect, test, type Page } from "@playwright/test";
 
 /**
- * Copying a selection out of a thread, in a real browser.
- *
- * The unit tests (jsdom) cover the same paths, and jsdom is not trustworthy
- * here: measured 2026-08-16, its `Selection.containsNode` answered true for a
- * bubble entirely past the range and false for the bubble a small selection sat
- * inside. So the DOM half of this feature gets checked where it actually runs —
- * a real drag, the real ⌘C, and the real system clipboard.
+ * Copying a selection out of a thread with a real drag, ⌘C and clipboard;
+ * jsdom's Selection API is wrong here.
  */
 
-// Fixed, so the rendered clock does not follow whoever is running this.
+// Fixed, so the rendered clock does not follow the machine's time zone.
 test.use({ timezoneId: "UTC", permissions: ["clipboard-read", "clipboard-write"] });
 
 const ME = { user_id: "u1", display_name: "Test User" };
-/** `message_count` is the WHOLE conversation, and the copy compares itself
- *  against it — so it has to match the four messages served below, or every
- *  copy here would be reporting a truncation that did not happen. It said 3
- *  until 2026-09-03, when nothing read it. */
+/** Matches the four messages served, or every copy would report truncation. */
 const conversations = (total = 4) => [
   { origin: "irc", id: "7", name: "#chan", kind: "group", network: "xinutec", message_count: total, last_ts: Date.UTC(2026, 7, 14, 9, 5) },
 ];
@@ -32,7 +24,7 @@ const MESSAGES = [
   line("c", Date.UTC(2026, 7, 14, 9, 5), "simon", "morning"),
 ];
 
-/** Catch-all first: Playwright runs handlers last-registered-first. */
+/** The catch-all goes first: Playwright runs handlers last-registered-first. */
 async function openThread(page: Page, total = 4): Promise<void> {
   await page.route("**/api/**", (r) => r.fulfill({ status: 204, body: "" }));
   await page.route("**/api/me", (r) => r.fulfill({ json: ME }));
@@ -44,8 +36,8 @@ async function openThread(page: Page, total = 4): Promise<void> {
   await page.locator('.msg[data-id="c"] .body').waitFor();
 }
 
-/** Drag across two message bodies the way a finger or a mouse does, from a few
- *  pixels inside the first to a few pixels inside the last. */
+/** Drag across two message bodies, from just inside the first to just inside
+ *  the last. */
 async function dragSelect(page: Page, from: string, to: string): Promise<void> {
   const a = (await page.locator(`.msg[data-id="${from}"] .body`).boundingBox())!;
   const b = (await page.locator(`.msg[data-id="${to}"] .body`).boundingBox())!;
@@ -65,9 +57,7 @@ test("a selection spanning messages copies as an irssi log", async ({ page }) =>
     "--- Day changed Thu Aug 13 2026\n" +
       "14:32 <pippijn> hello there\n" +
       "14:33 <simon> hi\n" +
-      // ⚠ Two spaces before the star, and the sender inside the text. That is
-      // irssi's action line and what its parser matches on; the whole point of
-      // this format is that a log copied out reads like one that went in.
+      // irssi's action line: two spaces, the sender inside the text.
       "14:34  * pippijn waves\n" +
       "--- Day changed Fri Aug 14 2026\n" +
       "09:05 <simon> morning",
@@ -83,10 +73,8 @@ test("a selection inside one message copies the words, and nothing else", async 
 
 test("dragging over a whole bubble copies the sentence, not the nick and clock", async ({ page }) => {
   await openThread(page);
-  // ⚠ This is the check on `user-select: none`, and it needs the drag to START
-  // ON THE META ROW — a body-to-body drag passes with the rule removed, because
-  // the nick was never in the range to begin with. Grab the bubble from its top
-  // corner, which is where a real one-message selection starts.
+  // Checks `user-select: none`, so the drag starts on the meta row, at the
+  // bubble's top corner.
   const bubble = (await page.locator('.msg[data-id="b"]').boundingBox())!;
   const body = (await page.locator('.msg[data-id="b"] .body').boundingBox())!;
   await page.mouse.move(bubble.x + 2, bubble.y + 2);
@@ -112,15 +100,8 @@ test("the rich flavour is the same log, monospaced", async ({ page }) => {
   expect(html).toContain("&lt;pippijn&gt;");
 });
 
-/** ⚠ The silent one. The thread keeps a bounded window in the DOM, so a
- *  select-all in a long conversation copies that window and produces a log that
- *  reads as complete — 400 lines where the conversation holds 401,794. Here the
- *  window is all four messages and the conversation claims far more, which is
- *  the same shape.
- *
- *  In the browser rather than only in jsdom because it rides on the real
- *  selection: the notice appears exactly when the drag took the WHOLE window,
- *  and jsdom is not trustworthy about what a selection covers. */
+/** A select-all copies only the rendered window and says so. Here the window
+ *  is all four messages and the conversation claims far more. */
 test("a select-all that only got the window says so in the paste", async ({ page }) => {
   await openThread(page, 401794);
   await dragSelect(page, "a", "c");

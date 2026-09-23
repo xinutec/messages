@@ -1,20 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 
 /**
- * Opening a conversation must land at the LATEST message (the bottom), like any
- * chat app — not at the top of the fetched page. `Thread.loadThread` calls
- * `scrollToBottom()` on open when there's no `?from`; this asserts the rendered
- * result actually sits at the bottom in a real browser at a phone viewport. Only
- * a render check can see this: jsdom has no scroll geometry (scrollHeight/
- * clientHeight are 0), so vitest can't tell "pinned to bottom" from "pinned to
- * top".
- *
- * The mock is deliberately realistic — a full newest page with a mix of short
- * and long (wrapping) bodies AND images on the newest messages. Images render
- * lazily with no reserved height, so they have zero height at first paint and
- * grow when they load *after* scrollToBottom ran; if that growth isn't handled
- * the newest messages get pushed below the fold. The test waits for the images
- * to load before measuring, so it catches exactly that.
+ * Opening a conversation lands at the latest message, even after lazy images
+ * on the newest messages load and grow. jsdom has no scroll geometry, so only a
+ * real browser can check this.
  */
 
 const ME = { user_id: "u1", display_name: "Test User" };
@@ -22,8 +11,7 @@ const CONVERSATIONS = [
   { origin: "signal", id: "dm:a", name: "Alice", kind: "dm", message_count: 1000, last_ts: 1_717_000_000_000 },
 ];
 
-// A visible image with real dimensions (so it occupies height once loaded) —
-// served for every /api/attachments/* request below.
+// A real image, served for every /api/attachments/* request.
 const IMAGE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="280" height="210"><rect width="280" height="210" fill="#3b6ea5"/></svg>`;
 
 const LOREM =
@@ -35,11 +23,9 @@ function imageAttachment(k: number) {
   return { id: `att${k}`, content_type: "image/svg+xml", file_name: `pic${k}.svg`, size: 12_345, available: true, is_image: true };
 }
 
-// One full server page (PAGE=100 in thread.ts) of the newest messages, ascending
-// by ts — far taller than the 844px viewport — with older history available.
-// Every body starts with `msg{k}` (so `data-id` selects them precisely); every
-// 3rd is long and wraps to several lines; the last 4 carry an image. This is the
-// "tap a long, media-heavy chat" case.
+// One full page of the newest messages, far taller than the viewport, with
+// older history available. Bodies start `msg{k}`; every third wraps; the last
+// four carry an image.
 function newestPage(n: number) {
   const base = Date.UTC(2026, 0, 1, 12, 0, 0);
   return Array.from({ length: n }, (_, k) => ({
@@ -63,8 +49,7 @@ async function mockApi(page: Page): Promise<void> {
   await page.route("**/api/attachments/**", (r) => r.fulfill({ contentType: "image/svg+xml", body: IMAGE_SVG }));
   await page.route("**/api/conversations/**/messages**", async (route) => {
     const cursor = new URL(route.request().url()).searchParams.get("cursor");
-    // Newest page (no cursor); opening at the bottom needs only this page.
-    // Older history exists (has_more) but is fetched lazily on scroll-up.
+    // The newest page; older history is fetched on scroll-up.
     if (cursor) {
       await route.fulfill({ json: { messages: [], has_more: false, next_cursor: null, prev_cursor: null } });
     } else {
@@ -78,18 +63,11 @@ async function mockApi(page: Page): Promise<void> {
 test("opening a long conversation lands at the latest message", async ({ page }) => {
   await mockApi(page);
   await page.goto("/conversation/signal/dm:a");
-  // The newest message (last of the page) is rendered.
   await page.locator('.msg[data-id="99"]').waitFor();
-  // Wait for the images on the newest messages to finish loading — the shift
-  // they cause happens AFTER the initial scrollToBottom, so measuring before
-  // they load would give a false pass.
+  // Wait for the images, whose growth comes after the initial scroll.
   await expect
     .poll(async () =>
-      // `instanceof` narrows each element to `HTMLImageElement`, which is what
-      // makes `.complete` and `.naturalHeight` legal — and it is CHECKED, so a
-      // non-image under `.attach img` fails the poll rather than being cast
-      // into one. (Playwright 1.63's `evaluateAll` no longer takes the element
-      // type as a type argument.)
+      // `instanceof` narrows to `HTMLImageElement`, and fails on anything else.
       page
         .locator(".attach img")
         .evaluateAll(
@@ -105,22 +83,18 @@ test("opening a long conversation lands at the latest message", async ({ page })
     distanceFromBottom: t.scrollHeight - t.scrollTop - t.clientHeight,
     scrollTop: t.scrollTop,
   }));
-  // Pinned to the bottom (within a small epsilon), even after images grew ...
+  // At the bottom, after the images grew,
   expect(geom.distanceFromBottom).toBeLessThanOrEqual(4);
-  // ... and it genuinely scrolled — proving it's a long thread that landed at the
-  // end, not a short one that trivially fits (which would pass a bottom check for
-  // free).
+  // and it scrolled: a long thread, not one that fits.
   expect(geom.scrollTop).toBeGreaterThan(0);
 
-  // The newest bubble is actually within the viewport.
   const lastInView = await page.locator('.msg[data-id="99"]').evaluate((el) => {
     const r = el.getBoundingClientRect();
     return r.top >= 0 && r.bottom <= window.innerHeight + 1;
   });
   expect(lastInView).toBe(true);
 
-  // And the oldest rendered bubble is scrolled off the top (it opened at the end,
-  // not the start).
+  // The oldest rendered bubble is off the top.
   const firstAboveViewport = await page
     .locator('.msg[data-id="0"]')
     .evaluate((el) => el.getBoundingClientRect().bottom < 0);
@@ -128,20 +102,9 @@ test("opening a long conversation lands at the latest message", async ({ page })
 });
 
 /**
- * Scrolling FORWARD off a search landing — #1401's other half, and the half
- * jsdom cannot see.
- *
- * `ThreadWindow.step()` decides `needNewer` from viewport rects. In jsdom every
- * rect is zero, so a unit test driving `onScroll` measures a fake — this file's
- * sibling `thread-window.spec.ts` says so and keeps the measuring half here.
- * `thread.spec.ts` covers what `fetchNewer` DOES once called; this covers the
- * one thing only a real browser can answer: that scrolling to the bottom of a
- * floating window calls it at all.
- *
- * Before #1401 the window could only grow backwards — the sole route by which
- * newer messages reached a thread was `pollNewer` asking for the newest page —
- * so a reader landed on an old hit could scroll back for ever and not forward
- * one line.
+ * Scrolling forward off a search landing. `step()` decides `needNewer` from
+ * viewport rects, which are zero in jsdom, so only a browser can show that
+ * scrolling to the bottom of a floating window fetches forward.
  */
 function pageAt(prefix: string, startTs: number, n: number) {
   return Array.from({ length: n }, (_, k) => ({
@@ -165,16 +128,14 @@ test("scrolling to the bottom of a landing fetches forwards", async ({ page }) =
   let forwardPages = 0;
   await page.route("**/api/conversations/**/messages**", async (route) => {
     const q = new URL(route.request().url()).searchParams;
-    // ⚠ `at` opens the landing (inclusive of the hit) and `newer` grows it.
-    // Both are counted: the first call is the landing, so a second one is proof
-    // the scroll fetched forward.
+    // `at` opens the landing and `newer` grows it; a second call proves the
+    // scroll fetched forward.
     if (q.get("dir") === "newer" || q.get("dir") === "at") {
       const n = forwardPages++;
       await route.fulfill({
         json: {
           messages: pageAt(`fwd${n}_`, HIT + n * 3_600_000, 50),
-          // More forward history: the window stays floating, so a second
-          // scroll to the bottom must be able to ask again.
+          // More history ahead, so the window stays floating.
           has_more: true,
           next_cursor: null,
           prev_cursor: `c${n}`,
@@ -191,26 +152,13 @@ test("scrolling to the bottom of a landing fetches forwards", async ({ page }) =
   await expect(page.locator('[data-id="fwd0_0"]')).toBeAttached();
   expect(forwardPages).toBe(1);
 
-  // ⚠ The hit is MARKED, and only the hit. Landing on the right message is
-  // not the same as showing which one: `scrollToTs` puts it flush under the
-  // sticky header where, unmarked, it looks exactly like its neighbours —
-  // measured on a phone against a 2013 hit in a channel where a dozen lines
-  // share the minute. Asserted here rather than in vitest because the class is
-  // only worth anything if it reaches the rendered DOM.
+  // The hit, and only the hit, is marked in the rendered DOM.
   await expect(page.locator('[data-id="fwd0_0"]')).toHaveClass(/landed/);
   await expect(page.locator('[data-id="fwd0_1"]')).not.toHaveClass(/landed/);
 
-  // Drive the real thing: scroll the host to its bottom and let the engine
-  // decide. Nothing here calls fetchNewer. `.thread` IS the scroll container —
-  // the component sets it as its own host class and binds `(scroll)` there.
-  //
-  // ⚠ UP, THEN DOWN, REPEATEDLY — and each half is load-bearing. `step()`
-  // reveals what the window collapsed below before it asks for more, exactly as
-  // the top does, so the first arrival at the bottom spends itself on the
-  // reveal. And a second `scrollTop = scrollHeight` from a position already at
-  // the bottom assigns the same value, which fires NO scroll event at all:
-  // measured here, ten assignments produced one event. Backing off first is
-  // what makes the next arrival a real one.
+  // Scroll the host (`.thread`) to its bottom and let the engine decide. Up,
+  // then down, repeatedly: the first arrival spends itself revealing collapsed
+  // rows, and assigning the same scrollTop again fires no scroll event.
   await expect
     .poll(
       async () => {

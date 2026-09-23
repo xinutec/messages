@@ -1,32 +1,17 @@
 //! What the resolver may conclude from a page, and what it must refuse to.
 //!
-//! The fixture is a REAL Nextcloud 34.0.3 share page (fetched 2026-09-11), with
-//! only the host and the share token replaced — this repository is public and a
-//! share token is a capability. Its structure, tag order and quoting are the
-//! server's own, because a hand-written head would only prove that the reader
-//! reads what I expected a head to look like.
-//!
-//! ⚠ `.captured-html`, not `.html`, and that is not linter evasion. The page
-//! carries `width=device-width`, so DL-WEB-VIEWPORT-KEYBOARD reads it as one of
-//! our app shells relying on the keyboard default. It is not ours — it is
-//! evidence of what somebody else's server sends, and the one thing that must
-//! never happen to evidence is being edited until a rule is happy with it. The
-//! extension says what the file is; the bytes stay as they arrived.
+//! The fixture is a real Nextcloud share page with the host and share token
+//! replaced; structure, tag order and quoting are the server's own. Named
+//! `.captured-html` because it is somebody else's page, not one of our app
+//! shells for DL-WEB-VIEWPORT-KEYBOARD to judge.
 
 use messages::link_image::{Advert, cookie_name, read_advert, urls_in};
 use url::Url;
 
 const SHARE: &str = "https://cloud.example.org/nc/s/SHARETOKEN";
-/// The four cookies that live install actually set, in the order it set them —
-/// with the VALUES replaced, and the random per-install session cookie renamed.
-///
-/// ⚠ The shapes are the evidence; the values were never evidence at all. The
-/// reader only ever looks at a cookie's NAME, so a real passphrase and a real
-/// session id sat here proving nothing — they came off a live response along with
-/// the rest of the capture, and this repository is public. Caught on review.
-/// `oc_sessionPassphrase` and `nc_sameSiteCookie*` are fixed names Nextcloud and
-/// ownCloud always set, which is exactly why they can be matched on; the fourth is
-/// random per install and is here to show that one arrives and is ignored.
+/// The cookies that install set, in order, with values replaced: the reader
+/// looks only at names. `oc_sessionPassphrase` and `nc_sameSiteCookie*` are
+/// fixed names; the fourth is random per install and must be ignored.
 const REAL_COOKIES: [&str; 4] = [
     "oc_sessionPassphrase=REDACTED; path=/nc; secure; HttpOnly; SameSite=Lax",
     "nc_sameSiteCookielax=true; path=/nc; httponly;secure; SameSite=lax",
@@ -57,9 +42,7 @@ fn a_share_page_names_its_product_and_its_picture() {
 
 #[test]
 fn og_image_alone_is_not_enough() {
-    // ⚠ Half the web carries og:image. Without a server that names itself, an
-    // inlined "picture" could be any site's social banner — and fetching it
-    // would be us browsing the web on someone's behalf, which is not the ask.
+    // og:image alone is on half the web; the server must name itself too.
     let page = Url::parse(SHARE).unwrap();
     let a = read_advert(&page, ["session=abc; path=/"].into_iter(), &fixture());
     assert!(!a.cloud);
@@ -72,9 +55,8 @@ fn og_image_alone_is_not_enough() {
 
 #[test]
 fn a_picture_advertised_on_another_server_is_refused() {
-    // The trust rule: we fetch what the page named only while the page named
-    // something on itself. Otherwise any share page could point us anywhere —
-    // at an address on our own side of the VPN, for instance.
+    // The page may only name an image on its own origin, or it could point us
+    // anywhere, our side of the VPN included.
     let page = Url::parse(SHARE).unwrap();
     let html = fixture().replace(
         "https://cloud.example.org/nc/s/SHARETOKEN/preview",
@@ -116,8 +98,7 @@ fn cookie_names_are_read_off_the_header() {
 
 #[test]
 fn links_are_found_in_what_people_actually_type() {
-    // Trailing punctuation is the case that matters: a kept full stop is a 404,
-    // and a 404 is indistinguishable from "not a picture".
+    // A kept full stop would 404.
     let urls = urls_in(
         "look at https://cloud.example.org/nc/s/A. and https://cloud.example.org/nc/s/B, ok",
     );
@@ -150,13 +131,7 @@ fn an_empty_advert_is_not_inlineable() {
 
 #[test]
 fn an_entity_encoded_query_string_is_decoded() {
-    // ⚠ THE BUG THIS READER SHIPPED WITH. An og:image with a query string arrives
-    // as `?x=1024&amp;y=1024&amp;token=…`, because that is how an attribute
-    // spells an ampersand. Fetched raw, the server reads a parameter called
-    // `amp;token`, never sees the token, and answers 404 — so the link was
-    // recorded "not a picture" about a URL this reader had mangled itself.
-    // Measured against the live install: raw → 404 application/json, decoded →
-    // 200 image/jpeg.
+    // An attribute spells `&` as `&amp;`; undecoded, the token never arrives.
     let page = Url::parse(SHARE).unwrap();
     let html = fixture().replace(
         r#"content="https://cloud.example.org/nc/s/SHARETOKEN/preview""#,
@@ -172,8 +147,7 @@ fn an_entity_encoded_query_string_is_decoded() {
 
 #[test]
 fn a_refusal_says_which_signal_was_missing() {
-    // A refusal with no reason becomes permanent and unexplainable: when the
-    // verdict was wrong, the control vanished and nothing could say why.
+    // A refusal carries its reason.
     let page = Url::parse(SHARE).unwrap();
     let not_a_cloud = read_advert(&page, ["session=abc"].into_iter(), &fixture());
     assert_eq!(
@@ -211,8 +185,8 @@ fn a_refusal_says_which_signal_was_missing() {
 fn a_verdict_from_an_older_reader_may_be_asked_again() {
     use messages::link_image::{LinkState, READER_VERSION, askable};
 
-    // A picture we hold needs no asking; everything else may be asked again if
-    // the reader that decided it has since been fixed.
+    // A held picture needs no asking; anything else may be asked again once
+    // the reader that decided it has been fixed.
     assert!(!askable(LinkState::Ok, Some(READER_VERSION)));
     assert!(askable(LinkState::Offered, None));
     assert!(

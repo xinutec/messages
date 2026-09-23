@@ -1,21 +1,10 @@
 //! Client activity trace: what the browser sees and the API does not.
 //!
-//! Why this exists, and it is not analytics. The per-request trace already
-//! logs every API call, and that was treated as sufficient across the fleet for
-//! a long time. It is not: a tap that hits a cache, a control that was disabled,
-//! a screen that rendered wrong — none of it reaches the server, so none of it
-//! can be diagnosed afterwards from a report like "I pressed it and nothing
-//! happened".
-//!
-//! The events fold into the same log stream as the API requests, so a
-//! session reads as one timeline: `client-event kind=nav path=/conversations`, then
-//! `client-event kind=tap label="Signal"`, then the `GET /api/conversations/…
-//! 200` the tap caused.
-//!
-//! There is no storage here. These are logs, not data. The endpoint moves
-//! the client's events into the backend log and forgets them.
-//!
-//! Ported from the `life` app, where this has run since 2026-07-17.
+//! What the browser sees and the API does not: taps that hit a cache, disabled
+//! controls, route changes. Folded into the request log, so a session reads as
+//! one timeline: `client-event kind=nav path=/conversations`, then
+//! `client-event kind=tap label="Signal"`, then the request the tap caused.
+//! Nothing is stored.
 
 use axum::Json;
 use axum::http::StatusCode;
@@ -37,41 +26,27 @@ pub struct TelemetryEvent {
     pub label: Option<String>,
     /// The client's clock, in epoch milliseconds.
     ///
-    /// Kept because a batch arrives all at once, so the server's receive time
-    /// cannot order the events inside it and the client's can.
+    /// A batch arrives at once, so only the client's clock orders it.
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub at: i64,
 }
 
 /// Most events accepted from one POST.
 ///
-/// The real client batches a handful at a time; this stops a buggy or hostile
-/// one turning a single request into a log flood.
+/// The client batches a handful; this bounds a buggy or hostile one.
 const MAX_EVENTS: usize = 100;
 
 /// Longest label kept, in characters.
 ///
-/// Labels are verbatim UI text, so a pathological one would otherwise bloat a
-/// log line. Counted in `chars` rather than bytes so a multi-byte glyph is never
-/// split down the middle.
+/// Counted in chars, so a multi-byte glyph is never split.
 const MAX_LABEL: usize = 160;
 
 /// Format characters that are invisible, or that reorder what is displayed.
 ///
-/// `char::is_control` covers categories Cc and nothing else, and Rust's std has
-/// no Unicode category table — so these are named explicitly. Two reasons they
-/// matter here, and the second is the sharper one:
-///
-/// - Zero-width characters (U+200B, U+FEFF, the word joiners) are invisible,
-///   so a label made of them reads as empty while occupying the whole cap.
-/// - Bidi overrides (U+202A–202E, U+2066–2069) reorder the *rendering* of
-///   the text around them. A log line containing one can be made to display
-///   something other than what it says — the Trojan Source trick, pointed at the
-///   record rather than at source code.
-///
-/// A deny-list of what can deceive rather than all of category Cf, because
-/// pulling a Unicode tables crate in for this would be disproportionate. Stated
-/// so the limit is known rather than assumed.
+/// `char::is_control` covers only category Cc, so these are listed by hand:
+/// zero-width characters, which make a label look empty, and bidi overrides,
+/// which make a log line display something other than what it says. Not all of
+/// category Cf.
 fn is_deceptive_format(c: char) -> bool {
     matches!(c,
         '\u{00ad}'
@@ -85,21 +60,9 @@ fn is_deceptive_format(c: char) -> bool {
 
 /// Flatten a client-supplied label to a single harmless log field.
 ///
-/// This is the security boundary of the endpoint, not tidiness. A label is
-/// verbatim UI text and it is written into a log line as `label=…`. A label
-/// containing a newline therefore forges *whole log lines* — including further
-/// `client-event` lines attributed to someone else, or lines that look like they
-/// came from another component entirely. The log stops being evidence, which is
-/// the one thing it exists to be.
-///
-/// Control characters become spaces, runs of whitespace collapse, and the result
-/// is capped. `char::is_control` covers C0 and C1 but *not* U+2028 and U+2029,
-/// which end a line in some renderers; `split_whitespace` catches those, so the
-/// two passes together cover both. Capped in `chars` rather than bytes so a
-/// multi-byte glyph is never split down the middle.
-///
-/// Public so `tests/telemetry.rs` can exercise it directly: it is the one part
-/// of this endpoint an attacker chooses the input to.
+/// The endpoint's security boundary: a newline in a label would forge log lines.
+/// Control characters become spaces, whitespace runs collapse (which also
+/// catches U+2028 and U+2029), and the result is capped in chars.
 pub fn one_line(label: &str, max: usize) -> String {
     let unbroken: String = label
         .chars()
@@ -122,10 +85,8 @@ pub fn one_line(label: &str, max: usize) -> String {
 
 /// `POST /api/telemetry` — fold the client's events into the log stream.
 ///
-/// Always 204. Telemetry is best-effort: the client neither reads the response
-/// nor retries, because a trace that interferes with the app it observes is
-/// worse than no trace. Auth-gated, so every line is attributed and this is not
-/// an open log-write for anyone who finds the URL.
+/// Always 204: the client neither reads nor retries. Auth-gated, so every line
+/// is attributed.
 pub async fn record(
     AuthUser(user): AuthUser,
     Json(events): Json<Vec<TelemetryEvent>>,

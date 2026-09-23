@@ -1,28 +1,20 @@
-# Multi-stage build: Angular frontend + Rust backend in one image (the backend
-# serves the bundle + API). Mirrors the fleet's xinutec/<app>:latest convention.
+# Angular frontend and Rust backend in one image; the backend serves both.
 
 # --- frontend ---
 FROM node:24-alpine AS frontend
 WORKDIR /fe
-# pnpm-workspace.yaml belongs in this layer, not with the sources: it carries the
-# install-script allowlist, and without it neither esbuild nor the ui-harness
-# unpacks — the build then fails on dependencies that look installed.
+# pnpm-workspace.yaml goes in this layer: its install-script allowlist is what
+# lets esbuild and the ui-harness unpack.
 COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
-# git: the shared layout harness is a git dependency (github:xinutec/ui-harness),
-# so the install clones it — node:alpine ships no git.
-#
-# pnpm is taken unpinned. The host gets its copy from the flake, and pinning a
-# second version here would be two numbers held level by hand; the lockfile is
-# what has to match, and --frozen-lockfile fails rather than drift.
+# git, for the ui-harness git dependency. pnpm is unpinned; --frozen-lockfile
+# is what must match.
 RUN apk add --no-cache git ca-certificates \
     && npm install -g pnpm \
     && pnpm install --frozen-lockfile
 COPY frontend/ .
-# Stamp the build version into the bundle (see frontend/scripts/stamp-version.mjs).
-# ⚠ Explicit rather than via package.json's `prebuild` hook, because the line below
-# runs `ng` directly and a `pre*` hook only fires for `pnpm run <script>`.
-# The build context has no .git, so the commit comes from GIT_SHA, passed by CI;
-# a local `docker build` without it stamps `dev`, which is the honest answer.
+# Stamp the version into the bundle (frontend/scripts/stamp-version.mjs).
+# Explicit, since `ng` runs directly and skips the `prebuild` hook. The context
+# has no .git, so CI passes GIT_SHA; without it the stamp is `dev`.
 ARG GIT_SHA=dev
 RUN GIT_SHA="$GIT_SHA" node scripts/stamp-version.mjs
 RUN pnpm exec ng build --configuration production
@@ -38,23 +30,17 @@ RUN touch src/main.rs src/lib.rs && cargo build --release
 
 # --- runtime ---
 FROM debian:bookworm-slim
-# openssh-client is the send path: irssi runs on another cluster, so saying
-# something as Pippijn means an ssh to amun with a key pinned there to one
-# command. Nothing else in the image needs it, and without it the app boots
-# fine and refuses every send — which is a much quieter failure than it sounds,
-# so it is worth knowing this line is what that would mean.
+# openssh-client is the send path, an ssh to irssi on amun. Without it the app
+# runs and refuses every send.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates openssh-client \
     && rm -rf /var/lib/apt/lists/*
-# 65532 is the conventional "nonroot" id, matched by k8s/01-app.yaml.
+# 65532, the conventional "nonroot" id.
 RUN groupadd --gid 65532 messages \
     && useradd --uid 65532 --gid messages --no-create-home --shell /usr/sbin/nologin messages
 WORKDIR /app
 COPY --from=backend /app/target/release/messages /usr/local/bin/messages
-# ⚠ The SECOND binary, and forgetting it is invisible until a CronJob crashloops
-# at 17 past the hour: the image builds, the web app runs, and the only symptom
-# is a scheduled pod that cannot exec `link-fetch`. It is the fetcher that talks
-# to the open internet; the server never does.
+# The link-fetch service, the only binary that reaches the open internet.
 COPY --from=backend /app/target/release/link-fetch /usr/local/bin/link-fetch
 COPY --from=frontend /fe/dist/messages-web/browser ./public
 ENV STATIC_DIR=/app/public \

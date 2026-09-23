@@ -1,6 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-// The fleet-shared harness, published as @xinutec/ui-harness (source repo
-// ~/Code/ui-harness). Ships compiled JS, so it loads straight from node_modules.
+// The fleet-shared harness, @xinutec/ui-harness (~/Code/ui-harness).
 import {
   expectNoTextOverlaps,
   expectNoHorizontalOverflow,
@@ -9,97 +8,65 @@ import {
 } from "@xinutec/ui-harness";
 
 /**
- * L2 phone-width layout harness for messages. Render the two real screens (the
- * conversation-list shell and an open thread) at a Pixel viewport with the
- * backend mocked and BUSY data, and assert the two failure classes that read
- * fine in source and only show on a real phone:
- *   1. no two pieces of rendered text collide, and
- *   2. nothing spills past the right edge.
- * The at-risk spots here: the three-button origin filter row (All / Signal /
- * Google Chat) crowding at 412px, and a message's meta line (sender + time +
- * "edited") and reaction chips overflowing or overlapping the body.
+ * Phone-width layout checks: the conversation list and an open thread at a
+ * Pixel viewport, with the backend mocked and busy data. Asserts that no two
+ * pieces of text collide and nothing spills past the right edge.
  */
 
 const ME = { user_id: "test", display_name: "Test User" };
 
-/** A busy conversation list: all three origins, a group, a deliberately long
- *  name to stress the row title's ellipsis, and a long tail of counts/dates. */
+/** A busy conversation list: every origin, a group, and a long name. */
 const CONVERSATIONS = [
   { origin: "signal", id: "dm:a", name: "Alice Andersson", kind: "dm", network: null, message_count: 128, last_ts: Date.UTC(2026, 0, 2, 9, 14) },
   { origin: "signal", id: "grp:x", name: "Saturday climbing & bouldering logistics crew", kind: "group", network: null, message_count: 4210, last_ts: Date.UTC(2026, 0, 1, 20, 2) },
   { origin: "gchat", id: "gc1", name: "Bob Bytecode", kind: "dm", network: null, message_count: 37, last_ts: Date.UTC(2025, 11, 30, 16, 40) },
   { origin: "gchat", id: "gc2", name: "Platform on-call", kind: "group", network: null, message_count: 902, last_ts: Date.UTC(2025, 11, 29, 8, 5) },
-  // IRC is the only origin with a composer, so it has to be here or the send
-  // box is never laid out by this suite — and the composer is the one control
-  // that competes for width with anything at phone size.
+  // IRC, the only origin with a composer.
   { origin: "irc", id: "7", name: "#a-channel-with-a-long-name", kind: "group", network: "xinutec", message_count: 5104, last_ts: Date.UTC(2026, 0, 2, 11, 30) },
-  // The same target on two networks — the case the network label exists for, and
-  // the widest that subtitle line ever gets at phone width.
+  // One target on two networks, the widest subtitle.
   { origin: "irc", id: "8", name: "s_20", kind: "dm", network: "xinutec", message_count: 14446, last_ts: Date.UTC(2026, 0, 2, 10, 15) },
   { origin: "irc", id: "9", name: "s_20", kind: "dm", network: "euirc", message_count: 8071, last_ts: Date.UTC(2026, 0, 1, 22, 40) },
 ];
 
-/** Real bytes for the one attachment that is `available`. Without them the
- *  <img> 404s and renders as a broken-image glyph, which still satisfies "an img
- *  element exists" — so the test would pass while proving nothing about whether
- *  revealing shows a picture. The live measurement counted LOADED pixels; this
- *  lets the test hold the same standard.
- *
- *  ⚠ SVG rather than a base64 PNG because `Buffer` needs @types/node, which
- *  tsconfig.e2e.json does not carry. Text needs no binary type and still decodes
- *  to something with a naturalWidth. */
+/** Real bytes for the available attachment, so a revealed image actually
+ *  decodes rather than rendering a broken glyph. SVG, because `Buffer` needs
+ *  @types/node, which tsconfig.e2e.json lacks. */
 const PIXELS =
   '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="64">' +
   '<rect width="96" height="64" fill="#5a6e96"/></svg>';
 
-/** A busy thread: long sender, a long unbroken-ish body, an "edited" tag, an
- *  unavailable attachment, and a row of reaction chips — every element that can
- *  crowd or overflow the bubble. */
+/** A busy thread: every element that can crowd or overflow a bubble. */
 const THREAD = {
   messages: [
     { id: "1", ts: Date.UTC(2026, 0, 1, 12, 0), sender: "Alice Andersson", is_outgoing: false,
       body: "Morning! Did the referral letter come through yet? The clinic said they'd post it but it's been almost two weeks now.",
       deleted: false, edited: true, reply_to: null, delivery: null, entities: [], reactions: [{ emoji: "👍", count: 3, who: ["Bob Bytecode", "Dana", "Test User"] }, { emoji: "❤️", count: 2, who: [] }, { emoji: "🎉", count: 1, who: ["Dana"] }],
       attachments: [], link_images: [], link_offers: [], edits: [] },
-    // ⚠ A reply quote whose excerpt is the FULL 120 characters the backend will
-    // send, on an OUTGOING bubble — the narrowest one, since `.out` is pushed
-    // right. This is the shape that overflows: the quote is one clipped line by
-    // construction, and if the clipping ever stops working it spills past the
-    // right edge here first.
+    // A full-length reply excerpt on an outgoing bubble, the narrowest.
     { id: "2", ts: Date.UTC(2026, 0, 1, 12, 4), sender: "Test User", is_outgoing: true,
       body: "Not yet — chasing them this afternoon.", deleted: false, edited: false, reactions: [],
-      // ⚠ TWO readers on the NARROWEST bubble — `.out` is pushed right, so its
-      // meta line has the least room for a sender, a clock and a delivery tag.
-      // The same message is rendered through a DM route and a GROUP route below,
-      // where it has to word itself differently.
+      // Two readers, on the narrowest bubble; rendered through a DM route and a
+      // group route below.
       delivery: { state: "read", read_by: [{ who: "Alice Andersson", at: Date.UTC(2026, 0, 1, 12, 6) }, { who: "Bob Bytecode", at: Date.UTC(2026, 0, 1, 12, 8) }] },
       reply_to: { id: "1", cursor: "1_1", ts: Date.UTC(2026, 0, 1, 12, 0), sender: "Alice Andersson",
         excerpt: "Morning! Did the referral letter come through yet? The clinic said they'd post it but it's been almost two weeks n…",
         deleted: false },
       attachments: [{ id: "a1", content_type: "application/pdf", file_name: "referral-scan-2026-final-v2.pdf", size: 91234, available: false, is_image: false }], link_images: [], link_offers: [], edits: [] },
-    // An UNRESOLVED quote: the archive holds no such message, so it renders as
-    // text with no control. Its line is the longest of the two wordings.
+    // An unresolved quote, the longer wording.
     { id: "3", ts: Date.UTC(2026, 0, 1, 12, 9), sender: "Alice Andersson", is_outgoing: false,
       body: "Thankyouuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu", deleted: false, edited: false, reactions: [], delivery: null,
       reply_to: { id: null, cursor: null, ts: Date.UTC(2025, 5, 3, 8, 30), sender: null, excerpt: null, deleted: false },
       attachments: [], link_images: [], link_offers: [], edits: [] },
-    // A deleted message with BOTH halves behind the reveal: words and a stored
-    // image. The attachment-only shape is the one that renders no `.body` at
-    // all, so it is the one a careless selector misses.
+    // Deleted, with words and a stored image behind the reveal.
     { id: "4", ts: Date.UTC(2026, 0, 1, 12, 11), sender: "Alice Andersson", is_outgoing: false,
       body: "something said and then taken back", deleted: true, edited: false, reactions: [], reply_to: null, delivery: null, entities: [],
       attachments: [{ id: "a2", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true }], link_images: [], link_offers: [], edits: [] },
-    // ⚠ A SERVICE EVENT, which this app drew for three origins and never for
-    // Telegram — the page query filtered them out. It arrives as `action`, so it
-    // renders `* Alice made a …` with no bubble, and the longest wording is the
-    // one that can overflow a phone.
+    // A Telegram service event, rendered as an action.
     { id: "5", ts: Date.UTC(2026, 0, 1, 12, 20), sender: "Alice Andersson", is_outgoing: false,
       kind: "action", body: "made a 55-minute video call", deleted: false, edited: false,
       reactions: [], reply_to: null, delivery: null, entities: [],
       attachments: [], link_images: [], link_offers: [], edits: [] },
-    // ⚠ Reaction chips that KNOW WHO, with enough names that the hover text is
-    // long — the chip must stay chip-sized regardless, since `who` lives in a
-    // title attribute and must never widen the row.
+    // Named reactors: the names are in a title and must not widen the chip.
     { id: "6", ts: Date.UTC(2026, 0, 1, 12, 24), sender: "Alice Andersson", is_outgoing: false,
       body: "Six of us are in.", deleted: false, edited: false, reply_to: null, delivery: null, entities: [],
       reactions: [{ emoji: "👍", count: 6, who: ["Alice Andersson", "Bob Bytecode", "Test User", "Dana", "Erin Example"] },
@@ -110,11 +77,8 @@ const THREAD = {
   next_cursor: null,
 };
 
-/** A thread TALLER THAN THE PANE, which the four-message `THREAD` above is not.
- *  The keyboard case is invisible without it: with less content than viewport
- *  there is no scroll position to lose, `margin-top: auto` holds the composer at
- *  the foot and every message stays on screen however far the viewport shrinks.
- *  Sixty short lines overflow a Pixel comfortably. */
+/** A thread taller than the pane, so there is a scroll position the keyboard
+ *  can disturb. */
 const LONG_THREAD = {
   messages: Array.from({ length: 60 }, (_, i) => ({
     id: String(i + 1),
@@ -125,9 +89,7 @@ const LONG_THREAD = {
     deleted: false,
     edited: false,
     reply_to: null,
-    // ⚠ Every rung gets laid out at least once. `delivered` is the longest
-    // single word the tag can hold, and it only exists since Signal's receipts
-    // landed — a fixture pinned to read/unread would never render it.
+    // Every delivery rung is laid out; `delivered` is the longest word.
     delivery: i % 2 === 1 ? { state: ["sent", "delivered", "read"][(i >> 1) % 3], read_by: [] } : null,
     reactions: [],
     attachments: [], link_images: [], link_offers: [], edits: [],
@@ -137,8 +99,8 @@ const LONG_THREAD = {
   prev_cursor: null,
 };
 
-/** Mock every backend call: signed in, the busy list, the busy thread.
- *  Catch-all FIRST — Playwright runs handlers last-registered-first. */
+/** Mock every backend call. The catch-all goes first: Playwright runs handlers
+ *  last-registered-first. */
 async function mockApi(page: Page): Promise<void> {
   await page.route("**/api/**", (r) =>
     r.request().method() === "GET" ? r.fulfill({ json: [] }) : r.fulfill({ status: 204, body: "" }),
@@ -146,18 +108,13 @@ async function mockApi(page: Page): Promise<void> {
   await page.route("**/api/me", (r) => r.fulfill({ json: ME }));
   await page.route("**/api/conversations", (r) => r.fulfill({ json: CONVERSATIONS }));
   await page.route("**/api/conversations/**/messages**", (r) => r.fulfill({ json: THREAD }));
-  // Real bytes for the one attachment that is `available`. Without them the
-  // <img> 404s and renders as a broken-image glyph, which still satisfies "an
-  // img element exists" — so the test would pass while proving nothing about
-  // whether revealing actually shows a picture. The live measurement counted
-  // LOADED pixels; this lets the test hold the same standard.
+  // See PIXELS.
   await page.route("**/api/attachments/**", (r) =>
     r.fulfill({ contentType: "image/svg+xml", body: PIXELS }),
   );
 }
 
-// The checker-checker: fail loudly here if the device preset is ever lost and
-// the "phone width" suite silently runs at desktop width (defect 2).
+// Fails if the device preset is lost and the suite runs at desktop width.
 test("the suite really runs at phone geometry", async ({ page }) => {
   await mockApi(page);
   await page.goto("/");
@@ -170,14 +127,10 @@ test("conversation list — filter row + rows: lays out cleanly @ phone width", 
   await page.getByPlaceholder("Search messages").waitFor();
   await page.getByRole("button", { name: "Google Chat", exact: true }).waitFor(); // widest filter button
   await page.getByText("Alice Andersson").waitFor();
-  // Two rows share the title `s_20`; only the network separates them. A template
-  // that stopped binding it would still pass every layout assertion below, and
-  // the list would go back to showing two rows nobody can tell apart.
+  // Two rows titled `s_20`; only the network separates them.
   await page.getByText(/IRC xinutec · 14446 msgs/).waitFor();
   await page.getByText(/IRC euirc · 8071 msgs/).waitFor();
-  // The search field's prefix icon is where an icon-font fallback shows up as
-  // the literal word "search" overlapping the placeholder (guarded here since
-  // the shell is the screen with mat-icons).
+  // An icon-font fallback would show the word "search" over the placeholder.
   await expectIconFontLoaded(page);
   await expectNoTextOverlaps(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
@@ -186,7 +139,7 @@ test("conversation list — filter row + rows: lays out cleanly @ phone width", 
 test("open thread — meta + reactions + attachment: lays out cleanly @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   await page.goto("/conversation/signal/dm:a");
-  // Wait for the far messages so the whole thread has laid out before measuring.
+  // Wait for the far messages, so the thread has laid out.
   await page.locator(".msg .body").first().waitFor();
   await page.getByText("👍 3").waitFor();
   await page.getByText("referral-scan-2026-final-v2.pdf", { exact: false }).waitFor();
@@ -194,16 +147,8 @@ test("open thread — meta + reactions + attachment: lays out cleanly @ phone wi
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
-/// ⚠ WHO REACTED LIVES IN A `title`, WHICH MUST NOT CHANGE THE CHIP'S SIZE.
-/// The names can be far longer than the chip — five of them here — and putting
-/// them anywhere that reflows would push the reaction row past the right edge of
-/// a phone. The layout assertions above already catch the spill; this one pins
-/// the reason the chip is safe, so moving the names into visible text fails here
-/// rather than in a screenshot nobody takes.
-///
-/// ⚠ And `count` stays the number, never `who.length`: Google Chat names nobody
-/// and Telegram truncates a long list, so deriving the count from the names
-/// would under-report exactly when there are the most reactors.
+/// Who reacted lives in a `title`, which cannot change the chip's size, and
+/// `count` stays the number.
 test("who reacted is a hover, and the chip still says the count @ phone width", async ({ page }) => {
   await mockApi(page);
   await page.goto("/conversation/signal/dm:a");
@@ -213,17 +158,11 @@ test("who reacted is a hover, and the chip still says the count @ phone width", 
     "title",
     "Alice Andersson, Bob Bytecode, Test User, Dana, Erin Example and 1 more",
   );
-  // A reaction the origin cannot attribute gets no hover at all — empty is "not
-  // recorded", and an empty tooltip would read as "nobody".
+  // A reaction with no names gets no hover.
   await expect(page.getByText("❤️ 2")).toHaveAttribute("title", "");
 });
 
-/// ⚠ THE SAME MESSAGE, THE SAME TWO RECEIPTS, AND THE TAG MUST NOT WORD ITSELF
-/// THE SAME WAY. Signal names whoever sent a receipt and there is no row
-/// anywhere saying who did NOT — so in a DM two receipts are everybody, and in a
-/// group of unknown size they are two people. A tag that said plain `read` in
-/// both would be inventing the rest of the group, which is the same class of
-/// mistake as reporting our own capture start as somebody's phone being off.
+/// Two receipts are everybody in a DM, and two people in a group.
 test("a group counts its readers; a DM says read @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   const tag = () => page.locator('.msg[data-id="2"] .tag.delivery');
@@ -231,8 +170,7 @@ test("a group counts its readers; a DM says read @ phone width", async ({ page }
   await page.goto("/conversation/signal/dm:a");
   await tag().waitFor();
   await expect(tag()).toHaveText("read");
-  // Who and when live in the hover, like the reaction chips — so naming two
-  // people cannot widen the meta line on a phone.
+  // Names and times live in the hover, like reaction chips.
   await expect(tag()).toHaveAttribute("title", /Alice Andersson.*Bob Bytecode/);
 
   await page.goto("/conversation/signal/grp:x");
@@ -242,12 +180,8 @@ test("a group counts its readers; a DM says read @ phone width", async ({ page }
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
-/// ⚠ THE SHELL'S SEARCH BOX IS `display: none` AT PHONE WIDTH WITH A THREAD
-/// OPEN (`app.scss` hides `.list`), so the one moment searching the
-/// conversation you are reading is what you want is the one moment that box is
-/// off screen. This is the whole reason the thread carries its own — and a test
-/// that only checked the feature "works" on a desktop viewport would have missed
-/// that it was unreachable where it matters.
+/// The shell's search box is hidden at phone width with a thread open, so the
+/// thread carries its own.
 test("searching a conversation is reachable with the thread open @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   await page.route("**/api/search**", (r) =>
@@ -265,22 +199,18 @@ test("searching a conversation is reachable with the thread open @ phone width",
   await page.goto("/conversation/signal/dm:a");
   await page.locator(".msg .body").first().waitFor();
 
-  // The shell's box really is gone — asserted, so this test cannot quietly
-  // become "there are two search boxes and I found the other one".
+  // The shell's box is gone, so this found the thread's.
   await expect(page.getByPlaceholder("Search messages")).toBeHidden();
 
   await page.getByRole("button", { name: "Search this conversation" }).click();
   const box = page.getByPlaceholder("Search this conversation");
   await box.fill("referral");
   await box.press("Enter");
-  // ⚠ Scoped to the panel. The thread's own bodies contain these words too, so
-  // an unscoped locator passes by matching the MESSAGE rather than the hit —
-  // green for the wrong reason, which is the failure this file exists to avoid.
+  // Scoped to the panel: the thread's bodies contain these words too.
   const panel = page.locator(".thread-search");
   await panel.getByText("a phrase that appears nowhere", { exact: false }).waitFor();
 
-  // ⚠ A retraction is FOUND without being handed over: the row says who and
-  // when, and the words stay withheld. Same rule as the global result list.
+  // A retracted hit shows who and when, not the words.
   await expect(panel.getByText("Test User: (deleted)")).toBeVisible();
   await expect(panel.getByText("something withdrawn")).toHaveCount(0);
 
@@ -288,8 +218,7 @@ test("searching a conversation is reachable with the thread open @ phone width",
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
-/// "No matches" is a CLAIM about this conversation, so a failed request must not
-/// be able to make it — the same distinction the shell's search draws.
+/// "No matches" is a claim, so a failed request must not make it.
 test("a failed conversation search says so rather than \"no matches\" @ phone width", async ({ page }) => {
   await mockApi(page);
   await page.route("**/api/search**", (r) => r.fulfill({ status: 500, body: "" }));
@@ -303,15 +232,8 @@ test("a failed conversation search says so rather than \"no matches\" @ phone wi
   await expect(page.getByText("No matches in this conversation.")).toHaveCount(0);
 });
 
-/// ⚠ THE DATE GOES TO THE SERVER AS MILLISECONDS, AND THE SERVER CONVERTS —
-/// Signal counts milliseconds, Google Chat MICROseconds, Telegram and IRC whole
-/// seconds (#1562). This asserts the request the page actually makes, because a
-/// frontend that minted its own cursor would be right for one origin and wrong
-/// for three, and the thread would come back empty rather than erroring.
-///
-/// ⚠ And midnight is LOCAL. `Date.parse("2025-03-04")` is midnight UTC, so west
-/// of Greenwich the reader lands on the evening BEFORE the day they picked —
-/// a bug that appears for some readers, in some months.
+/// The date goes to the server as local midnight in milliseconds; the server
+/// converts it to the origin's unit.
 test("picking a date asks the server for that day @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   const asked: string[] = [];
@@ -327,9 +249,7 @@ test("picking a date asks the server for that day @ phone width", async ({ page 
 
   const expected = String(new Date(2025, 2, 4).getTime());
   expect(page.url()).toContain(`on=${expected}`);
-  // Both halves of the landing carry it: `older` for context before the day and
-  // `at` for the day itself. One without the other lands at a different place
-  // than it reads from.
+  // Both halves of the landing carry it.
   const withOn = asked.filter((u) => u.includes(`on=${expected}`));
   expect(withOn.some((u) => u.includes("dir=older"))).toBe(true);
   expect(withOn.some((u) => u.includes("dir=at"))).toBe(true);
@@ -338,13 +258,7 @@ test("picking a date asks the server for that day @ phone width", async ({ page 
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
-/// ⚠ THE TEXT ALWAYS COMES FROM THE BODY; AN ENTITY ONLY SAYS WHERE. This
-/// renders bold, a link, a spoiler and an unknown kind in one message and checks
-/// the visible text is exactly what was sent — no markup built from sender data,
-/// nothing added, nothing lost. Telegram's offsets are UTF-16 and so are
-/// JavaScript's string indices, which is why the emoji in the fixture matters:
-/// it is one character and TWO units, so a reader counting characters bolds the
-/// wrong run.
+/// Formatting renders from the body: the visible text is exactly what was sent.
 test("telegram formatting renders from the body, never from the entity @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   const body = "👋 bold here, a link https://example.com/x and a secret plus unknownfmt";
@@ -356,14 +270,11 @@ test("telegram formatting renders from the body, never from the entity @ phone w
           kind: "message", body, deleted: false, edited: false, reactions: [], attachments: [],
           link_images: [], link_offers: [], edits: [], reply_to: null, delivery: null,
           entities: [
-            // ⚠ UTF-16 UNITS. The leading 👋 is one character and TWO units, so
-            // "bold" starts at 3 rather than 2 — a reader counting characters
-            // bolds the wrong run, which is the bug this fixture exists to catch.
+            // UTF-16 units: the leading 👋 is two, so "bold" starts at 3.
             { kind: "bold", offset: 3, length: 4, url: null },
             { kind: "url", offset: 21, length: 21, url: null },
             { kind: "spoiler", offset: 49, length: 6, url: null },
-            // A kind this reader has never heard of: must render as plain text
-            // rather than blanking the tail of the message.
+            // An unknown kind renders as plain text.
             { kind: "someFutureKind", offset: 61, length: 10, url: null },
           ],
         }],
@@ -375,20 +286,13 @@ test("telegram formatting renders from the body, never from the entity @ phone w
   const bodyEl = page.locator(".msg .body").first();
   await bodyEl.waitFor();
 
-  // ⚠ The whole message, unchanged. An overlapping or over-long entity would
-  // show MORE than was said; a mis-sliced one would show less.
+  // The whole message, unchanged.
   expect((await bodyEl.innerText()).trim()).toBe(body);
 
   await expect(bodyEl.locator(".fmt-bold")).toHaveText("bold");
   await expect(bodyEl.locator(".fmt-spoiler")).toHaveText("secret");
-  // The link is a real anchor pointing at what the text says.
   await expect(bodyEl.locator("a")).toHaveAttribute("href", "https://example.com/x");
-  // ⚠ A SPOILER MUST BE COVERED, NOT INVISIBLE. The first version styled the
-  // cover `background: currentColor` beside `color: transparent` — and
-  // `currentColor` IS this element's colour, so the cover went transparent with
-  // the text and the spoiler rendered as a blank GAP. The markup and every
-  // assertion above were correct; only the render disagreed. Asserted here so it
-  // cannot silently revert to nothing.
+  // A spoiler is covered, not invisible.
   await expect(bodyEl.locator(".fmt-spoiler")).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expectNoTextOverlaps(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
@@ -400,9 +304,8 @@ test("a deleted message: hidden by default @ phone width", async ({ page }, test
   await page.locator(".msg .body").first().waitFor();
 
   const bubble = page.locator('.msg[data-id="4"]');
-  // Absent from the DOM, not merely covered — and the stored image is never
-  // fetched. The `deleted` tag in the meta line is what says a message is here
-  // at all, so the thread does not silently skip a beat.
+  // Absent, not covered, and the image never fetched; the `deleted` tag marks
+  // the message.
   await bubble.getByRole("button", { name: "Show this deleted message" }).waitFor();
   await expect(bubble).not.toContainText("something said and then taken back");
   await expect(bubble.locator("img")).toHaveCount(0);
@@ -419,12 +322,10 @@ test("a deleted message: revealed on click @ phone width", async ({ page }, test
   await bubble.getByRole("button", { name: "Show this deleted message" }).click();
   await expect(bubble).toContainText("something said and then taken back");
   await expect(bubble.locator("img")).toHaveCount(1);
-  // Decoded, not merely present — a broken <img> counts as an element too.
+  // Decoded, not merely present.
   await expect
     .poll(() => bubble.locator("img").first().evaluate((i: HTMLImageElement) => i.naturalWidth))
     .toBeGreaterThan(0);
-  // The revealed bubble is the taller one, and an image at phone width is where
-  // an overflow would actually show.
   await expectNoTextOverlaps(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
 });
@@ -433,18 +334,11 @@ test("open an IRC thread — the composer: lays out cleanly @ phone width", asyn
   await mockApi(page);
   await page.goto("/conversation/irc/7");
   await page.locator(".msg .body").first().waitFor();
-  // The send button is a mat-icon: an icon-font fallback renders the ligature
-  // word "send" instead of the glyph, which is exactly the failure that reads
-  // green in vitest because jsdom has no fonts.
+  // An icon-font fallback would render the word "send"; jsdom has no fonts.
   await page.getByRole("button", { name: "Send" }).waitFor();
   await expectIconFontLoaded(page);
-  // A long draft is what actually crowds this row — the input, the button, and
-  // the phone's width all compete, and a flex item's default min-width is its
-  // content, so an unconstrained field pushes the button off the edge.
-  // ⚠ `exact` because getByLabel matches on a SUBSTRING: the deleted-message
-  // reveal button is named "Show this deleted message" and otherwise resolves
-  // here too, failing on strict mode. Two controls a screen reader tells apart
-  // perfectly well; it is the locator that has to say which one it means.
+  // A long draft crowds the row. `exact`, since the reveal button's name also
+  // contains "Message".
   await page.getByLabel("Message", { exact: true }).fill(
     "a fairly long line of the sort somebody actually types on a phone, to see whether the send button survives it",
   );
@@ -452,28 +346,9 @@ test("open an IRC thread — the composer: lays out cleanly @ phone width", asyn
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
-// ⚠ The failure state, which no other case reaches: every test above mocks a
-// backend that answers. It is the one most likely to be wrong at phone width,
-// because it is the one nobody looks at — a sentence plus a button, in the
-// column the conversation list usually fills.
-/** ⚠ THE ANDROID KEYBOARD, which is where a chat composer usually goes wrong.
- *
- *  `index.html` asks for `interactive-widget=resizes-content`, so the soft
- *  keyboard shrinks the LAYOUT viewport rather than sliding over it — which is
- *  precisely what `setViewportSize` does, so this is the real geometry and not
- *  an approximation of it.
- *
- *  Both mechanisms it guards were ablated and both fail it: dropping the
- *  composer's `position: sticky`, and `height: 100vh` on the thread in place of
- *  `100%`. The vh one is not "vh does not shrink" — it does — it is that vh
- *  measures the whole viewport and ignores the shell above it, so the composer
- *  lands below the fold.
- *
- *  ⚠ **What this canNOT see is the meta token itself.** Remove
- *  `interactive-widget=resizes-content` and a real phone stops shrinking the
- *  layout viewport at all, while this test goes on shrinking it directly and
- *  stays green. That half is pinned by the test below, which is the whole
- *  reason there are two. */
+/** The Android keyboard. `interactive-widget=resizes-content` makes it shrink
+ *  the layout viewport, which is what `setViewportSize` does, so this is the real
+ *  geometry. It cannot see the meta token itself; the served-page test does. */
 test("the composer stays above the Android keyboard @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   await page.goto("/conversation/irc/7");
@@ -485,48 +360,25 @@ test("the composer stays above the Android keyboard @ phone width", async ({ pag
   const KEYBOARD = 350; // a Pixel's, near enough
   await page.setViewportSize({ width: full.width, height: full.height - KEYBOARD });
 
-  // Wholly on screen: not clipped at the bottom, not pushed off the top.
   const box = (await input.boundingBox())!;
   expect(box.y).toBeGreaterThanOrEqual(0);
   expect(box.y + box.height).toBeLessThanOrEqual(full.height - KEYBOARD);
-  // And the button that sends it, which is the half that gets squeezed out.
   const send = (await page.getByRole("button", { name: "Send" }).boundingBox())!;
   expect(send.y + send.height).toBeLessThanOrEqual(full.height - KEYBOARD);
   expect(send.x + send.width).toBeLessThanOrEqual(full.width);
-  // What was typed is still there, and still the value being edited.
   await expect(input).toHaveValue("half a sentence, still being typed");
 
-  // ⚠ SCOPED TO THE COMPOSER, and it has to be from 2026-09-10. Shrinking
-  // the viewport now scrolls the thread to keep the newest message visible (the
-  // test below), and a scrolled thread pins the day pill over whatever message
-  // is beneath it — by design: `.day` is a floating label, and thread.scss says
-  // so. `getClientRects` cannot see that the pill is opaque and drawn on top, so
-  // a whole-page scan counts the covered timestamp as a collision. That is the
-  // false positive the harness's own container scope exists for (see
-  // `findTextOverlaps`), and the composer is what this test is about: the draft
-  // colliding with the send glyph is the failure it was written for. Unscoped
-  // coverage of this screen stays in the two tests that own it — the busy-thread
-  // case above and smoke's scrolled multi-day case.
+  // Scoped to the composer: a scrolled thread pins the day pill over a message
+  // by design, which a page-wide scan would count as a collision.
   await expectNoTextOverlaps(page, testInfo, ".composer");
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
-/** ⚠ **THE OTHER HALF OF THE KEYBOARD, AND IT WAS MISSING.** The test above
- *  asserts where the composer is; for a long while that was the whole of what
- *  this suite knew about typing on a phone, and the conversation itself went
- *  unexamined. Measured 2026-09-10 against the shipped build: with a 350px
- *  keyboard at 412x839 the composer was exactly where it should be and the last
- *  message was at y 732 with the fold at 489 — the newest seven messages off the
- *  bottom of the screen, in the act of replying to them. `interactive-widget=
- *  resizes-content` shrinks the viewport and leaves `scrollTop` alone, so the
- *  bottom of the thread walks off by the keyboard's full height.
- *
- *  `ThreadWindow.observeShrink` is what closes it, and this is the case that says
- *  so: ablate the `destroyRef.onDestroy(this.win.observeShrink())` line in
- *  thread.ts and this fails by ~350px while every other test here stays green. */
+/** The newest message stays visible when the keyboard opens
+ *  (`ThreadWindow.observeShrink`). */
 test("the newest message stays visible when the keyboard opens @ phone width", async ({ page }) => {
   await mockApi(page);
-  // Taller than the pane — see LONG_THREAD. Registered after mockApi so it wins.
+  // Registered after mockApi, so it wins.
   await page.route("**/api/conversations/**/messages**", (r) => r.fulfill({ json: LONG_THREAD }));
   await page.goto("/conversation/irc/7");
   const input = page.getByLabel("Message", { exact: true });
@@ -535,9 +387,7 @@ test("the newest message stays visible when the keyboard opens @ phone width", a
   const composer = page.locator(".composer");
   await last.waitFor();
 
-  // Opening lands at the latest message, so the thread really is at the bottom
-  // before the keyboard arrives. Without this the case could "pass" from a start
-  // position it never had.
+  // At the latest message before the keyboard arrives.
   await expect
     .poll(() => page.locator("app-thread").evaluate((h) => h.scrollHeight - h.scrollTop - h.clientHeight))
     .toBeLessThan(64);
@@ -548,35 +398,21 @@ test("the newest message stays visible when the keyboard opens @ phone width", a
   const KEYBOARD = 350; // a Pixel's, near enough — same figure as the test above
   await page.setViewportSize({ width: full.width, height: full.height - KEYBOARD });
 
-  // The re-pin runs on a ResizeObserver callback, i.e. a frame after the resize.
+  // The re-pin runs a frame after the resize.
   await expect
     .poll(() => page.locator("app-thread").evaluate((h) => h.scrollHeight - h.scrollTop - h.clientHeight))
     .toBeLessThan(64);
 
-  // What the reader can actually see: the newest message, whole, above the box
-  // they are typing in and inside the shrunken viewport.
+  // The newest message, whole, above the box and inside the viewport.
   const box = (await last.boundingBox())!;
   const comp = (await composer.boundingBox())!;
   expect(box.y).toBeGreaterThanOrEqual(0);
   expect(box.y + box.height).toBeLessThanOrEqual(comp.y + 1);
   expect(box.y + box.height).toBeLessThanOrEqual(full.height - KEYBOARD);
-  // And the draft survived the resize, since a re-pin that loses it is no better.
   await expect(input).toHaveValue("replying to what is on screen");
 });
 
-/** ⚠ **AND IT MUST NOT DO IT TO SOMEONE READING HISTORY.** The re-pin above is
- *  right for a reader at the end of the conversation and wrong for everyone
- *  else: a search hit lands you in 2013, the keyboard opens, and being thrown to
- *  the present is worse than the messages you lost.
- *
- *  The state that decides is recorded on every scroll rather than measured when
- *  the resize fires, because by then the bottom has already moved — and the hole
- *  this pins is that `onScroll` skips the windowing step whenever the window is
- *  busy or a load is in flight, which used to skip the recording with it. Left
- *  stale-true through exactly the stretch where the reader scrolls away, the
- *  observer then pins them back. Measured 2026-09-10 on a variant that also
- *  watched content growth: routing's auto-load-older test timed out at 90s in 6
- *  runs of 20. Deterministic here, where the flake was not. */
+/** A reader in history is left there when the keyboard opens. */
 test("a reader back in history is left there when the keyboard opens @ phone width", async ({ page }) => {
   await mockApi(page);
   await page.route("**/api/conversations/**/messages**", (r) => r.fulfill({ json: LONG_THREAD }));
@@ -585,7 +421,6 @@ test("a reader back in history is left there when the keyboard opens @ phone wid
   await input.waitFor();
   await page.locator('.msg[data-id="60"]').waitFor();
 
-  // Scroll back into the conversation, well clear of the bottom.
   await page.locator("app-thread").evaluate((h) => (h.scrollTop = 0));
   await expect.poll(() => page.locator("app-thread").evaluate((h) => h.scrollTop)).toBeLessThan(50);
   const before = await page.locator("app-thread").evaluate((h) => h.scrollTop);
@@ -597,23 +432,14 @@ test("a reader back in history is left there when the keyboard opens @ phone wid
 
   const after = await page.locator("app-thread").evaluate((h) => h.scrollTop);
   expect(Math.abs(after - before)).toBeLessThan(50);
-  // And specifically NOT thrown to the end, which is the failure this is about.
   const fromBottom = await page
     .locator("app-thread")
     .evaluate((h) => h.scrollHeight - h.scrollTop - h.clientHeight);
   expect(fromBottom).toBeGreaterThan(500);
 });
 
-/** ⚠ ONE TOKEN, AND NOTHING ELSE KNEW ABOUT IT. `interactive-widget=
- *  resizes-content` is what makes the Android soft keyboard shrink the layout
- *  viewport instead of sliding over the page; without it the composer sits
- *  behind the keys and every geometry test above still passes, because they
- *  resize the viewport themselves.
- *
- *  It lives in a generated-looking file that an `ng update` may rewrite, it had
- *  no comment, and losing it is invisible everywhere except on a real phone with
- *  a real keyboard. Asserted against the SERVED page rather than the source, so
- *  a build step that drops it is caught too. */
+/** The served page carries `interactive-widget=resizes-content`; the geometry
+ *  tests above resize the viewport themselves and cannot see it. */
 test("the served page asks the keyboard to shrink the layout viewport", async ({ page }) => {
   await mockApi(page);
   await page.goto("/");
@@ -621,14 +447,8 @@ test("the served page asks the keyboard to shrink the layout viewport", async ({
   expect(content).toContain("interactive-widget=resizes-content");
 });
 
-/** ⚠ The IME half of "does it work while you are typing", driven by a REAL
- *  composition rather than a hand-built KeyboardEvent. `Input.imeSetComposition`
- *  puts Chromium into the same state Gboard does mid-word, so the Enter that
- *  follows carries `isComposing` for real.
- *
- *  The unit test asserts the guard; this asserts that the browser actually
- *  reports the state the guard reads, which is the assumption the unit test has
- *  to make and cannot check. */
+/** A real IME composition (`Input.imeSetComposition`), so the Enter carries
+ *  `isComposing` as Gboard's would. */
 test("Enter while the IME is composing does not send @ phone width", async ({ page, context }) => {
   await mockApi(page);
   let sends = 0;
@@ -649,18 +469,15 @@ test("Enter while the IME is composing does not send @ phone width", async ({ pa
   await page.keyboard.press("Enter");
   expect(sends).toBe(0);
 
-  // And a plain Enter, with nothing composing, still sends — otherwise this
-  // would pass just as well against a composer that never sends at all.
+  // A plain Enter still sends.
   await cdp.send("Input.imeSetComposition", { text: "", selectionStart: 0, selectionEnd: 0 });
   await input.fill("a finished sentence");
   await page.keyboard.press("Enter");
   await expect.poll(() => sends).toBe(1);
 });
 
-/** Search results, as the list renders them. Two ordinary hits and a retracted
- *  one, whose `snippet` still carries the withdrawn words — the server sends
- *  them and the reader is what hides them, so a fixture with the text stripped
- *  out would be testing a backend that does not exist. */
+/** Search results: two ordinary hits and a retracted one whose `snippet` still
+ *  has the words, as the server sends it. */
 const SEARCH = [
   { origin: "signal", conversation_id: "dm:a", conversation_name: "Alice Andersson", ts: Date.UTC(2026, 0, 2, 9, 14),
     sender: "Alice Andersson", snippet: "the referral letter finally turned up this morning, second post", deleted: false, cursor: "1000_1" },
@@ -668,22 +485,15 @@ const SEARCH = [
     sender: "Alice Andersson", snippet: "posted the letter on Tuesday", deleted: true, cursor: "2000_2" },
   { origin: "irc", conversation_id: "7", conversation_name: "#a-channel-with-a-long-name", ts: Date.UTC(2025, 11, 30, 16, 40),
     sender: "s_20", snippet: "no letter here, wrong channel", deleted: false, cursor: "3000_3" },
-  // ⚠ The same target on two networks — two rows the list can tell apart and
-  // this one could not. Both are in CONVERSATIONS, ids 8 and 9.
+  // One target on two networks: ids 8 and 9 in CONVERSATIONS.
   { origin: "irc", conversation_id: "8", conversation_name: "s_20", ts: Date.UTC(2025, 11, 29, 12, 0),
     sender: "s_20", snippet: "letter sent, check the pigeon", deleted: false, cursor: "4000_4" },
   { origin: "irc", conversation_id: "9", conversation_name: "s_20", ts: Date.UTC(2025, 11, 28, 12, 0),
     sender: "s_20", snippet: "letter never arrived", deleted: false, cursor: "5000_5" },
 ];
 
-/** ⚠ **A RETRACTION IS FOUND WITHOUT BEING SPELLED OUT.** Search stopped
- *  filtering `deleted` rows in SQL on 2026-09-04, so the withdrawn text now
- *  reaches the browser and only the template keeps it off the list.
- *
- *  jsdom pins the absence already (`app.spec.ts`). What needs a real render is
- *  the other half: `(deleted)` has to read as a retraction sitting among
- *  ordinary hits rather than as something somebody said, and the extra inline
- *  span must not crowd a list row that already truncates at phone width. */
+/** A retracted hit reads as a retraction among ordinary hits, without its words
+ *  or crowding the row. */
 test("search — a retracted hit is listed without its text @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   await page.route("**/api/search**", (r) => r.fulfill({ json: SEARCH }));
@@ -693,15 +503,11 @@ test("search — a retracted hit is listed without its text @ phone width", asyn
 
   const list = page.locator("mat-action-list");
   await list.getByText("(deleted)").waitFor();
-  // The words themselves, nowhere on the screen.
   await expect(page.locator("body")).not.toContainText("posted the letter on Tuesday");
-  // And the hit is still a hit — five rows, the retracted one among them.
   await expect(list.getByRole("button")).toHaveCount(5);
   await expect(list).toContainText("the referral letter finally turned up");
 
-  // ⚠ The two `s_20` rows are told apart, by the same network label the
-  // conversation list carries. Without it these are one row twice. Located by
-  // their snippets: title AND sender are `s_20` on both, which is the point.
+  // The two `s_20` rows are told apart by network; located by snippet.
   const rows = list.getByRole("button");
   await expect(rows.filter({ hasText: "letter sent, check the pigeon" })).toContainText("IRC xinutec");
   await expect(rows.filter({ hasText: "letter never arrived" })).toContainText("IRC euirc");
@@ -710,6 +516,7 @@ test("search — a retracted hit is listed without its text @ phone width", asyn
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
+// The failure state, which no other test reaches.
 test("search — a failed search says so rather than \"No matches.\" @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   await page.route("**/api/search**", (r) => r.fulfill({ status: 500, body: "boom" }));
@@ -717,8 +524,6 @@ test("search — a failed search says so rather than \"No matches.\" @ phone wid
   await page.getByPlaceholder("Search messages").fill("anything");
   await page.getByPlaceholder("Search messages").press("Enter");
   await page.getByText("The search didn't run", { exact: false }).waitFor();
-  // The claim it replaces must be absent: rendering both would be worse than
-  // rendering only the wrong one.
   await expect(page.locator(".empty")).toHaveCount(0);
   await expectNoTextOverlaps(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);

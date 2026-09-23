@@ -1,12 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 
 /**
- * The router contract: navigation state lives in the URL, so it's bookmarkable/
- * shareable, survives refresh, and the browser Back button works. The open
- * conversation is a real route — `/conversation/:origin/:id` — and the origin filter and
- * paged-back depth are query params (`?origin` / `?from`). Behavioural, because
- * "is the router used correctly?" is a render/navigation fact a static rule
- * can't see.
+ * Navigation state lives in the URL: `/conversation/:origin/:id`, with
+ * `?origin` and `?from` as query params, so it survives refresh and Back works.
  */
 
 const ME = { user_id: "u1", display_name: "Test User" };
@@ -32,8 +28,7 @@ async function mockApi(page: Page): Promise<void> {
 test("origin filter is reflected in the URL", async ({ page }) => {
   await mockApi(page);
   await page.goto("/");
-  // exact: the filter button's name is exactly "Google Chat"; a gchat
-  // conversation row also contains "Google Chat" in its subtitle.
+  // exact: a gchat row's subtitle also contains "Google Chat".
   await page.getByRole("button", { name: "Google Chat", exact: true }).click();
   await expect(page).toHaveURL(/[?&]origin=gchat\b/);
 });
@@ -49,7 +44,6 @@ test("deep-linking an origin filter restores it on load", async ({ page }) => {
   await mockApi(page);
   await page.goto("/?origin=gchat");
   await page.getByText("Bob").waitFor();
-  // Signal conversations are filtered out, so Alice must not be listed.
   await expect(page.getByText("Alice")).toHaveCount(0);
 });
 
@@ -61,19 +55,8 @@ function bulk(prefix: string, startTs: number, n: number) {
   return Array.from({ length: n }, (_, k) => m(startTs + k * 10, `${prefix}${k}`));
 }
 
-/** Scroll the thread to the top, and REFUSE to pretend when there is nothing to
- *  scroll.
- *
- *  ⚠ **`if (t) t.scrollTop = 0` made a missing container look like a successful
- *  scroll.** The caller then waited its full 90s for a `?from` that could never
- *  be written, and Playwright blamed `waitForURL` — the line after the one that
- *  actually did nothing. Measured 2026-09-15 from a preserved failure: the
- *  screenshot showed the viewport still at only26..only39, the BOTTOM, while
- *  the page snapshot listed only0 first and read as though the scroll had
- *  landed. It had not; that listing is DOM order.
- *
- *  Waiting for `.thread` rather than for a message, because a message being
- *  present does not put the scroll container on the page. */
+/** Scroll the thread to the top, failing if there is no `.thread` rather than
+ *  silently doing nothing. */
 const scrollThreadTop = async (page: Page) => {
   await page.locator(".thread").waitFor();
   const scrolled = await page.evaluate(() => {
@@ -87,8 +70,7 @@ const scrollThreadTop = async (page: Page) => {
   }
 };
 
-// Paged mock: a tall recent page (enough rows to scroll) that has an older page
-// below it. `cursor` present → the older page; absent → the fresh page.
+// A tall recent page with an older page below it: a cursor gets the older.
 async function mockApiPaged(page: Page): Promise<void> {
   await page.route("**/api/**", (r) => r.fulfill({ status: 204, body: "" }));
   await page.route("**/api/me", (r) => r.fulfill({ json: ME }));
@@ -111,45 +93,28 @@ test("scrolling to the top auto-loads older messages (no button)", async ({ page
   await mockApiPaged(page);
   await page.goto("/conversation/signal/dm:a");
   await page.getByText("fresh29", { exact: true }).waitFor();
-  // Chat-style: the manual "Load older" button is gone; older pages load on
-  // scroll-up.
+  // Older pages load on scroll-up.
   await expect(page.getByRole("button", { name: /Load older/ })).toHaveCount(0);
   await scrollThreadTop(page);
-  // The older page is fetched and rendered (it lands above the viewport, so
-  // assert it's in the DOM rather than in view).
+  // In the DOM, above the viewport.
   await page.getByText("antique0", { exact: true }).waitFor({ state: "attached" });
 });
 
 test("scroll position is reflected in ?from", async ({ page }) => {
   await mockApi(page);
-  // One tall page (oldest ts = 1000), no older pages.
+  // One tall page (oldest ts 1000), nothing older.
   await page.route("**/api/conversations/**/messages**", (r) =>
     r.fulfill({ json: { messages: bulk("only", 1000, 40), has_more: false, next_cursor: null, prev_cursor: null } }),
   );
   await page.goto("/conversation/signal/dm:a");
   await page.getByText("only39", { exact: true }).waitFor();
   await scrollThreadTop(page);
-  // The message at the top of the viewport (ts 1000) is written to ?from
-  // (debounced), so a refresh returns here.
+  // The top message's ts is written to `?from`, debounced.
   await page.waitForURL(/[?&]from=1000\b/);
 });
 
-/** ⚠ **A DEBOUNCED NAVIGATION OUTLIVES THE SCREEN THAT ARMED IT.** `?from` is
- *  written 300ms after a scroll; leave inside that window and the timer fired on
- *  a destroyed component, navigating relative to a route the reader had already
- *  left — with `replaceUrl: true`, so Back appeared to work and then put them
- *  back in the conversation, the list entry gone from history. Silent: no page
- *  error, nothing logged.
- *
- *  ⚠ **THE 150ms IS THE TEST.** Scrolling and leaving immediately is a race —
- *  whether the timer is still pending when Back lands — and two drafts died on
- *  it. One asserted the URL mid-flight to prove the debounce was pending; that
- *  assertion costs a round trip, the timer fired inside it, and the case passed
- *  against the defect 3 times in 3. A second retried in a loop and still only
- *  caught it 1 time in 4. Waiting a fixed 150ms instead — past the 60ms
- *  re-check, short of the 300ms debounce — puts the timer reliably ARMED AND
- *  UNFIRED at the moment of leaving: ablate the teardown and this fails 4 of 4,
- *  restore it and it passes 4 of 4. */
+/** The `?from` debounce must not fire after leaving the conversation: it
+ *  navigates with `replaceUrl`, which would put the reader back in it. */
 test("leaving during the ?from debounce does not navigate back into the thread", async ({ page }) => {
   await mockApi(page);
   await page.route("**/api/conversations/**/messages**", (r) =>
@@ -160,14 +125,11 @@ test("leaving during the ?from debounce does not navigate back into the thread",
   await page.getByRole("button", { name: /Alice/ }).click();
   await page.getByText("only39", { exact: true }).waitFor();
   await scrollThreadTop(page);
-  // ⚠ 150ms: ARMED BUT NOT YET FIRED, which is what makes this deterministic
-  // rather than a race. The debounce is 300ms and a scroll skipped while the
-  // window is busy re-checks after 60, so by 150 the timer exists and has not
-  // run. Leaving now is the case under test.
+  // 150ms: past the 60ms re-check, before the 300ms debounce, so the timer is
+  // armed and unfired when we leave.
   await page.waitForTimeout(150);
   await page.goBack();
   await expect(page).not.toHaveURL(/\/conversation\//);
-  // Its moment passes without moving us.
   await page.waitForTimeout(600);
   await expect(page).not.toHaveURL(/\/conversation\//);
 });
@@ -190,9 +152,8 @@ test("Back returns from a conversation to the list", async ({ page }) => {
 });
 
 /**
- * The whole chain the unit test cannot reach: the visibility event, through the
- * store's refetch, to a changed number on screen. The mock answers with a higher
- * count the second time, which is what an idle two hours looks like.
+ * A visibility event refetches the list and the changed count reaches the
+ * screen.
  */
 test("returning to the foreground re-reads the list", async ({ page }) => {
   await page.route("**/api/**", (r) => r.fulfill({ status: 204, body: "" }));
@@ -205,8 +166,7 @@ test("returning to the foreground re-reads the list", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText(/5 msgs/)).toBeVisible();
 
-  // What Chrome does when the app is brought back: the document is already
-  // 'visible', and this event is the only announcement of it.
+  // As Chrome does on resume: already visible, and this event the only signal.
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
 
   await expect(page.getByText(/9 msgs/)).toBeVisible();

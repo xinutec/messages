@@ -1,8 +1,6 @@
-//! MariaDB pool. This app is a READ-ONLY consumer of the shared `signal`
-//! database — the Signal tables are owned by the signal ingester's migrations
-//! and the `gchat_*` tables by import_gchat.py. The only table this app owns is
-//! its own `sessions` and `link_images`, created here on boot (CREATE TABLE IF
-//! NOT EXISTS), kept deliberately out of any cross-app migration framework.
+//! MariaDB pool. This app reads the shared `signal` database, whose tables the
+//! signal repo's migrations and import_gchat.py own. It creates only its own
+//! `sessions` and `link_images`, here on boot.
 
 use anyhow::{Context, Result};
 use sqlx::MySqlPool;
@@ -32,29 +30,15 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
     .await
     .context("creating sessions table")?;
 
-    // What is known about a link somebody posted, keyed by the link itself: the
-    // same picture posted in three channels is one row and one fetch.
-    //
-    // ⚠ `wanted` IS THE QUEUE, and that is why there is no second table. A
-    // link enters this table the moment a READER is served a message containing
-    // it — reading is what makes a picture worth having — and leaves `wanted`
-    // when the fetcher has asked. The states are a lifecycle, not a set of flags:
+    // What is known about a link somebody posted, keyed by the URL's hash.
     //
     //     offered → ok          the bytes are on the volume
     //             → not_image   reached it; not a picture we may inline
     //             → failed      could not reach it, or broke the limits
     //
-    // ⚠ `offered` IS WHAT MAKES THE TAP SAFE. Serving a page registers each
-    // of its links here with the URL TAKEN FROM THE ARCHIVE, and asking for one
-    // names that row by its hash. The browser therefore never names an address to
-    // fetch — if it could, this would be an endpoint that fetches anything anyone
-    // asks for, wearing a button. Nothing is fetched at `offered`; a person has
-    // to ask, and the answer comes back on that same request.
-    //
-    // ⚠ THE REFUSALS ARE ROWS TOO. A link that is not a picture must be
-    // remembered as not one, or every reading of that conversation asks a
-    // stranger's server about it again. Somebody else's server hears from us once
-    // per link, ever — and only because someone actually read the line.
+    // A link enters as `offered` when a page containing it is served, with the
+    // URL taken from the message, so a request only ever names a hash. Refusals
+    // are rows too, so a server is not asked again on every read.
     sqlx::query(
         r"CREATE TABLE IF NOT EXISTS link_images (
             url_hash     CHAR(64)     NOT NULL PRIMARY KEY,
@@ -73,19 +57,14 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
     .await
     .context("creating link_images table")?;
 
-    // The table above predates `wanted` by a day. Both statements are idempotent
-    // and cost nothing on a table that already matches; stating them is what
-    // makes a running instance reach the shape above without a migration
-    // framework this app deliberately does not have.
+    // Brings an existing table to the shape above; idempotent.
     for alter in [
         "ALTER TABLE link_images MODIFY COLUMN state ENUM('offered','wanted','ok','not_image','failed') NOT NULL",
-        // `wanted` was the queue a CronJob drained. The fetch is synchronous now,
-        // so no row rests there; the value stays in the enum only long enough for
-        // any straggler to be re-offered, and is not written by anything.
+        // `wanted` is no longer written; it stays in the enum for old rows.
         "ALTER TABLE link_images ADD COLUMN IF NOT EXISTS wanted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
         "ALTER TABLE link_images MODIFY COLUMN fetched_at DATETIME NULL",
-        // Which reader decided. NULL means "before this column existed", which is
-        // older than any reader and so re-offered — see `link_image::READER_VERSION`.
+        // NULL predates the column, older than any reader, so re-offered; see
+        // `link_image::READER_VERSION`.
         "ALTER TABLE link_images ADD COLUMN IF NOT EXISTS decided_by INT NULL",
     ] {
         sqlx::query(sqlx::AssertSqlSafe(alter))
@@ -94,9 +73,7 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
             .with_context(|| format!("bringing link_images up to date: {alter}"))?;
     }
 
-    // The speculative backfill's watermarks. Dropped rather than left behind: the
-    // crawl it paced is gone, and a table nobody writes is a thing the next
-    // reader has to work out the meaning of.
+    // A table the removed link backfill used.
     sqlx::query("DROP TABLE IF EXISTS link_fetch_progress")
         .execute(pool)
         .await

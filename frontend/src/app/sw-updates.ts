@@ -12,34 +12,18 @@ import { filter } from 'rxjs';
 const RECOVERY_KEY = 'messages.sw-recovery-attempted';
 
 /**
- * Self-update, so the app cannot go on running a build the server has replaced.
- *
- * ⚠ **THIS APP HAD NOTHING, AND IT SHOWED.** On 2026-09-14 the Android WebView was
- * running `main-IZLCFSTD.js` while the server served `main-YRMPMXEH.js` — an
- * `index.html` cached despite `cache-control: no-cache`, naming a bundle from before
- * Telegram existed. New data, old code: every Telegram conversation drew with a blank
- * origin label and the filter row had no Telegram button. A cold start did not fix it;
- * only a cache-bypassing reload did.
- *
- * `DL-NGSW-ABSENT` had been reporting this app for weeks (#1384), with `life` and
- * `fleetwatch` named as the worked examples. The control existed; nobody had applied it.
- *
- * The rules live in `@xinutec/ui-harness/sw-updates`, written and debugged in `life`.
- * The one that matters most here is the re-check on becoming visible: ngsw only
- * re-checks at a navigation, and the WebView shell reopens where it left off rather
- * than navigating — so a phone that is never cold-started never performs one.
- *
- * This class is only the adapter. The policy is shared and unit-tested against a fake;
- * what is here is the Angular wiring, which is the part a test cannot reach.
+ * Self-update, so the app cannot keep running a build the server has replaced
+ * (an Android WebView can keep a stale `index.html` despite `no-cache`). The
+ * policy is `@xinutec/ui-harness/sw-updates`; this is the Angular wiring. It
+ * re-checks on becoming visible, since the WebView reopens without navigating.
  */
 @Injectable({ providedIn: 'root' })
 export class AppSwUpdates {
   private readonly sw = inject(SwUpdate);
 
   private readonly serviceWorker: ServiceWorkerPort = ((sw: SwUpdate) => ({
-    // Bound to a local, not `this`: an object-literal getter does not capture the
-    // enclosing `this` lexically, and a copied boolean would freeze `isEnabled` at
-    // construction when start() must read the live value.
+    // A local, not `this`: an object-literal getter does not capture `this`, and
+    // `start()` must read the live value.
     get isEnabled(): boolean {
       return sw.isEnabled;
     },
@@ -49,9 +33,8 @@ export class AppSwUpdates {
         .subscribe(() => handler());
     },
     onUnrecoverable: (handler: () => void): void => {
-      // The cached build is broken and the server no longer holds the files to
-      // repair it — what a roll-forward deploy of :latest leaves a client whose
-      // cache was evicted meanwhile. Only a fresh load escapes.
+      // The cached build is broken and the server no longer has its files; only
+      // a fresh load recovers.
       sw.unrecoverable.subscribe(() => handler());
     },
     checkForUpdate: () => sw.checkForUpdate(),

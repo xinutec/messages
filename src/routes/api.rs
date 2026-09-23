@@ -14,11 +14,8 @@ use crate::link_fetch;
 use crate::session::AuthUser;
 use crate::state::AppState;
 
-// ⚠ Doc comments on a `ts(export)` type REACH TYPESCRIPT — `ts_rs` copies them
-// into `generated/`. So a `///` here is the frontend's description of the type,
-// not a duplicate of the handler's, and deleting one as redundant strips the
-// only documentation the TS side has. Notes meant for Rust readers go in `//`
-// like this one, which is not exported.
+// ts-rs copies `///` on exported types into `generated/`, where it is the
+// frontend's only documentation; Rust-only notes go in `//`.
 /// The signed-in user, as the UI's login gate reads it.
 #[derive(Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -36,7 +33,7 @@ pub async fn me(AuthUser(user): AuthUser) -> Json<Me> {
     })
 }
 
-/// GET /api/conversations → all conversations across all three origins.
+/// GET /api/conversations → all conversations across all origins.
 pub async fn conversations(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
@@ -46,34 +43,18 @@ pub async fn conversations(
 
 #[derive(Deserialize)]
 pub struct MessagesQuery {
-    /// Opaque cursor from a previous page — its `next_cursor` to continue
-    /// backwards, its `prev_cursor` to continue forwards. Absent → newest page.
+    /// Opaque cursor from a previous page: its `next_cursor` to continue
+    /// backwards, its `prev_cursor` to continue forwards. Absent: the newest page.
     cursor: Option<String>,
     limit: Option<i64>,
-    /// `older` (the default), `newer`, or `at`.
-    ///
-    /// `newer` is strictly after the cursor — what scrolling forward wants,
-    /// since the caller already holds that row. `at` INCLUDES it, which is what
-    /// a landing wants: composed of `older` + `newer`, a landing skipped the
-    /// very message it was aimed at.
-    ///
-    /// ⚠ An unrecognised value is `older`, deliberately. The alternative — a
-    /// 400 — would make every client that predates #1401 an error the moment it
-    /// sent nothing, and "absent" and "misspelled" are the same state to a query
-    /// string. Reading backwards is what this endpoint did for its whole life,
-    /// so it is the answer that cannot surprise a caller.
+    /// `older` (the default), `newer`, or `at`. `newer` is strictly after the
+    /// cursor, for scrolling; `at` includes it, for landing. Anything else is
+    /// `older`, since absent and misspelled look the same in a query string.
     dir: Option<String>,
-    /// Land on the first message of this day: epoch MILLISECONDS for midnight,
-    /// in whatever timezone the reader is in. Converted to the origin's own unit
-    /// by `cursor_for_day`, so a caller never has to know that Google Chat
-    /// counts microseconds and Telegram counts seconds.
-    ///
-    /// ⚠ Takes precedence over `cursor`, and that is not arbitrary: the reader
-    /// asked for a date, which is a new destination, while `cursor` is where
-    /// they already were. Honouring the stale one would ignore the click.
-    ///
-    /// ⚠ It sets the cursor and leaves `dir` alone, so the caller composes a
-    /// landing out of `older` + `at` exactly as it does for a search hit.
+    /// Land on the first message of this day: epoch milliseconds for the
+    /// reader's local midnight, converted to the origin's unit. Overrides
+    /// `cursor`, and leaves `dir` alone so the caller composes a landing from
+    /// `older` + `at`.
     on: Option<i64>,
 }
 
@@ -84,22 +65,16 @@ pub async fn messages(
     Path((origin, id)): Path<(String, String)>,
     Query(q): Query<MessagesQuery>,
 ) -> Result<Json<archive::MessagesPage>, AppError> {
-    // An unknown origin is a 404, not a 400: the URL names a conversation that
-    // does not exist, and no origin the archive holds is spelled that way.
+    // An unknown origin names a conversation that does not exist: 404.
     let origin = archive::Origin::parse(&origin).ok_or(AppError::NotFound)?;
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
-    // A malformed cursor just falls back to the newest page (treated as absent).
+    // A malformed cursor counts as absent.
     let cursor = q.cursor.as_deref().and_then(archive::parse_cursor);
     let dir = match q.dir.as_deref() {
         Some("newer") => archive::PageDir::Newer,
         Some("at") => archive::PageDir::AtAndNewer,
         _ => archive::PageDir::Older,
     };
-    // ⚠ `on` MINTS A CURSOR AND NOTHING ELSE — it deliberately does not force a
-    // direction. A landing wants BOTH halves around the point (`thread.ts`
-    // fetches `older` and `at` with the same cursor so the reader gets context
-    // before the day as well as on it), and forcing `at` here would leave the
-    // backward half asking for a different place than the forward one.
     let cursor = match q.on {
         Some(ms) => archive::parse_cursor(&archive::cursor_for_day(origin, ms)),
         None => cursor,
@@ -112,7 +87,7 @@ pub async fn messages(
 pub struct SearchQuery {
     q: String,
     limit: Option<i64>,
-    /// Narrow to one conversation. BOTH are required together — see the handler.
+    /// Narrow to one conversation; both or neither.
     origin: Option<String>,
     id: Option<String>,
 }
@@ -129,13 +104,7 @@ pub struct LinkImageState {
 
 /// GET /api/gchat-attachments/{id} → stream a Google Chat picture from the PVC.
 ///
-/// ⚠ ITS OWN ROUTE, LIKE TELEGRAM'S, AND NOT A SHARED ID SPACE. Each origin's
-/// attachments carry an independent AUTO_INCREMENT, so id 42 exists in three
-/// tables and means three different pictures. Serving them through one endpoint
-/// would need the id to carry its origin — and the first attempt at that negated
-/// the id to put the origin in its sign, which yields exactly two namespaces for
-/// four origins and hides the ambiguity inside an integer. The frontend knows the
-/// origin already; the route is where that knowledge belongs.
+/// Each origin's attachment ids are independent, hence a route per origin.
 pub async fn gchat_attachment(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
@@ -145,9 +114,8 @@ pub async fn gchat_attachment(
     else {
         return Err(AppError::NotFound);
     };
-    // Same contract as Signal's below: reaching here means the archive CLAIMS the
-    // bytes exist, so a read failure is a mount or a removal rather than an
-    // attachment that was never fetched, and it is logged as such.
+    // As for Signal's below: a read failure here means the mount and the
+    // archive disagree, which is logged.
     let Some(name) = std::path::Path::new(&stored_path).file_name() else {
         tracing::warn!("gchat attachment {id}: stored_path names no file: {stored_path:?}");
         return Err(AppError::NotFound);
@@ -165,8 +133,8 @@ pub async fn gchat_attachment(
 }
 
 /// GET /api/attachments/{id} → stream a Signal attachment blob from the PVC.
-/// Only serves files whose bytes were downloaded; resolves by basename under
-/// the configured attachments dir, so a stored path can't escape the mount.
+/// Resolves by basename under the attachments dir, so a stored path cannot
+/// escape the mount.
 pub async fn attachment(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
@@ -175,14 +143,9 @@ pub async fn attachment(
     let Some((content_type, stored_path)) = archive::attachment_blob(&app.pool, id).await? else {
         return Err(AppError::NotFound);
     };
-    // ⚠ A 404 FROM HERE MEANS THE DATABASE AND THE PVC DISAGREE, and that is
-    // worth saying out loud. Reaching this point means `stored_path` was NOT
-    // null — the archive claims these bytes exist and the UI has already drawn
-    // the picture rather than "(not stored)". So a failure is a mount that did
-    // not come up, a file removed underneath us, or a permission change, and
-    // collapsing all of those into a bare 404 makes them indistinguishable from
-    // an attachment that was never downloaded. The client still gets 404, which
-    // is honest; what changes is that the cause is no longer discarded.
+    // `stored_path` is set, so the archive claims the bytes exist. A read
+    // failure is a mount or a removed file, and its cause is logged; the client
+    // still gets 404.
     let Some(name) = std::path::Path::new(&stored_path).file_name() else {
         tracing::warn!("attachment {id}: stored_path names no file: {stored_path:?}");
         return Err(AppError::NotFound);
@@ -201,14 +164,8 @@ pub async fn attachment(
 
 /// GET /api/telegram-media/{id} → bytes the archive holds for a Telegram message.
 ///
-/// `{id}` is the MESSAGE's api id, which is the only id a client has. The lookup
-/// joins through to `(conversation, msg_id)` so a request cannot reach a file in
-/// another conversation that happens to share a message number.
-///
-/// ⚠ The same 404-means-disagreement note as `attachment` above applies: reaching
-/// the read means the archive said `stored`, so a failure is a mount that did not
-/// come up or a file removed underneath us, and the cause is logged rather than
-/// collapsed into the status.
+/// `{id}` is the message's API id. The join keeps the lookup inside that
+/// message's conversation. Read failures are logged as for `attachment`.
 pub async fn telegram_media(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
@@ -218,8 +175,7 @@ pub async fn telegram_media(
     else {
         return Err(AppError::NotFound);
     };
-    // A NAME is stored, and only its file component is used, so nothing in the
-    // database can address a path outside the mount.
+    // Only the file component of the stored name is used.
     let Some(name) = std::path::Path::new(&stored_name).file_name() else {
         tracing::warn!("telegram media {id}: stored_name names no file: {stored_name:?}");
         return Err(AppError::NotFound);
@@ -238,8 +194,8 @@ pub async fn telegram_media(
 
 /// GET /api/telegram-media/{id}/state → has it arrived yet?
 ///
-/// A reader that asked for a large file watches this. The POST cannot answer,
-/// because the fetch happens in another process minutes later.
+/// Polled by a reader waiting on a requested file; the fetch happens later, in
+/// another process.
 pub async fn telegram_media_state(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
@@ -253,15 +209,9 @@ pub async fn telegram_media_state(
 
 /// POST /api/telegram-media/{id}/request → a reader asked for these bytes.
 ///
-/// ⚠ This writes a row and returns; it does NOT fetch. The only process that can
-/// fetch is the Telegram feed, because it is the only one holding a session — and
-/// that pod listens on no port, which is a property worth keeping: nothing in the
-/// cluster can dial the process that holds a logged-in account. So the request is a
-/// row in a queue the feed polls, and the reader watches for `available`.
-///
-/// 204 whether or not anything was queued. A request for something already stored,
-/// or already asked for, is not an error the reader can act on — and the state it is
-/// really asking about arrives with the next page load either way.
+/// Queues a row for the Telegram feed, the only process holding a session, and
+/// returns. The feed accepts no connections, so it polls. 204 whether or not
+/// anything was queued.
 pub async fn request_telegram_media(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
@@ -275,13 +225,8 @@ pub async fn request_telegram_media(
 
 /// GET /api/link-images/{id} → the picture we hold for a link in a message.
 ///
-/// ⚠ THE READER NEVER TOUCHES THE OTHER SERVER, and that is the reason this
-/// endpoint exists at all. An `<img>` pointed straight at the link would
-/// announce every reader of the conversation to whoever hosts it, on every
-/// render, years after the line was typed. The bytes come from us or not at all.
-///
-/// `id` is the SHA-256 of the URL, which is also the file's name, so nothing
-/// from a link reaches the filesystem and the id cannot name a path.
+/// The reader never contacts the linked server: the bytes come from us or not
+/// at all. `id` is the URL's SHA-256, which is also the file name.
 pub async fn link_image(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
@@ -290,8 +235,7 @@ pub async fn link_image(
     let Some((content_type, stored_name)) = archive::link_image_blob(&app.pool, &id).await? else {
         return Err(AppError::NotFound);
     };
-    // Same disagreement as `attachment`: the row says the bytes are there, so a
-    // read failure is a mount or a deletion, not a link we never fetched.
+    // As for `attachment`: a read failure means the mount and the row disagree.
     let Some(name) = std::path::Path::new(&stored_name).file_name() else {
         tracing::warn!("link image {id}: stored_name names no file: {stored_name:?}");
         return Err(AppError::NotFound);
@@ -309,30 +253,19 @@ pub async fn link_image(
 
 /// POST /api/link-images/{id}/request → a reader tapped "show this picture".
 ///
-/// ⚠ THE BROWSER NAMES A HASH, NEVER AN ADDRESS. This promotes a row that
-/// serving a page already created from the message's own text; there is no path
-/// by which a request can introduce a URL. An endpoint that took one would be a
-/// fetch-anything proxy with a button on it, reachable by anyone who can log in.
-///
-/// 404 when no such link was ever offered — including a link already decided,
-/// which needs no asking. Asking twice is harmless: the row is already `wanted`
-/// and the timestamp moves, which is what puts an impatient reader's link at the
-/// front of the queue.
+/// The browser names a hash, never an address, so this cannot be used as a
+/// fetch-anything proxy. 404 when the link was never offered or is decided.
 pub async fn request_link_image(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
     Path(id): Path<String>,
 ) -> Result<Json<LinkImageState>, AppError> {
-    // The URL comes off the row the archive created, never off the request.
     let Some(url) = archive::offered_url(&app.pool, &id).await? else {
         return Err(AppError::NotFound);
     };
     let url = url::Url::parse(&url).map_err(|_| AppError::NotFound)?;
 
-    // ⚠ SYNCHRONOUS, BECAUSE SOMEBODY IS WATCHING. This was a queue drained
-    // by a CronJob, whose floor is one minute — two minutes of "fetching…" for a
-    // tap in a chat client. The work still happens in the other pod; what changed
-    // is that we wait for it rather than leaving the reader to poll.
+    // Synchronous: the reader is waiting. The fetch runs in the link-fetch pod.
     let outcome = link_fetch::resolve_one(
         &app.pool,
         &app.http,
@@ -355,15 +288,9 @@ pub async fn request_link_image(
     }))
 }
 
-/// GET /api/search?q= → substring search across all four origins,
-/// or inside one conversation with `&origin=&id=`.
-///
-/// ⚠ HALF A SCOPE IS REFUSED, NOT IGNORED. `?origin=irc` without an id, or an
-/// origin this app has never heard of, would otherwise silently widen to a
-/// global search — the caller asked to look in one place and got answers from
-/// everywhere, which reads as the scope not working rather than as a bad
-/// request. `Origin::parse` is the same one the routing uses, so a typo cannot
-/// mean "everywhere" here and "not found" there.
+/// GET /api/search?q= → substring search across all origins, or inside one
+/// conversation with `&origin=&id=`. A partial or unknown scope is a 404 rather
+/// than a silent global search.
 pub async fn search(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
@@ -392,10 +319,8 @@ pub async fn search(
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct SendRequest {
-    /// ⚠ The body and nothing else. Who it goes to is decided by the
-    /// conversation in the URL, looked up in the archive — a request cannot
-    /// name a network or a nick, so it cannot address somebody the archive has
-    /// never seen.
+    /// The body only. The recipient comes from the conversation in the URL, so
+    /// a request cannot address anyone the archive has not seen.
     pub text: String,
 }
 
@@ -406,42 +331,32 @@ pub struct SendRequest {
 pub struct SendResult {
     /// True only when irssi put the message on the wire.
     pub sent: bool,
-    /// Why not, when it did not. This is the far side's refusal — most often
-    /// that irssi has no tab open with that target, which is what decides.
+    /// Why not: irssi's refusal, usually that it has no tab for the target.
     pub error: Option<String>,
-    /// Whether the message is already in the archive and so will appear without
-    /// waiting for the hourly import. A send can succeed with this false.
+    /// Whether the message is already archived, visible without waiting for the
+    /// import. A send can succeed with this false.
     pub archived: bool,
 }
 
 /// POST /api/conversations/irc/{id}/send → say something, through irssi.
 ///
-/// ⚠ The only write in the app, and the only thing another person sees. Two
-/// things bound it and neither is in this function: the session must belong to
-/// an allow-listed user (the `AuthUser` extractor, as for every route here), and
-/// the irssi host decides for itself whether this recipient may be messaged.
-/// This handler's own contribution is narrower — it refuses to send anywhere the
-/// archive does not already hold a conversation.
+/// The app's one outward write. Bounded by the allow-listed session and by the
+/// irssi host's own rules; this handler refuses any target the archive does not
+/// hold.
 pub async fn send(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
     Path((origin, id)): Path<(String, String)>,
     Json(req): Json<SendRequest>,
 ) -> Result<Json<SendResult>, AppError> {
-    // Only IRC can be sent to, and a 404 says so more honestly than a 400 about
-    // an unsupported origin.
-    //
-    // ⚠ FOR SIGNAL THAT IS A DECISION, NOT A MISSING PIECE (Pippijn,
-    // 2026-08-15). `signal-cli-rest-api` is a linked device in this namespace and
-    // could send — which is the temptation. What stops it: an IRC echo is
-    // confirmable against irssi's log, where a Signal echo would be the only
-    // evidence the message existed. Reasoning and scoping in task #900.
+    // Only IRC. Signal is read-only by decision: an IRC echo can be confirmed
+    // against irssi's log, while a Signal echo would be the only evidence the
+    // message existed (#900).
     if archive::Origin::parse(&origin) != Some(archive::Origin::Irc) {
         return Err(AppError::NotFound);
     }
     let Some(sender) = app.irc.clone() else {
-        // No key mounted. The archive still reads; this capability is simply
-        // not configured, which is a server-side fact rather than a bad request.
+        // No key mounted: sending is not configured.
         return Ok(Json(SendResult {
             sent: false,
             error: Some("sending is not configured".to_string()),
@@ -452,34 +367,21 @@ pub async fn send(
     let Some(target) = archive::irc_target(&app.pool, &id).await? else {
         return Err(AppError::NotFound);
     };
-    // The pseudo-conversation irssi files server notices into is named after
-    // Pippijn's own nick, so it looks exactly like a conversation and is not
-    // one. The reader hides it; sending to it would message himself in reply to
-    // a server.
+    // irssi's server-notice window is named after Pippijn's nick.
     if target.is_status {
         return Err(AppError::NotFound);
     }
 
-    // ⚠ PARSED HERE, NOT IN THE COMPOSER, so the API and the UI cannot come to
-    // disagree about what a leading slash means. Every caller gets the same
-    // behaviour, including one that never went through the composer.
+    // Parsed here, so every caller gets the same slash handling.
     let (text, is_action) = crate::irc_send::parse_slash(&req.text);
     match sender
         .send(&target.network, &target.target, text, is_action)
         .await?
     {
-        // ⚠ BOTH ARMS LOG, because both are 200 and the request trace cannot
-        // tell them apart. "The tap did nothing" is the failure this whole
-        // logging seam exists for (see routes::telemetry), and a send that was
-        // refused looks identical to one that went, from the outside.
-        //
-        // The network and target are logged; THE MESSAGE IS NOT. What was said
-        // is private conversation and belongs in the archive, which is what the
-        // archive is; a log line is the wrong place for it and outlives its
-        // usefulness by months.
+        // Both outcomes are 200, so both are logged: target, never the message.
         crate::irc_send::Outcome::Refused(why) => {
             tracing::info!(
-                "irc send REFUSED by irssi: {}/{} — {why}",
+                "irc send refused by irssi: {}/{} — {why}",
                 target.network,
                 target.target
             );
@@ -490,9 +392,7 @@ pub async fn send(
             }))
         }
         crate::irc_send::Outcome::Sent(sent) => {
-            // ⚠ The message has gone by this point. A failure to record it is
-            // therefore logged and not returned: telling the caller the send
-            // failed would be false, and would invite them to send it again.
+            // The message has gone, so a failed echo is logged, not returned.
             let archived = match crate::irc_send::record_echo(&app.pool, &id, &sent).await {
                 Ok(written) => written,
                 Err(e) => {
@@ -501,7 +401,7 @@ pub async fn send(
                 }
             };
             tracing::info!(
-                "irc send OK: {}/{} as {} — {}",
+                "irc send ok: {}/{} as {} — {}",
                 sent.tag,
                 target.target,
                 sent.nick,

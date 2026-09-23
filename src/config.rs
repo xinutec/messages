@@ -1,21 +1,16 @@
 //! Runtime configuration from the environment.
 //!
-//! The DB connection is assembled from parts (DB_HOST/…), matching the signal
-//! ingester's convention, so this app can read the very same `signal-secret`
-//! (DB_USER/DB_PASSWORD) in-namespace rather than duplicating a DSN.
+//! The database connection is built from DB_* parts, as the signal ingester's
+//! is, so this app reads the same `signal-secret`.
 
 use anyhow::{Context, Result};
 use sqlx::mysql::MySqlConnectOptions;
 
 /// Split `ALLOWED_USERS` into the ids that may use the app.
 ///
-/// ⚠ The empty-entry filter is a security property, not tidiness. A stray
-/// comma, or the variable set but blank, otherwise yields a list containing the
-/// empty string — and an empty entry matches a caller presenting an empty user
-/// id. Trimming and dropping empties means every way of configuring nothing
-/// ends in a list that admits nobody, which is what makes the gate fail closed.
-/// Pinned by tests/access.rs; separated from `from_env` so it can be, since the
-/// environment is global and a test that set it would race every other test.
+/// Empty entries are dropped: an empty id would match a caller presenting an
+/// empty user id. Every way of configuring nothing admits nobody. Separate from
+/// `from_env` so tests/access.rs can call it without touching the environment.
 pub fn parse_allowed_users(raw: &str) -> Vec<String> {
     raw.split(',')
         .map(|s| s.trim().to_string())
@@ -25,10 +20,8 @@ pub fn parse_allowed_users(raw: &str) -> Vec<String> {
 
 #[derive(Clone, Debug)]
 pub struct Config {
-    /// MariaDB connection options, built from DB_* parts. Built from parts (not a
-    /// formatted `mysql://` URL) so a password from the externally-owned
-    /// `signal-secret` can contain URL-reserved characters (`@ : / # ?`) without
-    /// corrupting the DSN.
+    /// MariaDB options, built from DB_* parts so a password with URL-reserved
+    /// characters is safe.
     pub db_options: MySqlConnectOptions,
     /// HMAC key for signing session cookies.
     pub session_secret: String,
@@ -43,54 +36,40 @@ pub struct Config {
     /// Must match the redirect URI registered for the OAuth2 client.
     pub nc_redirect_uri: String,
 
-    /// Nextcloud user ids permitted to log in. The archive holds private
-    /// messages and the host is on a shared VPN, so access is fail-closed: an
-    /// empty list (or a user not on it) is rejected. Set via ALLOWED_USERS
-    /// (comma-separated).
+    /// Nextcloud user ids permitted to log in (`ALLOWED_USERS`, comma-separated).
+    /// Fail-closed: an empty list admits nobody.
     pub allowed_users: Vec<String>,
 
-    /// Directory of the built Angular bundle to serve (SPA fallback). Unset →
-    /// API-only (dev, where `ng serve` proxies).
+    /// The built Angular bundle to serve. Unset: API-only.
     pub static_dir: Option<String>,
 
-    /// Mount of the signal-attachments PVC (read-only); files referenced by
-    /// `attachments.stored_path` are served from here by basename.
+    /// The signal-attachments mount (read-only); files are served by basename.
     pub attachments_dir: String,
 
-    /// Mount of the link-images volume (read-only here; the fetch job is the
-    /// only thing that writes it). Served by the name recorded in `link_images`.
+    /// The link-images mount (read-only here).
     pub link_images_dir: String,
     /// Where the Telegram feed writes fetched media. Mounted read-only here.
     pub telegram_media_dir: String,
 
-    /// Where the fetch service answers, in-cluster. It holds no credentials and
-    /// no storage — see `bin/link-fetch.rs` for why that is the whole point.
+    /// The in-cluster fetch service; see `bin/link-fetch.rs`.
     pub link_fetcher_url: String,
 
-    /// Where irssi is, for the one thing this app does that is not a read.
-    /// `None` disables sending entirely — see [`IrcSend`].
+    /// Where irssi is. `None` disables sending; see [`IrcSend`].
     pub irc_send: Option<IrcSend>,
 }
 
 /// How to reach the irssi that holds Pippijn's IRC connections.
 ///
-/// ⚠ Optional on purpose, and that is a safety property rather than a
-/// convenience. This app is a reader everywhere else; sending is the one
-/// capability that acts as a person on networks other people are on. If the key
-/// is not mounted the app still boots and still serves the archive — it just
-/// refuses to send. The alternative, failing to start, would take a working
-/// viewer down over a capability it does not need in order to read.
+/// Optional: without the key the app still serves the archive and refuses to
+/// send.
 #[derive(Clone, Debug)]
 pub struct IrcSend {
-    /// amun over WireGuard. An address rather than a name: this is a different
-    /// cluster and nothing here resolves its names.
+    /// amun over WireGuard, as an address: this cluster cannot resolve its names.
     pub host: String,
     pub port: u16,
     /// The mounted secret: `id_ed25519` and `known_hosts`.
     pub key_dir: String,
-    /// Writable scratch. ssh refuses a private key carrying any group or other
-    /// bit, and a secret volume cannot present one that this pod can read and
-    /// ssh will accept — so the key is copied here at 0400 before use.
+    /// Writable scratch, where the key is copied at 0400 for ssh.
     pub work_dir: String,
 }
 
@@ -138,8 +117,7 @@ impl Config {
         })
     }
 
-    /// All four settings or none. A partially configured send path would fail at
-    /// the first send rather than at boot, which is the wrong end to find out.
+    /// All four or none, so a partial configuration fails at boot.
     fn irc_send_from_env() -> Result<Option<IrcSend>> {
         let Ok(host) = std::env::var("IRC_SEND_HOST") else {
             return Ok(None);

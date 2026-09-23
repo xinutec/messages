@@ -3,10 +3,8 @@ import { Injectable, inject, signal } from '@angular/core';
 import { MessagesApi } from './messages-api';
 import { Conversation, ConversationKind, Me } from './models';
 
-// Shared shell state: the signed-in user and the conversation list, read by both
-// the App shell (toolbar + list) and the routed Thread (title lookup). Keeping it
-// here lets the Thread render from a deep link without the shell having to hand
-// it data through the router.
+// Shell state, the signed-in user and the conversation list, shared by the
+// shell and the Thread, so a deep-linked Thread needs nothing from the router.
 @Injectable({ providedIn: 'root' })
 export class MessagesStore {
   private api = inject(MessagesApi);
@@ -34,19 +32,8 @@ export class MessagesStore {
     });
   }
 
-  /** Re-read the conversation list.
-   *
-   *  ⚠ **Without this the list is loaded once and never again**, which showed
-   *  up as a message count that disagreed with the database (14,435 against
-   *  14,438) for an action the user had just taken himself. `init` is guarded
-   *  so the shell can call it freely; that guard used to cover the fetch too.
-   *
-   *  Deliberately NOT on a timer: it runs when the user returns to the list,
-   *  which is when its answer is about to be read. The open thread polls for new
-   *  messages separately.
-   *
-   *  Errors leave the previous list in place: a stale list beats an empty one,
-   *  and the failure is visible the moment anything is tapped. */
+  /** Re-read the conversation list, when the reader returns to it. On error the
+   *  previous list stays: a stale list beats an empty one. */
   refresh(): void {
     this.api.conversations().subscribe({
       next: (cs) => this.conversations.set(cs),
@@ -58,12 +45,7 @@ export class MessagesStore {
     return this.conversations().find((c) => c.origin === origin && c.id === id) ?? null;
   }
 
-  /** What to call a conversation that has no name, one per kind.
-   *
-   *  A `Record` for the reason the origin labels are one: this was
-   *  `c.kind === 'dm' ? 'Direct message' : 'Group'`, which does not fail when a
-   *  third kind arrives — it calls it a Group. Telegram's channels are that third
-   *  kind, and this is now a type error the day there is a fourth. */
+  /** What to call a conversation with no name, per kind. */
   private readonly unnamed: Record<ConversationKind, string> = {
     dm: 'Direct message',
     group: 'Group',
@@ -71,8 +53,7 @@ export class MessagesStore {
   };
 
   title(c: Conversation): string {
-    // Empty/whitespace name → kind-based fallback. An explicit length check (not
-    // `||`/`??`) makes the empty-string-is-no-name intent unambiguous.
+    // An empty or whitespace name is no name.
     const name = c.name?.trim() ?? '';
     return name.length > 0 ? name : this.unnamed[c.kind];
   }

@@ -34,11 +34,7 @@ describe('MessagesStore', () => {
     store.init();
     expect(store.conversations()[0].message_count).toBe(1);
 
-    // ⚠ THE BUG THIS PINS. `init` is idempotent so the shell can call it freely,
-    // and that guard used to cover the fetch as well — so the list was read once
-    // per app lifetime. Measured against the live archive: the app showed 14,435
-    // messages while the database held 14,438, for a message the user had just
-    // sent himself.
+    // `init` is idempotent; `refresh` must still fetch.
     api.conversations.mockReturnValue(of(TWO));
     store.refresh();
     expect(store.conversations()[0].message_count).toBe(2);
@@ -48,9 +44,7 @@ describe('MessagesStore', () => {
     const { store, api } = setup();
     store.init();
 
-    // A stale list beats an empty one: the failure is visible the moment
-    // anything is tapped, whereas a list that empties itself on a dropped packet
-    // looks like an archive that lost everything.
+    // A stale list beats an empty one.
     api.conversations.mockReturnValue(throwError(() => new Error('offline')));
     store.refresh();
     expect(store.conversations()).toEqual(ONE);

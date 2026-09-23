@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { chatLogHtml, formatChatLog } from './copy-log';
 import { Attachment, Message } from './models';
 
-/** Local time, because the log must say what the screen said. */
+/** Local time, as the screen shows. */
 function at(y: number, mo: number, d: number, h: number, mi: number): number {
   return new Date(y, mo - 1, d, h, mi).getTime();
 }
@@ -30,8 +30,8 @@ function file(over: Partial<Attachment>): Attachment {
     size: null,
     available: true,
     is_image: false,
-    // Signal's case: nothing to ask for. The Telegram states are exercised in
-    // tests/archive.rs, where a real row can carry them.
+    // Signal: nothing to ask for. Telegram's states are tested in
+    // tests/archive.rs.
     fetch: null,
     ...over,
   };
@@ -51,8 +51,7 @@ describe('formatChatLog', () => {
   });
 
   it('dates the first line even when no day changes within the selection', () => {
-    // A fragment pasted into a task otherwise says only "14:32", which is not a
-    // time anybody can act on.
+    // A pasted fragment would otherwise carry a time and no date.
     const out = formatChatLog([msg({ ts: at(2026, 8, 13, 9, 5), sender: 'a', body: 'x' })]);
     expect(out.split('\n')[0]).toBe('--- Day changed Thu Aug 13 2026');
   });
@@ -81,8 +80,7 @@ describe('formatChatLog', () => {
   });
 
   it('keeps both of an action line\'s spaces', () => {
-    // The parser this mirrors matches on the double space; one space makes the
-    // line unrecognisable, and no other assertion here would notice.
+    // The parser matches on the double space.
     const out = formatChatLog([
       msg({ ts: at(2026, 8, 13, 14, 35), sender: 'p', kind: 'action', body: 'waves' }),
     ]);
@@ -96,9 +94,7 @@ describe('formatChatLog', () => {
   });
 
   it('repeats the prefix on every line of a multi-line body', () => {
-    // IRC has no multi-line message, so a real log of the same content would
-    // carry the timestamp and nick twice. It also keeps a pasted line
-    // self-describing, where a bare continuation reads as a new speaker.
+    // Each line stands alone, as in a real IRC log.
     const out = formatChatLog([
       msg({ ts: at(2026, 8, 13, 14, 32), sender: 'pippijn', body: 'one\ntwo' }),
     ]);
@@ -118,22 +114,13 @@ describe('formatChatLog', () => {
     expect(out).toContain('01:01 <a> fixed (edited)');
   });
 
-  /** ⚠ This used to assert the opposite — that such a message produced NO line
-   *  at all, "as the thread does". That justification stopped being true on
-   *  2026-09-03, when the thread started drawing a bubble with a reveal control
-   *  for exactly this shape. A log that silently drops a message is worse than
-   *  one that says a message was here and is gone. */
+  /** A deleted message still leaves a line. */
   it('still says (deleted) when the body is gone, so the line is not dropped', () => {
     const out = formatChatLog([msg({ ts: at(2026, 8, 13, 1, 0), sender: 'a', deleted: true })]);
     expect(out).toContain('01:00 <a> (deleted)');
   });
 
-  /** ⚠ **A DELETION COVERS THE PICTURES TOO** — the same rule the thread got on
-   *  2026-09-03 and the clipboard did not. A deleted message with attachments
-   *  copied as `[image: shot.png]`, naming a file the reader had chosen to
-   *  retract, and an attachment-only one copied with no sign it was deleted at
-   *  all. Found by listing every place `deleted` is interpreted, which is how
-   *  the same rule ends up applied in some of them. */
+  /** A deletion covers the attachments too. */
   it('does not name the attachments of a deleted message', () => {
     const out = formatChatLog([
       msg({
@@ -143,7 +130,7 @@ describe('formatChatLog', () => {
         deleted: true,
         attachments: [file({ file_name: 'shot.png', is_image: true })],
       }),
-      // The attachment-only shape: no body at all, so nothing said "deleted".
+      // Attachment-only: no body at all.
       msg({
         ts: at(2026, 8, 13, 1, 1),
         sender: 'a',
@@ -168,8 +155,8 @@ describe('formatChatLog', () => {
           file({ file_name: 'old.jpg', is_image: true, available: false, fetch: null }),
           file({ content_type: 'audio/ogg' }),
           file({ file_name: '', content_type: 'text/plain' }),
-          // Real paste, 2026-08-16: a Signal photo carries no filename, and
-          // `[image: image/jpeg]` said image twice.
+          // A Signal photo has no filename; `[image: image/jpeg]` would say
+          // image twice.
           file({ content_type: 'image/jpeg', is_image: true }),
           file({ content_type: 'image/png', is_image: true, available: false, fetch: null }),
           file({}),
@@ -184,8 +171,7 @@ describe('formatChatLog', () => {
       '01:00 <a> [attachment: text/plain]',
       '01:00 <a> [image]',
       '01:00 <a> [image (not stored)]',
-      // Nothing known about it at all — the old chain printed the fallback as
-      // if it were a name: `[attachment: attachment]`.
+      // Nothing known: no fallback printed as if it were a name.
       '01:00 <a> [attachment]',
     ]);
   });
@@ -229,8 +215,7 @@ describe('chatLogHtml', () => {
   });
 
   it('escapes what would otherwise be markup', () => {
-    // A nick is `<nick>` in this format, so the angle brackets are not
-    // incidental — unescaped, every line would paste as an unknown empty tag.
+    // Every `<nick>` must be escaped.
     expect(chatLogHtml('a & <b> "c"')).toBe('<pre>a &amp; &lt;b&gt; &quot;c&quot;</pre>');
   });
 });
@@ -249,15 +234,11 @@ describe('what the log leaves out', () => {
     expect(formatChatLog(two)).not.toContain('not loaded');
   });
 
-  /** ⚠ The failure this exists for is SILENT. A select-all in a long thread
-   *  copies the rendered window — 400 messages against a conversation of
-   *  401,794 — and produces a log that looks complete. The count has to travel
-   *  WITH the paste, because a banner in the app is not there when the paste is
-   *  read. */
+  /** A select-all copies only the rendered window; the paste says so. */
   it('names what was left out when the window held only part of it', () => {
     const out = formatChatLog(two, { total: 401794 });
     expect(out).toContain('copied 2 of 401794 messages');
-    // Last line, after the conversation, where a footnote belongs.
+    // Last line, as a footnote.
     expect(out.split('\n').at(-1)).toMatch(/^--- copied 2 of 401794 messages/);
   });
 

@@ -1,14 +1,6 @@
-//! Read-only queries over the message archive, normalising three origins —
-//! Signal, Google Chat and IRC — into one shape for the UI.
-//!
-//! They differ underneath: Signal keeps per-author reaction *events* (add/remove)
-//! and edit/delete flags, Google Chat keeps *aggregated* emoji counts, its own
-//! threading and a numeric sender id, IRC is flat lines carrying a `kind`. A
-//! common `Conversation` / `Message` hides that from the frontend.
-//!
-//! ⚠ Everything here is SELECT-only, but the app is not: [`crate::irc_send`]
-//! writes one row, for a message it has just sent through irssi. It lives there
-//! because it is part of sending rather than reading.
+//! Read-only queries over the message archive, normalising Signal, Google Chat,
+//! IRC and Telegram into one shape for the UI. The only write, the echo of a sent
+//! IRC line, is in [`crate::irc_send`].
 
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
@@ -19,12 +11,8 @@ use sqlx::{AssertSqlSafe, MySqlPool, Row};
 
 /// Which archive a conversation came from.
 ///
-/// One type for the URL path segment, the `origin` field the frontend reads and
-/// every per-origin match arm, replacing the `"signal"`/`"gchat"` strings those
-/// used to agree on by convention. The match in [`messages_page`] is exhaustive,
-/// so adding an origin is a compile error at every site that has to handle it
-/// rather than a silently empty page — which is how Telegram, the fourth, was
-/// added without a page anywhere coming back blank.
+/// Which archive a conversation came from: the URL segment, the `origin` field
+/// and every per-origin match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -37,8 +25,7 @@ pub enum Origin {
 }
 
 impl Origin {
-    /// Parse the `{origin}` URL segment; None for anything else, which the API
-    /// turns into a 404 (no such conversation, rather than a malformed request).
+    /// Parse the `{origin}` URL segment; `None` becomes a 404.
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "signal" => Some(Origin::Signal),
@@ -52,16 +39,8 @@ impl Origin {
 
 /// Whether a conversation is one-to-one, a group, or a broadcast.
 ///
-/// The first two are the distinction the writer calls `ThreadKind` (see the
-/// `signal` repo's `parse.rs`) and the `conversations.type` ENUM stores; named for
-/// the reader's model, where it is a field of [`Conversation`] and where "thread"
-/// already means Google Chat's in-group threading.
-///
-/// `channel` is Telegram's alone and is not a conversation at all — it is a feed
-/// with an audience. It is stored rather than filtered because whether to show one
-/// is the reader's question, and it is a THIRD value rather than folded into
-/// `group` because a reader that wants people, not announcements, has no way back
-/// once they are the same thing.
+/// Whether a conversation is one-to-one, a group, or a broadcast. `channel` is
+/// Telegram's alone, kept separate so a reader can leave broadcasts out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -69,16 +48,13 @@ impl Origin {
 pub enum ConversationKind {
     Dm,
     Group,
-    /// A broadcast with an audience rather than a conversation. Telegram's only:
-    /// the other three origins have no such thing.
+    /// A broadcast with an audience; Telegram only.
     Channel,
 }
 
 impl ConversationKind {
-    /// Parse a conversation-kind ENUM value. Signal's column is
-    /// `ENUM('dm','group')` and Telegram's adds `channel`, so None means the
-    /// schema moved underneath us — the caller errors rather than guessing a kind,
-    /// which would mislabel every conversation of the new sort as a DM.
+    /// Parse a conversation-kind ENUM value. `None` means the schema has a kind
+    /// this build does not know, which the caller reports.
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "dm" => Some(ConversationKind::Dm),
@@ -89,16 +65,12 @@ impl ConversationKind {
     }
 }
 
-// ⚠ This doc REACHES TYPESCRIPT — ts_rs copies it into `generated/`. So no
-// intra-doc links (`[Foo::Bar]` renders as literal brackets there) and nothing
-// that only makes sense to a Rust reader; those go in `//` like this.
+// ts-rs copies doc comments into `generated/`, so they carry no intra-doc links.
 /// Whether a line was said or done.
 ///
-/// ⚠ Two variants, and the IRC table has four. Its column is
-/// `ENUM('message','action','event','notice')`, but every query restricts to
-/// message and action — joins, parts and server notices are not conversation.
-/// Widening this would be claiming the reader shows things it does not. Signal
-/// and Google Chat draw no such distinction and are always `message`.
+/// Two of `irc_messages.kind`'s four values: joins, parts and notices are not
+/// conversation. Telegram service events are `action`; Signal and Google Chat are
+/// always `message`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -106,16 +78,12 @@ impl ConversationKind {
 pub enum MessageKind {
     /// Someone said something.
     Message,
-    /// Someone did something — written in the third person about its sender,
-    /// which is why every IRC client draws it `* nick waves` rather than
-    /// `nick: waves`.
+    /// Someone did something, phrased in the third person about the sender.
     Action,
 }
 
 impl MessageKind {
-    /// Parse an `irc_messages.kind` ENUM value, for the two the queries admit.
-    /// None means a row of a kind the filter should have excluded, which the
-    /// caller reports rather than drawing as speech.
+    /// Parse an `irc_messages.kind` value; `None` for a kind the queries exclude.
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "message" => Some(MessageKind::Message),
@@ -125,8 +93,7 @@ impl MessageKind {
     }
 }
 
-/// Telegram stores unix SECONDS — its own unit, and all it gives: the message
-/// constructor has no sub-second field. The unified API uses milliseconds.
+/// Telegram stores unix seconds; the API uses milliseconds.
 pub fn s_to_ms(s: i64) -> i64 {
     s * 1_000
 }
@@ -136,40 +103,23 @@ pub fn us_to_ms(us: i64) -> i64 {
     us / 1000
 }
 
-/// A cursor that lands on the first message of a given DAY, in whatever unit the
-/// origin counts in.
+/// A cursor landing on the first message of a day, in the origin's native unit.
 ///
-/// ⚠ THE CURSOR COULD ALWAYS EXPRESS A DATE — ONLY THE CALLER COULD NOT MINT
-/// ONE (#1562). `encode_cursor` takes a NATIVE timestamp, and the four origins
-/// disagree about what that is: Signal milliseconds, Google Chat MICROseconds,
-/// Telegram and IRC whole seconds. A frontend building its own would have to
-/// carry all four conventions and would be wrong for three of them the moment it
-/// got one right — which is the same class of bug as the cursor comments in
-/// `search` guard against.
+/// The id is 0, a floor below every real row, so the paging predicate
+/// `ts > ? OR (ts = ? AND id >= ?)` admits everything in the first second.
 ///
-/// ⚠ `id = 0`, WHICH IS A FLOOR AND NOT A REAL ROW. The paging predicate is
-/// `ts > ? OR (ts = ? AND id >= ?)`, so a zero id admits every message in that
-/// first second rather than skipping the ones whose id happens to sort lower.
-/// Any id above the smallest real one would silently drop messages from the
-/// landing second, and only on days whose first message had a low id.
-///
-/// `day_start_ms` is midnight UTC for the chosen day, in epoch milliseconds —
-/// the unit the whole API speaks outside this function.
+/// `day_start_ms` is the day's start in epoch milliseconds.
 pub fn cursor_for_day(origin: Origin, day_start_ms: i64) -> String {
     let native = match origin {
         Origin::Signal => day_start_ms,
-        // The ONLY origin that multiplies rather than divides. Getting this
-        // backwards lands in 1970 and the page comes back empty, which reads as
-        // "nothing was said that day".
+        // The only origin that multiplies.
         Origin::Gchat => day_start_ms * 1000,
         Origin::Telegram | Origin::Irc => day_start_ms / 1000,
     };
     encode_cursor(native, 0)
 }
 
-/// Google Chat stores no kind at all, only a boolean, so the two-valued enum
-/// the reader works in is DERIVED here rather than read from a column. Signal
-/// and IRC both carry theirs, which is why only this origin needs a function.
+/// Google Chat stores only `is_dm`, so its kind is derived.
 pub fn kind_from_is_dm(is_dm: bool) -> ConversationKind {
     if is_dm {
         ConversationKind::Dm
@@ -189,19 +139,14 @@ pub fn escape_like(q: &str) -> String {
     )
 }
 
-/// Opaque pagination cursor: the `(native_ts, id)` of the last (oldest) row a
-/// page returned, so the next page resumes strictly before it. Two things matter:
-/// the id tie-breaker (messages sharing a timestamp would otherwise be skipped
-/// when a page boundary splits them), and keeping each origin's *native* ts
-/// precision (Signal ms, Google Chat µs) — a millisecond-only cursor drops gchat
-/// rows that share a millisecond. The value is minted and parsed here; callers
-/// (and the frontend) treat it as opaque.
+/// Opaque pagination cursor: the native `(ts, id)` of a page's end row. The id
+/// breaks ties between rows sharing a timestamp, and the native unit keeps Google
+/// Chat's microseconds apart.
 pub fn encode_cursor(native_ts: i64, id: i64) -> String {
     format!("{native_ts}_{id}")
 }
 
-/// Parse a cursor minted by [`encode_cursor`]; None for anything malformed (the
-/// caller then just starts from the newest page).
+/// Parse a cursor minted by [`encode_cursor`]; `None` for anything malformed.
 pub fn parse_cursor(s: &str) -> Option<(i64, i64)> {
     let (ts, id) = s.split_once('_')?;
     Some((ts.parse().ok()?, id.parse().ok()?))
@@ -215,10 +160,7 @@ pub struct Conversation {
     pub id: String,
     pub name: Option<String>,
     pub kind: ConversationKind,
-    /// The IRC network, and None for the other two origins, which have no such
-    /// thing. Sent because `name` is only the target: two networks each with an
-    /// `s_20` produce two rows a reader cannot tell apart, which is what this is
-    /// here to fix. Uniqueness is the schema's — `UNIQUE (network, target)`.
+    /// The IRC network; `None` elsewhere. `name` alone is only the target.
     pub network: Option<String>,
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub message_count: i64,
@@ -234,42 +176,26 @@ pub struct Reaction {
     pub emoji: String,
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub count: i64,
-    /// Who reacted, where the origin records it.
-    ///
-    /// ⚠ EMPTY MEANS NOT RECORDED, NEVER "NOBODY". Google Chat aggregates
-    /// reactions and names no one; Telegram names reactors but may TRUNCATE the
-    /// list for a heavily-reacted message. So `who` can be shorter than `count`
-    /// and the count stays authoritative — a reader that derives the number from
-    /// `who.length` would under-report the moment Telegram samples.
+    /// Who reacted, where the origin records it. Empty means not recorded, and it
+    /// can be shorter than `count` (Telegram truncates), so `count` is
+    /// authoritative.
     pub who: Vec<String>,
 }
 
-/// How far an outgoing message got, as far as the archive can tell.
-///
-/// ⚠ A LADDER, AND EVERY ORIGIN CLIMBS ONLY AS HIGH AS IT CAN SPEAK. Telegram
-/// reports a conversation-wide high-water mark and nothing else, so it can say
-/// `Sent` or `Read` and never `Delivered` — the state simply does not exist in
-/// what it sends. Signal reports a per-message, per-person event and reaches all
-/// four. A reader must not read the absence of `Delivered` on a Telegram message
-/// as "it never arrived"; it means the question was never answerable.
+/// How far an outgoing message got. Each origin reaches only the states it can
+/// report: Telegram has no `Delivered`, only a read position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 pub enum DeliveryState {
-    /// Left here, and nothing has come back about it yet.
+    /// Sent, with nothing reported back yet.
     Sent,
     /// Their device has it. Signal only.
     Delivered,
-    /// Somebody opened the conversation past it.
+    /// Read past it.
     Read,
-    /// View-once media they actually opened. Signal only, and it sits ABOVE
-    /// `Read` because it cannot happen without it.
-    ///
-    /// ⚠ NO ROW HAS EVER CARRIED THIS, checked 2026-09-21: `signal_receipts`
-    /// holds only `delivery` and `read`. It is in the ladder because the capture
-    /// path already stores the kind, and a state that arrives one day into a
-    /// three-valued reader would be silently flattened into `Read`.
+    /// View-once media opened. Signal only; above `Read`, which it implies.
     Viewed,
 }
 
@@ -279,8 +205,7 @@ pub enum DeliveryState {
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct ReadBy {
     pub who: String,
-    /// Epoch milliseconds, as SIGNAL reported it — this is when they read it,
-    /// not when we heard about it.
+    /// Epoch milliseconds, as Signal reported the read.
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub at: i64,
 }
@@ -291,24 +216,13 @@ pub struct ReadBy {
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct Delivery {
     pub state: DeliveryState,
-    /// Who read it and when, for the origin that records people rather than a
-    /// position.
-    ///
-    /// ⚠ EMPTY IS NOT "NOBODY", AND A FULL LIST IS NOT "EVERYONE". Telegram
-    /// leaves this empty always — it names no one. Signal names only those who
-    /// have sent a receipt, so in a GROUP this is who has read it so far and
-    /// never the membership; there is no row anywhere saying who has not. The
-    /// reader is careful to say "read by" rather than "read" when it could be
-    /// taken as a claim about a whole group.
+    /// Who read it and when, Signal only. Only those who sent a receipt: in a
+    /// group it is never the membership. Telegram names nobody, so it is empty.
     pub read_by: Vec<ReadBy>,
 }
 
-/// Whether an attachment's bytes can be ASKED for, and whether they have been.
-///
-/// ⚠ `None` is Signal's case and means "there is nothing to ask" — its blobs are
-/// fetched by the ingester as they arrive, so an absent one is absent for good.
-/// Telegram's large media is the case this exists for: the archive knows the file is
-/// there and has deliberately not fetched it.
+/// Whether an attachment's bytes can be asked for. `None` means there is nothing
+/// to ask: Signal's are fetched on arrival or never.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -323,9 +237,8 @@ pub enum FetchState {
 }
 
 impl FetchState {
-    /// Parse a `telegram_media.state` value. `stored` is deliberately absent: a
-    /// stored file is described by `available`, and giving it a second
-    /// representation here would let the two disagree.
+    /// Parse a `telegram_media.state` value. `stored` is expressed by
+    /// `available` instead.
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "offered" => Some(FetchState::Offered),
@@ -336,10 +249,8 @@ impl FetchState {
     }
 }
 
-/// The two fields of an attachment that change while a fetch is in flight.
-///
-/// Deliberately the same shape those fields have on `Attachment`, so the reader
-/// applies an answer by copying rather than by translating between two vocabularies.
+/// The attachment fields that change while a fetch is in flight, shaped as on
+/// `Attachment`.
 #[derive(Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -358,16 +269,15 @@ pub struct Attachment {
     pub file_name: Option<String>,
     #[cfg_attr(feature = "ts", ts(type = "number | null"))]
     pub size: Option<i64>,
-    /// Whether the bytes are present (downloaded to the PVC). Metadata-only
-    /// history rows are `false` — the UI shows them but can't fetch the blob.
+    /// Whether the bytes are held.
     pub available: bool,
     pub is_image: bool,
-    /// Whether these bytes can be asked for — `None` when there is nothing to ask.
+    /// Whether these bytes can be asked for.
     pub fetch: Option<FetchState>,
 }
 
-/// One version of a message that was edited, oldest first. The CURRENT text is
-/// the message's own `body`; these are what it said before.
+/// An earlier version of an edited message. The current text is the message's
+/// `body`.
 #[derive(Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -380,41 +290,30 @@ pub struct MessageEdit {
 
 /// One run of formatting inside a message body — bold, a link, a spoiler.
 ///
-/// ⚠ THE OFFSETS ARE UTF-16 CODE UNITS, WHICH IS TELEGRAM'S UNIT AND NOT
-/// RUST'S. Slicing a Rust `String` by them lands mid-character on any body
-/// containing an emoji, and this archive's Telegram half is full of them. They
-/// are carried out to the browser UNCONVERTED on purpose: a JavaScript string
-/// index IS a UTF-16 code unit, so the arithmetic is native there and no
-/// conversion — and no conversion bug — exists anywhere.
-///
-/// ⚠ THE VIEWER MUST NOT BUILD HTML FROM THESE. `url` comes from whoever sent
-/// the message. It is rendered through Angular's `[href]` binding, which
-/// sanitises, and never through `innerHTML`.
+/// Offsets are UTF-16 code units, Telegram's unit and JavaScript's string
+/// index, so they reach the browser unconverted. `url` comes from the sender and
+/// is only ever bound through Angular's sanitising `[href]`.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct Entity {
-    /// Telegram's own name for it: `bold`, `italic`, `url`, `textUrl`,
-    /// `strike`, `code`, `spoiler`, … Passed through rather than mapped to an
-    /// enum, because an unknown kind must render as plain text rather than
-    /// failing the page — Telegram adds them faster than this archive learns.
+    /// Telegram's own name: `bold`, `italic`, `url`, `textUrl`, `strike`,
+    /// `code`, `spoiler`, … A string, so an unknown kind renders as plain text.
     pub kind: String,
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub offset: i64,
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub length: i64,
-    /// Where a `textUrl` points. `None` for `url`, where the text IS the link.
+    /// Where a `textUrl` points; `None` for `url`, whose text is the link.
     pub url: Option<String>,
 }
 
-/// A picture we hold for a link somebody posted — see `link_image.rs`. The UI
-/// renders it under the message and links out to where it came from, so the
-/// reader can still see whose it is.
+/// A picture we hold for a link in the message; see `link_image.rs`.
 #[derive(Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct LinkImage {
-    /// The link as it appears in the message — what the picture links out to.
+    /// The link as it appears in the message.
     pub url: String,
     /// Our handle for the bytes: `/api/link-images/{id}`.
     pub id: String,
@@ -424,32 +323,20 @@ pub struct LinkImage {
 #[derive(Serialize, Clone)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
-/// What a message was a reply TO, for the two origins that record one.
-///
-/// ⚠ A reply can point at a message this archive does not hold, and that is
-/// not an error to hide: Signal's quote names a TIMESTAMP, so a quote of
-/// anything older than the archive resolves to nothing, and Telegram's names a
-/// message id that may sit in a gap the backfill has not reached. Every field
-/// but the flag is therefore optional, and an unresolved reply still renders —
-/// "this answered something" is true and worth showing even when the something
-/// cannot be produced.
+/// What a message replied to. The target may not be in the archive; the reply
+/// still renders, with only what is known.
 pub struct ReplyTo {
-    /// The API id of the message replied to, or `None` when the archive does
-    /// not hold it. Its presence is what makes the quote clickable.
+    /// The target's API id, or `None` when the archive does not hold it.
     pub id: Option<String>,
-    /// Cursor addressing the target, to be passed back as `?at` — the same
-    /// landing a search hit uses. `None` exactly when `id` is.
+    /// Cursor for `?at`, landing on the target. `None` exactly when `id` is.
     pub cursor: Option<String>,
     /// Epoch milliseconds of the message replied to, when known.
     #[cfg_attr(feature = "ts", ts(type = "number | null"))]
     pub ts: Option<i64>,
     pub sender: Option<String>,
-    /// A short prefix of what it said — `None` for a target with no text, and
-    /// for a DELETED one.
+    /// A short prefix of the target's text; `None` without text or when deleted.
     pub excerpt: Option<String>,
-    /// The target is held but deleted. ⚠ A deleted message's words stay behind a
-    /// click in this app, so its excerpt is withheld here for the same reason:
-    /// a quote is not the place that reveals it.
+    /// The target is held but deleted, so its excerpt is withheld.
     pub deleted: bool,
 }
 
@@ -458,7 +345,7 @@ pub struct ReplyTo {
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct Message {
     pub id: String,
-    /// Epoch milliseconds (Google Chat's native µs are converted on the way out).
+    /// Epoch milliseconds.
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub ts: i64,
     pub sender: String,
@@ -472,33 +359,16 @@ pub struct Message {
     pub attachments: Vec<Attachment>,
     /// Pictures we hold for links in `body`.
     pub link_images: Vec<LinkImage>,
-    /// What this message said BEFORE it was edited, oldest first — empty unless
-    /// it was. `body` is always the current text.
+    /// Earlier versions, oldest first; `body` is the current text.
     pub edits: Vec<MessageEdit>,
-    /// Links in `body` we could fetch a picture for but have not. Serving them
-    /// offers them; a reader has to ask.
+    /// Links in `body` we could fetch a picture for, if asked.
     pub link_offers: Vec<LinkOffer>,
-    /// What this message answered, for the origins that record it — Signal and
-    /// Telegram. Always `None` for Google Chat and IRC, neither of which has
-    /// the association at all.
+    /// What this message replied to. Signal, Telegram and Google Chat.
     pub reply_to: Option<ReplyTo>,
-    /// How far this message got, for the origins that report it.
-    ///
-    /// ⚠ `None` IS "THE ARCHIVE CANNOT SAY", NEVER "UNDELIVERED". It covers
-    /// every INCOMING message, Google Chat and IRC entirely, and — the case this
-    /// field exists for — anything sent before capture began. Telegram's read
-    /// marks start 2026-09-17 and Signal's receipts 2026-09-18; neither service
-    /// keeps a history of reading, so nothing will ever fill the years before
-    /// those dates. Drawing our own late start as somebody's behaviour is the
-    /// mistake this three-state shape is here to make impossible.
+    /// How far this message got. `None` means the archive cannot say: incoming
+    /// messages, origins without receipts, and anything sent before capture began.
     pub delivery: Option<Delivery>,
-    /// Formatting runs inside `body` — Telegram only, empty everywhere else.
-    ///
-    /// ⚠ EMPTY MEANS NO FORMATTING RECORDED, NOT PLAIN TEXT. Only Telegram
-    /// sends these and only the recapture collected them; Signal's `textStyles`
-    /// are kept in `signal_frames` and have no columns yet (#1693), and Google
-    /// Chat and IRC have no such concept. A reader must not conclude from an
-    /// empty list that somebody wrote without emphasis.
+    /// Formatting runs in `body`. Telegram only; empty means none recorded.
     pub entities: Vec<Entity>,
 }
 
@@ -507,10 +377,9 @@ pub struct Message {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct LinkOffer {
-    /// The link as typed — what the control is offering to show.
+    /// The link as typed.
     pub url: String,
-    /// Its handle: `POST /api/link-images/{id}/request`, which answers with what
-    /// the link turned out to be.
+    /// Its handle for `POST /api/link-images/{id}/request`.
     pub id: String,
 }
 
@@ -521,31 +390,13 @@ fn is_image(ct: Option<&str>) -> bool {
 /// One stored version of a message: when it was sent, and what it said.
 type Version = (i64, Option<String>);
 
-/// Put an edited message's history on it, and its CURRENT text in its body.
-///
-/// ⚠ AN EDIT IS A SEPARATE ROW, AND UNTIL NOW BOTH WERE DRAWN. Signal sends a
-/// revision as a new message carrying `edit_of_ts`, so a thread showed the same
-/// message twice — the old text where it was said, the new text minutes later,
-/// with nothing saying they were one thing. 254 messages in the archive are in
-/// that state. The revisions are excluded from the page above; this hangs them on
-/// the message they revise.
-///
-/// ⚠ The BODY becomes the newest version, and the position stays the original's.
-/// That is what an edit means: the thing was said then, and now reads this way.
-/// Keeping the original's text as the body would show a message the sender has
-/// already corrected, which is the failure this whole change is about.
-///
-/// One query for the page, like reactions.
 /// How much of a quoted message a reply preview carries.
 pub const EXCERPT_CHARS: usize = 120;
 
 /// A one-line prefix of a quoted message.
 ///
-/// ⚠ Truncated by CHARACTERS, not bytes. These bodies are full of emoji and
-/// non-Latin text — the Telegram archive alone is mostly neither — and slicing a
-/// `String` at a byte offset panics mid-codepoint. Newlines are folded because
-/// the preview is one line by construction; letting a body's own line breaks
-/// through would let a two-word quote push the message it belongs to off screen.
+/// Truncated by characters, since slicing a `String` by bytes panics
+/// mid-codepoint. Newlines are folded into one line.
 pub fn excerpt(body: Option<&str>) -> Option<String> {
     let flat = body?.split_whitespace().collect::<Vec<_>>().join(" ");
     if flat.is_empty() {
@@ -560,10 +411,8 @@ pub fn excerpt(body: Option<&str>) -> Option<String> {
 
 /// Resolve Signal's quotes for one page.
 ///
-/// ⚠ Signal names the quoted message by TIMESTAMP (`quote_target_ts`), not by
-/// id, so resolution is a lookup on `(thread_id, server_ts)` and legitimately
-/// misses: a quote of anything older than this archive has nothing to match. A
-/// miss is recorded as an unresolved reply rather than dropped — see [`ReplyTo`].
+/// Signal quotes by timestamp, so a quote of something older than the archive
+/// resolves to nothing.
 async fn attach_signal_replies(
     pool: &MySqlPool,
     thread_id: &str,
@@ -620,9 +469,7 @@ async fn attach_signal_replies(
         m.reply_to = Some(found.get(target_ts).cloned().unwrap_or(ReplyTo {
             id: None,
             cursor: None,
-            // ⚠ Kept even when the target is missing: for Signal the timestamp IS
-            // the quote, so "answering something from 2024" stays sayable when
-            // the something itself is not held.
+            // For Signal the timestamp is the quote.
             ts: Some(*target_ts),
             sender: None,
             excerpt: None,
@@ -634,29 +481,11 @@ async fn attach_signal_replies(
 
 /// The pictures and videos a Google Chat message carried.
 ///
-/// ⚠ THE COMMENT HERE USED TO SAY "GOOGLE CHAT EXPORT CARRIES NO ATTACHMENTS",
-/// AND IT WAS NEVER TRUE. The capture read six indices of a 39-element record
-/// and attachments are at index 10; 326 messages carry one, and only 20 of those
-/// are wordless — the other 306 rendered as an ordinary message with a caption
-/// and no picture, which is why nobody noticed for as long as this archive has
-/// existed.
+/// Held bytes are whatever a harvest read; the download URL is session-bound.
+/// A row without `stored_path` still draws, as a picture known and not held.
 ///
-/// ⚠ `available` IS THE HONEST HALF. The bytes are not Google Chat's to
-/// re-serve: the download URL is minted per render, session-bound and expiring,
-/// so what is held is whatever a harvest managed to read at the time. A row with
-/// no `stored_path` still draws — as a picture this archive KNOWS ABOUT and does
-/// not have, which is a different statement from a blank message and the whole
-/// reason the metadata was worth importing separately from the files.
-///
-/// ⚠ THE ID IS THIS TABLE'S OWN, AND THE ROUTE IS WHAT KEEPS IT APART. Every
-/// origin's attachments have independent AUTO_INCREMENTs, so id 42 exists in
-/// several and means a different picture in each. This app already had the
-/// answer — Telegram is served by `/api/telegram-media/{id}`, its own route —
-/// and the rule is stated where the frontend picks one: the origin is known
-/// there, so the decision is made once, rather than by prefixing ids and taking
-/// them apart again on the server. A first attempt here negated the id to carry
-/// the origin in its sign, which is that same mistake wearing a disguise and
-/// gives exactly two namespaces for four origins.
+/// Attachment ids are per origin, so each origin has its own serving route and
+/// the frontend picks by origin.
 async fn attach_gchat_attachments(
     pool: &MySqlPool,
     msgs: &mut [Message],
@@ -686,12 +515,10 @@ async fn attach_gchat_attachments(
             is_image: is_image(mime.as_deref()),
             content_type: mime,
             file_name: r.try_get("name")?,
-            // Google Chat's record carries no byte count — only pixel
-            // dimensions — so this is NULL rather than a guess from the file.
+            // Google Chat records pixel dimensions, not a byte count.
             size: None,
             available: stored_path.is_some(),
-            // Nothing a reader could ask for: fetching needs a URL the client
-            // mints while rendering, which this app never sees.
+            // Fetching needs a URL the client mints while rendering.
             fetch: None,
         };
         if let Some(m) = msgs.iter_mut().find(|m| m.id == mid) {
@@ -702,20 +529,9 @@ async fn attach_gchat_attachments(
 }
 
 /// Resolve Google Chat's quote-replies for one page.
-///
-/// ⚠ THIS ORIGIN WAS REPORTED AS HAVING NO REPLIES AT ALL, AND THAT WAS A
-/// MEASUREMENT ERROR, NOT A FACT ABOUT GOOGLE. `gchat_messages.thread_id`
-/// groups messages into topics, every DM message is its own topic, so a diff of
-/// topic-replies against topic-starters found nothing — and an inline
-/// quote-reply in a DM *is* a starter, so the field sat inside the control
-/// group. 126 messages carry a real pointer; the archive drew none of them.
-///
-/// ⚠ `reply_to_msg_id` IS NOT `thread_id`. A topic says which conversation a
-/// message belongs to; this says which MESSAGE it answers. A group message can
-/// have both, and they mean different things.
-///
-/// Keyed on the Google message id within a group, not on a timestamp: unlike
-/// Signal, the pointer names an id outright.
+/// Google Chat quote-replies name the target's message id within the group.
+/// Not `thread_id`, which is the topic: a DM message is its own topic but can
+/// still quote another.
 async fn attach_gchat_replies(
     pool: &MySqlPool,
     group_id: &str,
@@ -752,16 +568,12 @@ async fn attach_gchat_replies(
             r.try_get("msg_id")?,
             ReplyTo {
                 id: Some(id.to_string()),
-                // ⚠ The cursor's unit is MICROSECONDS here — Google Chat's own,
-                // and what the page query compares `ts_us` against — while `ts`
-                // beside it is the milliseconds the API speaks. The same trap
-                // Telegram's seconds set, one origin over.
+                // The cursor is in Google Chat's microseconds; `ts` is milliseconds.
                 cursor: Some(encode_cursor(ts_us, id)),
                 ts: Some(us_to_ms(ts_us)),
                 sender: r.try_get::<Option<String>, _>("sender").ok().flatten(),
                 excerpt: excerpt(body.as_deref()),
-                // Google Chat's capture carries no deletion state at all, so this
-                // is "not known to be deleted" rather than "known to be present".
+                // No deletion state is captured.
                 deleted: false,
             },
         );
@@ -770,8 +582,7 @@ async fn attach_gchat_replies(
         let Some(m) = msgs.iter_mut().find(|m| &m.id == msg_id) else {
             continue;
         };
-        // ⚠ An unresolved target still says a reply HAPPENED. Dropping it would
-        // render the message as an ordinary one and quietly lose the fact.
+        // An unresolved target still records that a reply happened.
         m.reply_to = Some(found.get(target).cloned().unwrap_or(ReplyTo {
             id: None,
             cursor: None,
@@ -785,18 +596,9 @@ async fn attach_gchat_replies(
 }
 
 /// Resolve Telegram's replies for one page.
-///
-/// ⚠ THIS USED TO REFUSE SERVICE EVENTS, AND THE REASON EXPIRED. The rule was
-/// that `kind = 'service'` kept an event off every page, so resolving a reply to
-/// one would hand back an id the reader could never be taken to — a quote that
-/// clicks through to nothing. That premise is gone: the page query now returns
-/// service events as [`MessageKind::Action`], so the destination exists and
-/// refusing it would withhold a jump that works.
-///
-/// The promise it was protecting still holds and is worth restating, because it
-/// is the thing to check if this is ever narrowed again: an id in a [`ReplyTo`]
-/// means the reader can be taken there. What satisfies that promise is now
-/// "the page query returns it", not "it is speech".
+/// Resolve Telegram's replies for one page. Service events resolve too, since
+/// the page returns them: an id in a [`ReplyTo`] must be somewhere the reader can
+/// be taken.
 async fn attach_telegram_replies(
     pool: &MySqlPool,
     conversation_id: i64,
@@ -836,10 +638,8 @@ async fn attach_telegram_replies(
         let sent_at: i64 = r.try_get("sent_at")?;
         let deleted: i8 = r.try_get("deleted")?;
         let deleted = deleted != 0;
-        // ⚠ Composed the same way the page composes it, so a reply to a call
-        // quotes the words the reader can see on the message rather than the
-        // stored label "a call". Two renderings of one row would read as two
-        // different events.
+        // Composed as the page composes it, so a reply quotes what the call
+        // message shows.
         let body: Option<String> = call_text(
             r.try_get("call_duration_s")?,
             r.try_get::<Option<String>, _>("call_reason")?.as_deref(),
@@ -850,11 +650,7 @@ async fn attach_telegram_replies(
             msg_id,
             ReplyTo {
                 id: Some(id.to_string()),
-                // ⚠ The cursor's ts is Telegram's NATIVE unit (seconds), because
-                // that is what the page query compares against. `ts` below is
-                // milliseconds, because that is what the API speaks. Minting the
-                // cursor from the millisecond value would address a row a
-                // thousand-fold in the future and page from the wrong end.
+                // The cursor in Telegram's seconds; `ts` in milliseconds.
                 cursor: Some(encode_cursor(sent_at, id)),
                 ts: Some(s_to_ms(sent_at)),
                 sender: r.try_get::<Option<String>, _>("sender").ok().flatten(),
@@ -874,8 +670,7 @@ async fn attach_telegram_replies(
         m.reply_to = Some(found.get(target).cloned().unwrap_or(ReplyTo {
             id: None,
             cursor: None,
-            // Telegram's reply names an id, which says nothing about WHEN — so
-            // unlike Signal's, an unresolved one has no timestamp to offer.
+            // A Telegram reply names an id, which carries no time.
             ts: None,
             sender: None,
             excerpt: None,
@@ -885,34 +680,30 @@ async fn attach_telegram_replies(
     Ok(())
 }
 
+/// Hang an edited Signal message's history on it, with the newest text as its
+/// body and the original's position. The revision rows are excluded from the
+/// page itself.
 async fn attach_edits(pool: &MySqlPool, thread_id: &str, msgs: &mut [Message]) -> Result<()> {
     let originals: Vec<i64> = msgs.iter().filter(|m| m.edited).map(|m| m.ts).collect();
     if originals.is_empty() {
         return Ok(());
     }
     let placeholders = vec!["?"; originals.len()].join(",");
-    // ⚠ SCOPED TO THE THREAD, and matching on the timestamp alone was a real
-    // defect. `edit_of_ts` is a SERVER TIMESTAMP, not a message id: two
-    // conversations can hold messages sharing a millisecond, and a revision
-    // matched across threads would show one conversation's text inside another's
-    // history. Found by three parallel tests seeding the same timestamp in
-    // different threads — a message came back carrying six versions of which
-    // four were somebody else's.
+    // Scoped to the thread: `edit_of_ts` is a timestamp, and two threads can
+    // share one.
     let sql = format!(
         "SELECT edit_of_ts, server_ts, body FROM messages
          WHERE thread_id = ? AND edit_of_ts IN ({placeholders})
          ORDER BY server_ts ASC",
     );
-    // Fixed template + computed placeholder count, values bound — safe.
+    // A fixed template with a computed count of `?` and every value bound.
     let mut q = sqlx::query(AssertSqlSafe(sql)).bind(thread_id);
     for ts in &originals {
         q = q.bind(ts);
     }
 
-    // Group first, assign after. Doing both in one pass looks shorter and gets
-    // the timestamps wrong: each version was sent when the NEXT one had not
-    // arrived yet, so a version's stamp comes from the row before it, not from
-    // the row carrying its text.
+    // Group first, then assign: each version's time comes from the row before
+    // it, not the row carrying its text.
     let mut revisions: Vec<(i64, Vec<Version>)> = Vec::new();
     for row in q.fetch_all(pool).await? {
         let of: i64 = row.try_get("edit_of_ts")?;
@@ -931,9 +722,8 @@ async fn attach_edits(pool: &MySqlPool, thread_id: &str, msgs: &mut [Message]) -
         let Some((_, newest)) = list.last().cloned() else {
             continue;
         };
-        // What it said before, in order: the original's text, then every
-        // revision but the newest. Each is stamped with when IT was sent — the
-        // original at the message's own time, a revision at its own.
+        // Earlier versions, in order: the original's text, then every revision
+        // but the newest, each stamped with when it was sent.
         let older_bodies = std::iter::once(m.body.clone())
             .chain(list.iter().rev().skip(1).rev().map(|(_, b)| b.clone()));
         let stamps = std::iter::once(m.ts).chain(list.iter().rev().skip(1).rev().map(|(t, _)| *t));
@@ -941,7 +731,6 @@ async fn attach_edits(pool: &MySqlPool, thread_id: &str, msgs: &mut [Message]) -
             .zip(older_bodies)
             .map(|(ts, body)| MessageEdit { ts, body })
             .collect();
-        // The body is what it says NOW.
         m.body = newest;
     }
     Ok(())
@@ -949,10 +738,7 @@ async fn attach_edits(pool: &MySqlPool, thread_id: &str, msgs: &mut [Message]) -
 
 /// Hang any pictures we hold onto the messages whose text linked them.
 ///
-/// One query for the page, like reactions: the links are read out of the bodies
-/// we already have, so this costs a single round trip however many links a page
-/// carries. Only `ok` rows are joined — a link we decided was not a picture, or
-/// could not reach, is simply a link.
+/// One query for the page, over the links in the bodies already fetched.
 pub async fn attach_link_images(pool: &MySqlPool, msgs: &mut [Message]) -> Result<()> {
     let mut wanted: Vec<(String, String, usize)> = Vec::new(); // (hash, url, message index)
     for (i, m) in msgs.iter().enumerate() {
@@ -973,22 +759,17 @@ pub async fn attach_link_images(pool: &MySqlPool, msgs: &mut [Message]) -> Resul
         h
     };
     let placeholders = vec!["?"; hashes.len()].join(",");
-    // ⚠ EVERY STATE, NOT JUST THE PICTURES. Selecting only `ok` rows made a
-    // link we had already decided against look unseen, so the page offered a
-    // control for it — and tapping that control 404s, because a decided row is
-    // rightly not resolvable to an address. A button that cannot work is worse
-    // than no button.
+    // Every state: a decided link must not be offered, and a control for one
+    // would 404.
     let sql = format!(
         "SELECT url_hash, state, content_type, decided_by FROM link_images
          WHERE url_hash IN ({placeholders})",
     );
-    // Fixed template + computed placeholder count, values bound — safe.
+    // A fixed template with a computed count of `?` and every value bound.
     let mut q = sqlx::query(AssertSqlSafe(sql));
     for h in &hashes {
         q = q.bind(*h);
     }
-    // Parsed once, here at the boundary: everything below reasons about the
-    // closed set rather than about strings.
     let mut known: Vec<(String, LinkState, Option<String>, Option<i32>)> = Vec::new();
     for row in q.fetch_all(pool).await? {
         let raw: String = row.try_get("state")?;
@@ -1003,10 +784,8 @@ pub async fn attach_link_images(pool: &MySqlPool, msgs: &mut [Message]) -> Resul
         ));
     }
 
-    // Three outcomes per link, and the middle one is the feature:
-    //   a picture we hold → render it
-    //   never seen, or offered and not yet asked for → offer it
-    //   decided against → nothing; it stays a link
+    // Per link: a picture we hold is rendered; one not yet decided is offered;
+    // one decided against stays a link.
     let mut unseen: Vec<(&str, &str)> = Vec::new();
     for (hash, url, i) in &wanted {
         let already_offered = msgs[*i].link_offers.iter().any(|o| o.id == *hash);
@@ -1018,9 +797,7 @@ pub async fn attach_link_images(pool: &MySqlPool, msgs: &mut [Message]) -> Resul
                     content_type: content_type.clone(),
                 });
             }
-            // Offered, unreachable last time, or decided by an older reader —
-            // `link_image::askable` is the one place that says which, and the
-            // request endpoint asks it too.
+            // `link_image::askable` decides; the request endpoint asks it too.
             Some((_, state, _, by)) if askable(*state, *by) => {
                 if !already_offered {
                     msgs[*i].link_offers.push(LinkOffer {
@@ -1047,17 +824,10 @@ pub async fn attach_link_images(pool: &MySqlPool, msgs: &mut [Message]) -> Resul
     Ok(())
 }
 
-/// Register this page's links so they can be asked for later, WITHOUT asking for
-/// anything.
-///
-/// ⚠ THIS IS THE ONLY PLACE A URL ENTERS THE TABLE, and that is what keeps
-/// the tap from being an open proxy: the address comes off a message in the
-/// archive, never off a request. A tap can then only promote a row that already
-/// exists, by its hash.
-///
-/// `INSERT IGNORE`, so a link already offered, asked for, or decided is left
-/// exactly as it is — serving a page must never undo a decision or re-queue a
-/// fetch.
+/// Register this page's links so they can be asked for later. This is the only
+/// place a URL enters `link_images`, and it comes from a message, never a
+/// request, so a tap cannot make this an open proxy. `INSERT IGNORE` leaves an
+/// existing row, and its decision, untouched.
 async fn offer(pool: &MySqlPool, links: &[(&str, &str)]) -> Result<()> {
     if links.is_empty() {
         return Ok(());
@@ -1065,7 +835,7 @@ async fn offer(pool: &MySqlPool, links: &[(&str, &str)]) -> Result<()> {
     let rows = vec!["(?, ?, 'offered', NOW())"; links.len()].join(",");
     let sql =
         format!("INSERT IGNORE INTO link_images (url_hash, url, state, wanted_at) VALUES {rows}");
-    // Fixed template + computed placeholder count, values bound — safe.
+    // A fixed template with a computed count of `?` and every value bound.
     let mut q = sqlx::query(AssertSqlSafe(sql));
     for (hash, url) in links {
         q = q.bind(*hash).bind(*url);
@@ -1074,9 +844,8 @@ async fn offer(pool: &MySqlPool, links: &[(&str, &str)]) -> Result<()> {
     Ok(())
 }
 
-/// The URL of a link we offered, if we did. This is what keeps a request from
-/// naming an address: the caller hands us a hash, and the address comes back off
-/// the row that serving a page created from the message's own text.
+/// The URL of a link we offered, by its hash, so a request never names an
+/// address.
 pub async fn offered_url(pool: &MySqlPool, id: &str) -> Result<Option<String>> {
     let row: Option<(String, String, Option<i32>)> =
         sqlx::query_as("SELECT url, state, decided_by FROM link_images WHERE url_hash = ?")
@@ -1101,8 +870,7 @@ pub async fn link_image_state(
     )
 }
 
-/// Where a link's stored bytes are, if we hold them — the serving endpoint's
-/// half of `attach_link_images`.
+/// Where a link's stored bytes are, if we hold them.
 pub async fn link_image_blob(pool: &MySqlPool, id: &str) -> Result<Option<(String, String)>> {
     let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT content_type, stored_name FROM link_images WHERE url_hash = ? AND state = 'ok'",
@@ -1116,16 +884,8 @@ pub async fn link_image_blob(pool: &MySqlPool, id: &str) -> Result<Option<(Strin
     })
 }
 
-/// Stored location + content-type for an attachment blob, if its bytes exist.
-/// Used by the serving endpoint; returns None when unknown or metadata-only.
-/// What the archive now holds for one Telegram message, for a reader watching a
-/// fetch it asked for.
-///
-/// ⚠ This exists because the request is ASYNCHRONOUS and the POST cannot answer.
-/// A link picture is fetched while the request is open, so its response carries the
-/// outcome; a 1.5GB video is fetched by another process minutes later. Without
-/// something to ask, the control that said "fetching…" said it forever — which it
-/// did, on a file that had already arrived ninety seconds earlier.
+/// What the archive now holds for one Telegram message, for a reader polling a
+/// fetch it asked for: the fetch happens later, in another process.
 pub async fn telegram_media_state(pool: &MySqlPool, row_id: i64) -> Result<Option<MediaState>> {
     let row: Option<(String, Option<String>)> = sqlx::query_as(
         "SELECT d.state, d.content_type
@@ -1144,13 +904,8 @@ pub async fn telegram_media_state(pool: &MySqlPool, row_id: i64) -> Result<Optio
     }))
 }
 
-/// A reader asked for a Telegram file the archive has not fetched.
-///
-/// ⚠ Only `offered` and `failed` move: a request against something already stored
-/// would queue a re-download that overwrites a good file, and one against something
-/// already `wanted` would restart its place in the queue every time a reader tapped
-/// twice. Reports whether anything changed so the caller can tell those apart from a
-/// real queueing.
+/// A reader asked for a Telegram file the archive has not fetched. Only
+/// `offered` and `failed` rows are queued. Returns whether anything changed.
 pub async fn request_telegram_media(pool: &MySqlPool, row_id: i64) -> Result<bool> {
     let changed = sqlx::query(
         "UPDATE telegram_media d
@@ -1166,12 +921,8 @@ pub async fn request_telegram_media(pool: &MySqlPool, row_id: i64) -> Result<boo
     Ok(changed != 0)
 }
 
-/// The bytes the archive holds for a Telegram message, by the message's api id.
-///
-/// ⚠ Resolved through `telegram_messages` rather than taken from the client,
-/// because the client holds a MESSAGE id and the file is keyed by
-/// `(conversation, msg_id)` — and doing the join here is what stops a request for
-/// one conversation reaching a file in another that happens to share a number.
+/// The bytes held for a Telegram message, by the message's API id. The join
+/// keeps a request inside the message's own conversation.
 pub async fn telegram_media_blob(
     pool: &MySqlPool,
     row_id: i64,
@@ -1192,6 +943,7 @@ pub async fn telegram_media_blob(
     })
 }
 
+/// Stored location and content type of a Signal attachment's bytes, if held.
 pub async fn attachment_blob(
     pool: &MySqlPool,
     id: i64,
@@ -1212,9 +964,6 @@ pub async fn attachment_blob(
 }
 
 /// The bytes held for one Google Chat attachment.
-///
-/// Its own function for its own route, exactly as Telegram has — see
-/// [`attach_gchat_attachments`] for why sharing Signal's would be wrong.
 pub async fn gchat_attachment_blob(
     pool: &MySqlPool,
     id: i64,
@@ -1235,28 +984,16 @@ pub async fn gchat_attachment_blob(
     }
 }
 
-/// Which way a page runs from its cursor.
-///
-/// ⚠ The direction cannot be a bound parameter: `ORDER BY` will not take
-/// one, and multiplying the sort keys by ±1 to fake it costs the index on a
-/// 401,794-row table. So each origin carries the comparison twice, once per
-/// direction, and this enum is what chooses between them.
+/// Which way a page runs from its cursor. `ORDER BY` takes no bound parameter,
+/// so each origin has one literal query per direction.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PageDir {
-    /// Back in time, strictly before the cursor. The whole archive read this way
-    /// until #1401, because the thread's window was anchored to the newest
-    /// message and could only grow one way.
+    /// Back in time, strictly before the cursor.
     Older,
-    /// Forward in time, strictly after the cursor. What SCROLLING forward needs:
-    /// the caller already holds the row the cursor names.
+    /// Forward in time, strictly after the cursor.
     Newer,
-    /// The cursor's own row, and forward from there. What LANDING needs.
-    ///
-    /// ⚠ Both other directions are strict, so a landing built from `Older` +
-    /// `Newer` skips the row it is aimed at. Shipped that way on 2026-09-08
-    /// and found on a phone: the reader was put one message past the hit and the
-    /// marker naming "the message you searched for" pointed at its neighbour.
-    /// The two halves must meet AND overlap by exactly the one row between them.
+    /// The cursor's own row and forward: landing. `Older` and `Newer` are both
+    /// strict, so together they would skip the target.
     AtAndNewer,
 }
 
@@ -1267,19 +1004,14 @@ pub struct MessagesPage {
     /// Ascending by ts.
     pub messages: Vec<Message>,
     pub has_more: bool,
-    /// Opaque cursor addressing the page's OLDEST row — where to continue
-    /// backwards. Pass back as `?cursor` with `dir=older`.
-    ///
-    /// ⚠ Named for the direction the reader travels, NOT for the order the page
-    /// was fetched in. Both cursors describe the page's own ends, so a forward
-    /// page and a backward page over the same rows hand back the same pair.
+    /// Cursor for the page's oldest row, to continue backwards (`dir=older`).
+    /// Both cursors name the page's own ends, whichever way it was fetched.
     pub next_cursor: Option<String>,
-    /// Opaque cursor addressing the page's NEWEST row — where to continue
-    /// forwards. Pass back as `?cursor` with `dir=newer`.
+    /// Cursor for the page's newest row, to continue forwards (`dir=newer`).
     pub prev_cursor: Option<String>,
 }
 
-/// All conversations across all three origins, newest activity first.
+/// All conversations across all origins, newest activity first.
 pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
     let mut out = Vec::new();
 
@@ -1331,19 +1063,8 @@ pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
         });
     }
 
-    // Telegram. Restricted to `kind = 'message'` for the reason IRC restricts to
-    // message-and-action: a service event ("X joined", a pinned notice) is not
-    // something anybody said, and counting it would make a conversation look
-    // busier than it was.
-    //
-    // ⚠ AGGREGATE-THEN-JOIN, and that shape is the IRC lesson applied before it
-    // has to be learned again. The derived table lets MariaDB answer the whole
-    // aggregate from `idx_tg_conv_kind_ts`; grouping the join instead makes it
-    // choose the unique key and read every candidate row. There is no maintained
-    // stats table here yet and at this archive's size there should not be — the
-    // threshold where one became necessary for IRC was measured at 3.7M rows and
-    // 1.29s, and `irc_conversation_stats` (signal's v11-v14) is the ready-made
-    // answer if Telegram ever approaches it.
+    // Telegram counts only `kind = 'message'`. Aggregated in a derived table and
+    // then joined, so MariaDB answers from `idx_tg_conv_kind_ts`.
     let telegram = sqlx::query(
         r"SELECT t.id AS id, t.kind AS kind, t.name AS name,
                  COALESCE(s.cnt, 0) AS cnt, s.last_ts AS last_ts
@@ -1374,31 +1095,15 @@ pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
         });
     }
 
-    // IRC. ⚠ THIS READS A MAINTAINED TABLE AND MUST NOT GO BACK TO AGGREGATING.
-    // `irc_conversation_stats` holds one row per conversation, kept current by
-    // triggers on `irc_messages` (signal's migrations v11-v14) — which is also
-    // where `kind IN ('message','action')` now lives, so joins, parts and server
-    // notices never reach the count. Both sides of this join are a few hundred
-    // rows, so the landing no longer depends on the size of the archive.
+    // IRC reads `irc_conversation_stats`, maintained by triggers (signal's
+    // migrations v11-v14). Aggregating `irc_messages` here instead is too slow
+    // to serve the landing page: the `kind` filter defeats the loose index scan.
     //
-    // The history, because the obvious "improvement" is to inline the aggregate
-    // again. On 3,683,670 rows: grouping the join 27s, with FORCE INDEX 3.3s,
-    // aggregate-then-join 1.5s — which tripped the 1s slow-statement alert on
-    // every landing, and had no query fix left. The `kind` filter sits on the
-    // middle column of `idx_irc_conv_kind_ts` and defeats MariaDB's loose index
-    // scan (431 rows in 1.4ms without it, 3,614,079 in 1.29s with), and the
-    // UNION-of-equalities rewrite its documentation suggests measured WORSE at
-    // 2.15s — two scans instead of one. 0.75s is the floor for counting by scan.
+    // `TIMESTAMPDIFF` from the epoch, not `UNIX_TIMESTAMP`, which would apply the
+    // connection's time zone to the DATETIME.
     //
-    // ⚠ `TIMESTAMPDIFF` from the epoch, NOT `UNIX_TIMESTAMP`, which reinterprets
-    // a DATETIME against the connection's `time_zone` — the same row would come
-    // back an hour out depending on who asked.
-    //
-    // `is_status = 0` drops the pseudo-conversation irssi files server notices
-    // into: named after your own nick, so it looks like a DM with yourself.
-    //
-    // ⚠ `COALESCE(s.cnt, 0)` and a NULL `last_s`: a conversation with no counted
-    // line has NO stats row, not a zero row.
+    // `is_status = 0` drops irssi's server-notice window. A conversation with no
+    // counted line has no stats row.
     let irc = sqlx::query(
         r"SELECT c.id AS id, c.target AS name, c.is_channel AS is_channel,
                  c.network AS network, COALESCE(s.cnt, 0) AS cnt,
@@ -1424,26 +1129,20 @@ pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
         });
     }
 
-    out.sort_by_key(|c| std::cmp::Reverse(c.last_ts)); // newest activity first
+    out.sort_by_key(|c| std::cmp::Reverse(c.last_ts));
     Ok(out)
 }
 
-/// Where an IRC conversation actually is, for the send path.
-///
-/// The URL carries a conversation id, and irssi needs a network and a target —
-/// so this is the one place that translates between them. Doing it from the
-/// database rather than from anything the client sent is the point: a request
-/// cannot name a network and a nick, only a conversation that already exists.
+/// An IRC conversation's network and target, for sending. Taken from the
+/// database, so a request can name only an existing conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IrcTarget {
     /// The conversation's network, after any `--map` the importer applied.
     pub network: String,
     /// A nick, or a channel including its leading `#`.
     pub target: String,
-    /// ⚠ irssi files server notices under your OWN nick, so that log looks
-    /// exactly like a conversation with yourself and is nothing of the kind.
-    /// The reader already hides it; the sender must refuse it, or "reply" to a
-    /// server notice would message you as though you were somebody else.
+    /// irssi's server-notice window, named after your own nick. Sending to it
+    /// would message yourself as though you were somebody else.
     pub is_status: bool,
 }
 
@@ -1463,20 +1162,9 @@ pub async fn irc_target(pool: &MySqlPool, conversation_id: &str) -> Result<Optio
     }))
 }
 
-/// Who reacted to each of these messages, by `(msg_id, emoji)`.
-///
-/// ⚠ A PEER ID IS NOT A NAME, AND THERE ARE TWO PLACES TO LOOK. A reactor in a
-/// DM is usually the conversation's own peer, so `telegram_conversations` names
-/// them — but the SELF user has no conversation row, and 8,706 of this archive's
-/// reactions are his own. The second lookup is any message that peer ever sent,
-/// whose `sender_name` the ingester resolved. Measured 2026-09-18: 10 of 12
-/// reactors named by the first, one more by the second, one unnameable because
-/// the account is deleted.
-///
-/// ⚠ The fallback is the ID AS TEXT, never a blank — the same choice the Signal
-/// query has always made with `COALESCE(display_name, author_uuid)`. A reaction
-/// by somebody unnameable is still a reaction by somebody, and an empty string
-/// would read as the archive not knowing there was a reactor at all.
+/// Who reacted to each of these messages, by `(msg_id, emoji)`. A reactor is
+/// named by their conversation, else by any message they sent (the self user has
+/// no conversation row), else by their id as text.
 async fn telegram_reactors(
     pool: &MySqlPool,
     conversation_id: i64,
@@ -1487,9 +1175,7 @@ async fn telegram_reactors(
         return Ok(out);
     }
     let placeholders = vec!["?"; msg_ids.len()].join(",");
-    // `removed_at IS NULL` for the reason the aggregate above gives: a reaction
-    // taken back keeps its row so a re-read cannot forget it, and the thread
-    // draws what is on the message now.
+    // Current reactions only.
     let sql = format!(
         "SELECT a.msg_id, a.emoji, a.peer_id,
                 COALESCE(c.name, s.sender_name, CAST(a.peer_id AS CHAR)) AS who
@@ -1504,7 +1190,7 @@ async fn telegram_reactors(
             AND a.msg_id IN ({placeholders})
           ORDER BY a.reacted_at, who",
     );
-    // Fixed template, computed placeholder count, every value bound.
+    // A fixed template with a computed count of `?` and every value bound.
     let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
     for id in msg_ids {
         q = q.bind(id);
@@ -1520,29 +1206,11 @@ async fn telegram_reactors(
     Ok(out)
 }
 
-/// A call in words, from what the archive knows about it.
-///
-/// ⚠ `None` FOR DURATION IS NOT A ZERO-LENGTH CALL. Telegram omits the field
-/// for a call that was never answered, so the absence IS the record of it not
-/// being answered — which is why "missed" and "busy" are phrased without one
-/// rather than as "0 seconds". Getting this backwards would report every
-/// unanswered call as a call that happened and took no time.
-///
-/// ⚠ A VERB PHRASE ABOUT THE SENDER, not a noun phrase naming the event. An
-/// `Action` is drawn `* Dana <body>` in the thread and `HH:MM  * Dana <body>`
-/// in a copied log, so "a call" renders as `* Dana a call`. Every label the
-/// ingester writes is already phrased this way — "added a member", "changed the
-/// title", "joined Telegram" — and the call ones were the exception because they
-/// were never rendered anywhere to notice.
-///
-/// The sender of a `messageActionPhoneCall` is the CALLER, which is what makes
-/// "made" honest regardless of who picked up.
-///
-/// Returns `None` when this is not a call at all, so the caller falls back to the
-/// stored label for every other kind of service event.
+/// A call in words, as a verb phrase about the caller: an `Action` renders as
+/// `* Dana <body>`. No duration means the call was not answered, not that it
+/// took no time. `None` when this is not a call.
 pub fn call_text(duration_s: Option<i32>, reason: Option<&str>, video: bool) -> Option<String> {
-    // A call row exists only for a `messageActionPhoneCall`, so either column
-    // being present is enough to know this is one.
+    // A call row exists only for a call, so either column marks one.
     if duration_s.is_none() && reason.is_none() {
         return None;
     }
@@ -1552,17 +1220,12 @@ pub fn call_text(duration_s: Option<i32>, reason: Option<&str>, video: bool) -> 
         (None, Some("missed")) => format!("made a {kind} that went unanswered"),
         (None, Some("busy")) => format!("made a {kind}, the line was busy"),
         (None, Some("disconnect")) => format!("made a {kind} that dropped"),
-        // A reason this reader has no phrasing for still happened, and naming it
-        // is better than hiding it behind a generic word.
         (None, Some(other)) => format!("made a {kind} ({other})"),
         (None, None) => format!("made a {kind}"),
     })
 }
 
-/// Seconds as a person would say them.
-///
-/// Deliberately coarse: a call is remembered as "about twenty minutes", and
-/// `1,203 seconds` is a measurement rather than a memory.
+/// Seconds as a person would say them, coarsely.
 fn human_duration(secs: i32) -> String {
     let secs = secs.max(0);
     match secs {
@@ -1585,15 +1248,8 @@ fn human_duration(secs: i32) -> String {
 
 /// One page of a conversation, oldest→newest, with reactions attached.
 ///
-/// `cursor` is a position from a previous page — its `next_cursor` to continue
-/// backwards, its `prev_cursor` to continue forwards — and `dir` says which.
-/// None starts at the most recent page, which only makes sense with
-/// [`PageDir::Older`] and is what the thread opens with.
-///
-/// Each fetcher returns its rows ASCENDING plus the native `(ts, id)` of each
-/// end, whichever direction it read in. Minting happens here, from the page
-/// rather than from the query, so the two cursors mean the same thing on every
-/// page: `next_cursor` is the oldest row and `prev_cursor` the newest.
+/// `cursor` is a previous page's `next_cursor` (older) or `prev_cursor` (newer);
+/// `dir` says which. `None` starts at the newest page.
 pub async fn messages_page(
     pool: &MySqlPool,
     origin: Origin,
@@ -1609,16 +1265,12 @@ pub async fn messages_page(
         Origin::Telegram => telegram_messages(pool, id, cursor, limit, dir).await?,
     };
     let mut page = page;
-    // ⚠ Edit history is per-origin because the two origins that have any store
-    // it differently. Signal appends a row per version and points it at the
-    // original (`edit_of_ts`); Telegram mutates the message and the archive files
-    // the superseded text beside it. One function cannot read both, and calling
-    // Signal's against a Telegram thread id would quietly find nothing and report
-    // no history for every edited message.
+    // Signal stores an edit as a new row pointing at the original; Telegram
+    // edits in place and files the old text beside it.
     match origin {
         Origin::Signal => attach_edits(pool, id, &mut page.msgs).await?,
         Origin::Telegram => attach_telegram_edits(pool, id, &mut page.msgs).await?,
-        // Google Chat's export carries no revisions, and IRC has no such concept.
+        // Neither has revisions.
         Origin::Gchat | Origin::Irc => {}
     }
     attach_link_images(pool, &mut page.msgs).await?;
@@ -1632,11 +1284,8 @@ pub async fn messages_page(
     })
 }
 
-/// What a per-origin fetcher hands back: the page ASCENDING, and the native
-/// `(ts, id)` of its two ends. Ascending regardless of direction, so that
-/// everything above this line is direction-blind — the alternative, letting the
-/// order follow the query, put a `reverse()` at the caller that was correct for
-/// exactly one of the two directions.
+/// A fetcher's page, ascending whatever the direction, and the native `(ts, id)`
+/// of its ends.
 struct Fetched {
     msgs: Vec<Message>,
     oldest: Option<(i64, i64)>,
@@ -1666,9 +1315,8 @@ async fn signal_messages(
     dir: PageDir,
 ) -> Result<Fetched> {
     let (cur_ts, cur_id) = (cursor.map(|(ts, _)| ts), cursor.map(|(_, id)| id));
-    // Tie-broken by id so a page boundary never splits a run of messages sharing
-    // a server_ts. The first `?` (cur_ts) doubles as the "no cursor → whole
-    // thread" guard, in both directions.
+    // Tie-broken by id so a page boundary never splits rows sharing a timestamp.
+    // The first `?` doubles as the no-cursor guard.
     let sql = match dir {
         PageDir::Older => {
             r"SELECT m.id AS id, m.server_ts AS ts,
@@ -1713,9 +1361,7 @@ async fn signal_messages(
           LIMIT ?"
         }
     };
-    // Nothing is BUILT here. The rule guards against constructed SQL, and a
-    // match over two constants keeps every property it is guarding; the reason
-    // there are two is that `ORDER BY` will not take a bound parameter.
+    // `ORDER BY` takes no bound parameter, hence one literal per direction.
     // dev-lint: allow-sqlx — `sql` is one of the two literals directly above.
     let rows = sqlx::query(sql)
         .bind(thread_id)
@@ -1749,14 +1395,14 @@ async fn signal_messages(
             ts,
             sender: r.try_get("sender")?,
             is_outgoing: is_outgoing != 0,
-            kind: MessageKind::Message, // Signal has no action
+            kind: MessageKind::Message,
             body: r.try_get("body")?,
             deleted: deleted != 0,
             edited: edited != 0,
             reactions: Vec::new(),
             attachments: Vec::new(),
             edits: Vec::new(),
-            link_images: Vec::new(), // both filled for the whole page in messages_page
+            link_images: Vec::new(),
             link_offers: Vec::new(),
             reply_to: None,
             delivery: None,
@@ -1764,8 +1410,6 @@ async fn signal_messages(
         });
     }
 
-    // Attachments (Signal only) — metadata for the page's messages; `available`
-    // marks the ones whose bytes were downloaded to the PVC.
     if !ids.is_empty() {
         let placeholders = vec!["?"; ids.len()].join(",");
         let sql = format!(
@@ -1788,8 +1432,6 @@ async fn signal_messages(
                 file_name: ar.try_get("file_name")?,
                 size: ar.try_get("size_bytes")?,
                 available: stored_path.is_some(),
-                // Signal's blobs arrive with the message or not at all; there is
-                // nothing a reader could ask for.
                 fetch: None,
             };
             if let Some(m) = msgs.iter_mut().find(|m| m.id == mid) {
@@ -1798,19 +1440,12 @@ async fn signal_messages(
         }
     }
 
-    // Reactions key on (thread_id, target_ts=message server_ts). Approximate the
-    // live state as distinct non-removed authors per emoji (ignores the rare
-    // add-then-remove of the same author within the page).
+    // Reactions key on (thread_id, target_ts = the message's server_ts): distinct
+    // current authors per emoji.
     if !ts_list.is_empty() {
         let placeholders = vec!["?"; ts_list.len()].join(",");
-        // ⚠ THIS USED TO BE `COUNT(DISTINCT author_uuid)`, WHICH THREW AWAY THE
-        // ONE THING SIGNAL HAS THAT THE OTHER ORIGINS DID NOT. Signal stores
-        // per-author reaction EVENTS, so it always knew who laughed; the common
-        // `Reaction` shape had nowhere to put them and the count was taken on the
-        // way out. The names come back now, and the DISTINCT is done in Rust
-        // because a `GROUP_CONCAT` would silently truncate at
-        // `group_concat_max_len` — a limit that shows up as a missing name rather
-        // than as an error.
+        // Names grouped in Rust rather than by `GROUP_CONCAT`, which truncates at
+        // `group_concat_max_len` without an error.
         let sql = format!(
             "SELECT r.target_ts, r.emoji,
                     COALESCE(ct.display_name, r.author_uuid) AS who
@@ -1820,15 +1455,13 @@ async fn signal_messages(
                AND r.target_ts IN ({placeholders})
              ORDER BY r.target_ts, r.emoji, who",
         );
-        // `sql` is a fixed template with a computed count of `?` placeholders and
-        // no interpolated data; all values are bound. Safe to assert.
+        // A fixed template with a computed count of `?` and every value bound.
         let mut q = sqlx::query(AssertSqlSafe(sql)).bind(thread_id);
         for ts in &ts_list {
             q = q.bind(ts);
         }
         let rrows = q.fetch_all(pool).await?;
-        // Grouped here rather than in SQL, so one author reacting twice with the
-        // same emoji counts once and is named once.
+        // One author reacting twice with an emoji counts and is named once.
         let mut grouped: HashMap<(i64, String), Vec<String>> = HashMap::new();
         let mut order: Vec<(i64, String)> = Vec::new();
         for rr in rrows {
@@ -1862,28 +1495,13 @@ async fn signal_messages(
     Ok(Fetched::new(msgs, keys, dir))
 }
 
-/// What became of the outgoing messages on this page, person by person.
+/// Signal delivery and read state for this page's outgoing messages.
 ///
-/// ⚠ SIGNAL IS THE ONLY ORIGIN HERE THAT NAMES A PERSON AND A TIME. A receipt
-/// is `(target_ts, author_uuid, kind, when_ts)` — per message, per recipient, with
-/// the moment Signal says it happened rather than the moment we heard. Telegram
-/// gives one moving position per conversation and no names at all, which is why
-/// `attach_telegram_read` is a comparison and this is a join.
+/// Receipts from the message's own sender are dropped: reading a thread on a
+/// linked device syncs a read of my own messages too.
 ///
-/// ⚠ A RECEIPT FROM MYSELF SAYS NOTHING ABOUT THE RECIPIENT, and there are real
-/// rows like that. Reading a thread on a linked device syncs a read of
-/// EVERYTHING in it, my own messages included — 2 such rows in one DM alone. Left
-/// in, a message nobody had opened would show as read by the person who sent it.
-/// `r.author_uuid <> m.sender_uuid` drops them: the author of my message is me, so
-/// a receipt from the message's own sender is self-addressed by construction, and
-/// no separate "who am I" lookup is needed to know it.
-///
-/// ⚠ NO RECEIPT MEANS "SENT" ONLY AFTER CAPTURE BEGAN — otherwise it means
-/// NOTHING. Receipt capture started 2026-09-18; the 659 outgoing messages before
-/// it have no rows and never will, because Signal keeps no server-side history to
-/// re-walk. So the floor is read from the data (`MIN(observed_at)`) and anything
-/// older is left `None`. Calling those "sent, never delivered" would report this
-/// archive's start date as a fact about other people's phones.
+/// A message with no receipt is `Sent` only if it postdates the first receipt
+/// ever captured; before that, the archive cannot say.
 async fn attach_signal_read(pool: &MySqlPool, msgs: &mut [Message]) -> Result<()> {
     let ids: Vec<i64> = msgs
         .iter()
@@ -1893,8 +1511,6 @@ async fn attach_signal_read(pool: &MySqlPool, msgs: &mut [Message]) -> Result<()
     if ids.is_empty() {
         return Ok(());
     }
-    // When this archive started listening. A scalar per page over a small,
-    // append-only table; it is a fixed historical instant, not a moving one.
     let floor_ms: Option<i64> =
         sqlx::query_scalar("SELECT UNIX_TIMESTAMP(MIN(observed_at)) * 1000 FROM signal_receipts")
             .fetch_optional(pool)
@@ -1902,8 +1518,7 @@ async fn attach_signal_read(pool: &MySqlPool, msgs: &mut [Message]) -> Result<()
             .flatten();
 
     let placeholders = vec!["?"; ids.len()].join(",");
-    // `sql` is a fixed template with a computed count of `?` placeholders and no
-    // interpolated data; all values are bound. Safe to assert.
+    // A fixed template with a computed count of `?` and every value bound.
     let sql = format!(
         "SELECT m.id AS id, r.kind AS kind, r.when_ts AS when_ts,
                 COALESCE(ct.display_name, r.author_uuid) AS who
@@ -1927,17 +1542,13 @@ async fn attach_signal_read(pool: &MySqlPool, msgs: &mut [Message]) -> Result<()
             "delivery" => DeliveryState::Delivered,
             "read" => DeliveryState::Read,
             "viewed" => DeliveryState::Viewed,
-            // The ENUM has three members; a fourth would be a schema change this
-            // build has not seen, and guessing which rung it belongs on is how a
-            // new state gets silently flattened into an old one.
+            // An unknown kind is a schema change this build has not seen.
             other => bail!("signal_receipts.kind holds an unknown kind: {other:?}"),
         };
         let slot = best.entry(id.clone()).or_insert(DeliveryState::Sent);
         *slot = (*slot).max(state);
         if state >= DeliveryState::Read {
-            // Ordered by `when_ts`, so each person lands in the order they read
-            // it. A second receipt from the same person — a read and then a view
-            // of the same message — would name them twice, so the first stands.
+            // Ordered by `when_ts`; a person who read and then viewed is named once.
             let who: String = row.try_get("who")?;
             let entry = read_by.entry(id).or_default();
             if !entry.iter().any(|r| r.who == who) {
@@ -1956,7 +1567,7 @@ async fn attach_signal_read(pool: &MySqlPool, msgs: &mut [Message]) -> Result<()
                     read_by: read_by.remove(&m.id).unwrap_or_default(),
                 });
             }
-            // Nothing came back. Only meaningful if we were listening at the time.
+            // Nothing came back: meaningful only if we were listening then.
             None if floor_ms.is_some_and(|f| m.ts >= f) => {
                 m.delivery = Some(Delivery {
                     state: DeliveryState::Sent,
@@ -1976,8 +1587,8 @@ async fn gchat_messages(
     limit: i64,
     dir: PageDir,
 ) -> Result<Fetched> {
-    // The cursor carries the native µs ts (not the ms the UI sees), so paging
-    // never skips rows that share a millisecond; id tie-breaks an exact µs match.
+    // The cursor is in native microseconds, so rows sharing a millisecond page
+    // correctly.
     let (cur_ts, cur_id) = (cursor.map(|(ts, _)| ts), cursor.map(|(_, id)| id));
     let sql = match dir {
         PageDir::Older => {
@@ -2011,9 +1622,7 @@ async fn gchat_messages(
           LIMIT ?"
         }
     };
-    // Nothing is BUILT here. The rule guards against constructed SQL, and a
-    // match over two constants keeps every property it is guarding; the reason
-    // there are two is that `ORDER BY` will not take a bound parameter.
+    // `ORDER BY` takes no bound parameter, hence one literal per direction.
     // dev-lint: allow-sqlx — `sql` is one of the two literals directly above.
     let rows = sqlx::query(sql)
         .bind(group_id)
@@ -2045,14 +1654,14 @@ async fn gchat_messages(
                 .try_get::<Option<String>, _>("sender")?
                 .unwrap_or_default(),
             is_outgoing: is_self != 0,
-            kind: MessageKind::Message, // nor does Google Chat
+            kind: MessageKind::Message,
             body: r.try_get("body")?,
             deleted: false,
             edited: false,
             reactions: Vec::new(),
-            attachments: Vec::new(), // filled below, from gchat_attachments
+            attachments: Vec::new(),
             edits: Vec::new(),
-            link_images: Vec::new(), // both filled for the whole page in messages_page
+            link_images: Vec::new(),
             link_offers: Vec::new(),
             reply_to: None,
             delivery: None,
@@ -2080,7 +1689,7 @@ async fn gchat_messages(
               WHERE r.emoji IS NOT NULL AND r.message_id IN ({placeholders})
               GROUP BY r.message_id, r.emoji, r.cnt",
         );
-        // Fixed template + computed placeholder count, values bound — safe.
+        // A fixed template with a computed count of `?` and every value bound.
         let mut q = sqlx::query(AssertSqlSafe(sql));
         for id in &ids {
             q = q.bind(id);
@@ -2090,25 +1699,17 @@ async fn gchat_messages(
             let mid: i64 = rr.try_get("message_id")?;
             let emoji: String = rr.try_get("emoji")?;
             let count: i64 = rr.try_get("cnt")?;
-            // ⚠ Joined with 0x1f (unit separator), not a comma: these are display
-            // names and a person called "Smith, John" would otherwise split into
-            // two reactors. GROUP_CONCAT truncates at `group_concat_max_len`
-            // (1024 by default) — acceptable here because the cap is far above
-            // the 15 reactors this archive has, and the failure is a missing
-            // trailing name rather than a wrong one.
+            // Joined with 0x1f, since display names can contain commas.
+            // `GROUP_CONCAT` truncates at `group_concat_max_len`, far above the
+            // reactor counts here.
             let who: Vec<String> = rr
                 .try_get::<Option<String>, _>("who")?
                 .map(|s| s.split('\u{1f}').map(str::to_owned).collect())
                 .unwrap_or_default();
             let mid = mid.to_string();
             if let Some(m) = msgs.iter_mut().find(|m| m.id == mid) {
-                // ⚠ `list_topics` NAMES NOBODY, so these come from a SECOND
-                // capture. The reaction itself arrives as `[emoji, count]`;
-                // who reacted is a separate rpc that `gchat-archive`'s `sync.py`
-                // replays per reacted message, and `tools/import_gchat_reactors.py`
-                // loads. So `who` is empty for any reaction that capture has not
-                // reached — "not recorded", never "nobody" — and `cnt` stays the
-                // count for exactly that reason.
+                // `who` comes from a second capture (gchat-archive's sync.py,
+                // loaded by import_gchat.py); empty means not yet resolved.
                 m.reactions.push(Reaction { emoji, count, who });
             }
         }
@@ -2119,17 +1720,10 @@ async fn gchat_messages(
 
 /// One page of an IRC conversation.
 ///
-/// ⚠ The cursor's native unit is seconds, and it is the coarsest of the three
-/// origins by a wide margin. irssi's default `timestamp_format` is `%H:%M`, so
-/// the source records no seconds at all and every line in a busy minute shares
-/// one timestamp — `id` is not a tie-break here so much as the actual ordering.
-/// It holds because the importer walks files in sorted path order and a log is
-/// append-only, so row id within a conversation is file order is time order.
-///
-/// Joins, parts and server notices are excluded: see the note in
-/// [`list_conversations`]. The consequence worth knowing is that
-/// `message_count` there and the rows here are the same population, so a
-/// conversation never claims more messages than it will show.
+/// One page of an IRC conversation. irssi logs only `%H:%M`, so many lines share
+/// a timestamp and `id` carries the order: the importer writes files in path
+/// order, and logs only append. Only messages and actions, the population
+/// [`list_conversations`] counts.
 async fn irc_messages(
     pool: &MySqlPool,
     conversation_id: &str,
@@ -2182,9 +1776,7 @@ async fn irc_messages(
           LIMIT ?"
         }
     };
-    // Nothing is BUILT here. The rule guards against constructed SQL, and a
-    // match over two constants keeps every property it is guarding; the reason
-    // there are two is that `ORDER BY` will not take a bound parameter.
+    // `ORDER BY` takes no bound parameter, hence one literal per direction.
     // dev-lint: allow-sqlx — `sql` is one of the two literals directly above.
     let rows = sqlx::query(sql)
         .bind(conversation_id)
@@ -2204,10 +1796,8 @@ async fn irc_messages(
         keys.push((ts_s, id));
         let is_self: i8 = r.try_get("is_self")?;
         let kind: String = r.try_get("kind")?;
-        // The query filters to the two this parses, so an unknown value means
-        // the filter and the enum have drifted apart — reported, not drawn as
-        // speech, because an event rendered as a line somebody said is a lie
-        // the reader cannot see through.
+        // The query admits only kinds this parses; anything else is reported
+        // rather than drawn as speech.
         let Some(kind) = MessageKind::parse(&kind) else {
             bail!("irc_messages.kind holds a value this query should have excluded: {kind:?}");
         };
@@ -2223,14 +1813,14 @@ async fn irc_messages(
             body,
             deleted: false,
             edited: false,
-            reactions: Vec::new(), // IRC has none
+            reactions: Vec::new(),
             edits: Vec::new(),
-            link_images: Vec::new(), // both filled for the whole page in messages_page
+            link_images: Vec::new(),
             link_offers: Vec::new(),
             reply_to: None,
             delivery: None,
             entities: Vec::new(),
-            attachments: Vec::new(), // nor these
+            attachments: Vec::new(),
         });
     }
 
@@ -2248,40 +1838,16 @@ pub struct SearchHit {
     pub ts: i64,
     pub sender: String,
     pub snippet: String,
-    /// The message was retracted. The snippet still carries its text; the reader
-    /// hides it behind a click, exactly as a thread hides a deleted body.
+    /// The message was retracted; the reader hides the snippet behind a click.
     pub deleted: bool,
-    /// WHERE the hit is, in the same opaque form the pager already speaks —
-    /// [`encode_cursor`] over this origin's NATIVE `(ts, id)`.
-    ///
-    /// ⚠ Not `ts`. A hit's `ts` is normalised to milliseconds for display, and
-    /// milliseconds cannot address a Google Chat row (µs) or separate two IRC
-    /// lines in one second — which is most of them, since irssi's default
-    /// `timestamp_format` records no seconds at all. Nor a bare row id, which is
-    /// meaningless without the ts it tie-breaks. This is the pair, and
-    /// `messages_page` takes it unchanged.
+    /// Where the hit is: [`encode_cursor`] over the origin's native `(ts, id)`,
+    /// passed unchanged to `messages_page`. `ts` is milliseconds, which cannot
+    /// address a Google Chat row or tell IRC lines within a minute apart.
     pub cursor: String,
 }
 
-/// Simple substring search across all three origins' message text. Newest first.
-///
-/// ⚠ RETRACTED MESSAGES MATCH. Signal's `deleted` rows were excluded here
-/// until 2026-09-04 while a thread sent the same text and hid it behind a click:
-/// one concept, two policies, chosen in two places, neither aware of the other.
-/// Decided 2026-09-04 — a search that cannot find what was retracted is not an
-/// archive's search, and the hit is hidden the way the thread hides a body. The
-/// rule now lives in the reader for both, rather than half here and half there.
-///
-/// Only Signal has retraction at all: gchat and IRC have no such column, so their
-/// hits are `deleted: false` because there is nothing to be deleted, not because
-/// anything was checked.
-/// One page of a Telegram conversation.
-///
-/// ⚠ The cursor carries `sent_at` in SECONDS, which is coarse: a busy minute puts
-/// many messages on one value, so `id` is doing more tie-breaking work here than
-/// in the other origins. That is why it is in the comparison at every boundary
-/// rather than only in the `ORDER BY` — without it a page boundary that lands
-/// inside a second would either repeat or skip whatever shares it.
+/// One page of a Telegram conversation. `sent_at` is in seconds, so `id` breaks
+/// ties at every page boundary.
 async fn telegram_messages(
     pool: &MySqlPool,
     conversation_id: &str,
@@ -2289,15 +1855,11 @@ async fn telegram_messages(
     limit: i64,
     dir: PageDir,
 ) -> Result<Fetched> {
-    // A Telegram conversation id is a number in the URL. A non-numeric one is not
-    // a conversation that can exist, so it pages as empty rather than erroring —
-    // the same answer the other origins give for an id nothing matches.
+    // A non-numeric id matches nothing, as for any other origin.
     let Ok(conversation_id) = conversation_id.parse::<i64>() else {
         return Ok(Fetched::new(Vec::new(), Vec::new(), dir));
     };
     let (cur_ts, cur_id) = (cursor.map(|(ts, _)| ts), cursor.map(|(_, id)| id));
-    // Only what was SAID: `kind = 'message'` leaves out the service events the
-    // archive also holds, matching what the conversation list counts.
     let sql = match dir {
         PageDir::Older => {
             r"SELECT m.id AS id, m.msg_id AS msg_id, m.sent_at AS sent_at,
@@ -2348,7 +1910,6 @@ async fn telegram_messages(
               LIMIT ?"
         }
     };
-    // Nothing is BUILT here: one of three literals above, values bound.
     // dev-lint: allow-sqlx — `sql` is one of the three literals directly above.
     let rows = sqlx::query(sql)
         .bind(conversation_id)
@@ -2373,24 +1934,13 @@ async fn telegram_messages(
         let deleted: i8 = r.try_get("deleted")?;
         let is_outgoing: i8 = r.try_get("is_outgoing")?;
         let edited_at: Option<i64> = r.try_get("edited_at")?;
-        // ⚠ AN EDIT DATE IS NOT AN EDIT TO SHOW. Telegram's `edit_hide` says
-        // "the message should be shown as not modified to the user, even if an edit
-        // date is present" — it sets a date for its own reasons and asks clients not
-        // to surface it, which its own apps honour. This reader did not, and printed
-        // `edited` on a photo Telegram showed as untouched.
-        //
-        // NULL means the archive has not learned the flag for that row yet (it
-        // predates the column), and is read as "not hidden" — the behaviour from
-        // before, which is the honest default for a row that was never asked.
+        // `edit_hide` asks for the message to be shown unmodified despite its
+        // `edit_date`. NULL, on rows stored before the column, reads as not hidden.
         let edit_hidden: Option<i8> = r.try_get("edit_hidden")?;
         let edited = edited_at.is_some() && edit_hidden.unwrap_or(0) == 0;
         let is_service = r.try_get::<String, _>("kind")? == "service";
-        // ⚠ THE STORED TEXT FOR A CALL IS THE TWO WORDS "a call". The ingester
-        // writes an English label for a service action and `describe_action`
-        // returns a `&'static str`, so the duration, whether it was video and how
-        // it ended were all discarded before this ever saw them. They are columns
-        // now, and this composes the sentence the label could not — falling back
-        // to the stored words for every other kind of event.
+        // A call's stored text is the label "a call"; compose it from the call's
+        // columns instead.
         let body = call_text(
             r.try_get("call_duration_s")?,
             r.try_get::<Option<String>, _>("call_reason")?.as_deref(),
@@ -2400,22 +1950,14 @@ async fn telegram_messages(
         keys.push((sent_at, id));
         msg_ids.push(r.try_get::<i32, _>("msg_id")?);
         msgs.push(Message {
-            // ⚠ The row's surrogate id, NOT `msg_id`. The API's message id has to
-            // be unique across the page and stable for the reactions join below;
-            // `msg_id` is unique only within its conversation, which is true here
-            // but stops being true the moment anything holds two pages at once.
+            // The row's id, unique across conversations; `msg_id` is not.
             id: id.to_string(),
             ts: s_to_ms(sent_at),
             sender: r
                 .try_get::<Option<String>, _>("sender")?
                 .unwrap_or_default(),
             is_outgoing: is_outgoing != 0,
-            // ⚠ A SERVICE EVENT IS AN ACTION, AND IT USED TO BE NOTHING. This
-            // query excluded `kind = 'service'` outright, so 73 events — every
-            // call in the archive among them — were stored and then filtered out
-            // of the only thing that reads them. `Action` is the shape IRC
-            // already uses for "somebody DID something" rather than said it, and
-            // it is what a service event is.
+            // Service events render as actions.
             kind: if is_service {
                 MessageKind::Action
             } else {
@@ -2425,8 +1967,6 @@ async fn telegram_messages(
             deleted: deleted != 0,
             edited,
             reactions: Vec::new(),
-            // No bytes are stored for Telegram media, so there is nothing to serve
-            // — see the v16 migration in the `signal` repo.
             attachments: Vec::new(),
             link_images: Vec::new(),
             edits: Vec::new(),
@@ -2437,25 +1977,11 @@ async fn telegram_messages(
         });
     }
 
-    // Media this archive holds bytes for, as `attachments`.
-    //
-    // ⚠ `attachments` WAS "SIGNAL ONLY", AND THAT WAS NEVER WHAT IT MEANT. It
-    // means "bytes this archive holds for this message", and Signal was simply the
-    // only origin that had any. Giving Telegram a parallel field would have made one
-    // concept two, with the copied-log namer, the is-image test and the not-stored
-    // marker each needing a second implementation — the exact shape this repository's
-    // README keeps a table about.
-    //
-    // `available = false` is the normal case for anything large: the file is at
-    // Telegram and has not been fetched. The reader draws it as not stored, which is
-    // true, and is the hook a request button will later hang from.
+    // Telegram media as `attachments`, the one field for bytes this archive
+    // holds. `available = false` is normal for large files not yet fetched.
     if !msg_ids.is_empty() {
         let placeholders = vec!["?"; msg_ids.len()].join(",");
-        // ⚠ The SIZE comes from `telegram_messages`, not from the media row, and the
-        // join is why. `telegram_media` held its own `size_bytes` for a day and it
-        // was a `stat` that raced the write's visibility — 218MB of files recorded
-        // as 86MB, some as zero. One number, in the table whose subject is what
-        // Telegram said about the file.
+        // The size is `telegram_messages.media_size`, from the message itself.
         let sql = format!(
             "SELECT d.msg_id AS msg_id, d.state AS state, d.content_type AS content_type,
                     m.media_size AS media_size
@@ -2464,7 +1990,7 @@ async fn telegram_messages(
                ON m.conversation_id = d.conversation_id AND m.msg_id = d.msg_id
              WHERE d.conversation_id = ? AND d.msg_id IN ({placeholders})",
         );
-        // Fixed template, computed placeholder count, every value bound.
+        // A fixed template with a computed count of `?` and every value bound.
         let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
         for id in &msg_ids {
             q = q.bind(id);
@@ -2476,18 +2002,13 @@ async fn telegram_messages(
             let Some(i) = msg_ids.iter().position(|m| *m == msg_id) else {
                 continue;
             };
-            // The api id is read out before the mutable borrow, not through it.
             let api_id = msgs[i].id.clone();
             msgs[i].attachments.push(Attachment {
-                // ⚠ The MESSAGE's api id, not the media row's: the route resolves a
-                // Telegram file by the message it belongs to, because that is the
-                // only id the client has in hand.
+                // The message's API id, which is what the media route takes.
                 id: api_id,
                 is_image: is_image(content_type.as_deref()),
                 content_type,
-                // Telegram photos carry no filename. `attachment.ts` already names an
-                // unnamed attachment from its type, on both the screen and the
-                // clipboard, so `None` is the honest value rather than a synthesised one.
+                // Telegram photos carry no filename; the frontend names them.
                 file_name: None,
                 size: mr.try_get("media_size")?,
                 available: state == "stored",
@@ -2496,20 +2017,8 @@ async fn telegram_messages(
         }
     }
 
-    // Reactions, already aggregated per emoji by the writer — the same shape
-    // Google Chat's have, so the same limit applies: you can see that four people
-    // laughed, not which four.
-    //
-    // ⚠ A custom emoji has no characters to draw. Its row holds a document id and
-    // a NULL emoji, and this leaves those out rather than rendering a blank bubble
-    // with a count beside it. What the archive holds and what the screen can show
-    // are different questions, and this is the second one.
-    //
-    // ⚠ And `removed_at IS NULL`, which is the same distinction again. A
-    // reaction taken back KEEPS ITS ROW in the archive — the ingester dates it
-    // instead of deleting it, so a re-walk cannot forget that it happened — and the
-    // thread draws what is on the message NOW. Without this filter every retracted
-    // reaction would come back the moment the archive learned it was gone.
+    // Reactions, current only (`removed_at IS NULL`). A custom emoji has no
+    // characters to draw, so its rows are left out.
     if !msg_ids.is_empty() {
         let placeholders = vec!["?"; msg_ids.len()].join(",");
         let sql = format!(
@@ -2518,7 +2027,7 @@ async fn telegram_messages(
                AND removed_at IS NULL
                AND msg_id IN ({placeholders})",
         );
-        // Fixed template, computed placeholder count, every value bound.
+        // A fixed template with a computed count of `?` and every value bound.
         let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
         for id in &msg_ids {
             q = q.bind(id);
@@ -2535,8 +2044,7 @@ async fn telegram_messages(
                     .unwrap_or_default(),
                 emoji,
             };
-            // The page's rows in order, so position by `msg_id` rather than the
-            // surrogate id the API reports.
+            // Positioned by `msg_id`, not the API id.
             if let Some(i) = msg_ids.iter().position(|m| *m == msg_id) {
                 msgs[i].reactions.push(reaction);
             }
@@ -2550,21 +2058,9 @@ async fn telegram_messages(
     Ok(Fetched::new(msgs, keys, dir))
 }
 
-/// Mark the outgoing messages on this page as read or not.
-///
-/// ⚠ ONE QUERY FOR THE WHOLE PAGE, because a read mark is per CONVERSATION.
-/// Telegram records how far the other side has read — a single high-water
-/// `msg_id` — not a flag per message, so "have they read this?" is a comparison
-/// rather than a lookup, and there is nothing to join per row.
-///
-/// ⚠ `direction = 'outbox'` is the one that says anything about THEM. The
-/// out-tray is my messages; `inbox` is how far I have read theirs, which is a
-/// fact about the archive's owner and not what a tick on your own message means.
-///
-/// ⚠ No mark → every message stays `None`, not `false`. Capture began
-/// 2026-09-17 and Telegram keeps no history of reading, so a conversation nobody
-/// has opened since then has no mark at all. Reporting that as unread would turn
-/// this archive's late start into a claim about somebody's behaviour.
+/// Telegram read state for this page's outgoing messages. The mark is one
+/// high-water `msg_id` per conversation (`outbox`: how far they have read mine),
+/// so this is a comparison. No mark leaves every message `None`.
 async fn attach_telegram_read(
     pool: &MySqlPool,
     conversation_id: i64,
@@ -2583,17 +2079,13 @@ async fn attach_telegram_read(
         return Ok(());
     };
     for (i, msg_id) in msg_ids.iter().enumerate() {
-        // Only the messages that are MINE have a "have they read it" to answer.
         if msgs[i].is_outgoing {
             let state = if *msg_id <= mark {
                 DeliveryState::Read
             } else {
                 DeliveryState::Sent
             };
-            // ⚠ `read_by` stays EMPTY, and that is Telegram's shape rather than a
-            // gap to fill later. `updateReadHistoryOutbox` carries a peer and a
-            // position; it names nobody, so there is no list to put here even in
-            // a group, where the mark means "somebody has read this far".
+            // Telegram names nobody who read.
             msgs[i].delivery = Some(Delivery {
                 state,
                 read_by: Vec::new(),
@@ -2603,21 +2095,8 @@ async fn attach_telegram_read(
     Ok(())
 }
 
-/// The formatting runs on this page's messages.
-///
-/// ⚠ ONE QUERY FOR THE PAGE, like reactions and read marks — 1,146 entity
-/// rows exist across 160,230 messages, so per-message queries would be ~100
-/// round trips to attach nothing for almost all of them.
-///
-/// ⚠ `removed_at IS NULL`, BECAUSE AN EDIT RETRACTS FORMATTING TOO. Editing a
-/// message replaces its entity list, and the archive dates the old rows rather
-/// than deleting them — the same shape `telegram_reactions` uses. Drawing a
-/// retracted run would bold a stretch of text that is no longer bold, or worse,
-/// point a link at a URL the sender removed.
-///
-/// ⚠ ORDERED BY OFFSET, because the reader walks them in one pass to cut the
-/// body into segments. Unordered, a later-starting run would truncate an earlier
-/// one and the tail of the message would vanish.
+/// The formatting runs on this page's messages, current only (an edit dates the
+/// old ones), ordered by offset for the reader's single pass.
 async fn attach_telegram_entities(
     pool: &MySqlPool,
     conversation_id: i64,
@@ -2628,8 +2107,7 @@ async fn attach_telegram_entities(
         return Ok(());
     }
     let placeholders = vec!["?"; msg_ids.len()].join(",");
-    // `sql` is a fixed template with a computed count of `?` placeholders and no
-    // interpolated data; all values are bound. Safe to assert.
+    // A fixed template with a computed count of `?` and every value bound.
     let sql = format!(
         "SELECT msg_id, kind, offset_utf16, length_utf16, url
            FROM telegram_message_entities
@@ -2658,19 +2136,9 @@ async fn attach_telegram_entities(
     Ok(())
 }
 
-/// Telegram's edit history: the superseded versions of each edited message.
-///
-/// ⚠ The ordering is the whole difficulty, and it is not the one Signal has.
-/// Signal's versions each arrive with their own send time, so they sort by it.
-/// Telegram gives a message one `edit_date` — the LAST edit — so a superseded
-/// version is filed under the `edit_date` it carried, and the ORIGINAL carried
-/// none. `was_edited_at IS NULL` is therefore the oldest version rather than an
-/// unknown one, and sorting it as NULL-last would put the original at the end of
-/// its own history.
-/// ⚠ Driven by `m.edited`, which already accounts for `edit_hide` — so a message
-/// Telegram asks us to show as unmodified gets no history panel either. That is one
-/// statement rather than two decisions: the prior text stays in the archive, and the
-/// reader simply does not offer it.
+/// Telegram's edit history. Each superseded version is filed under the
+/// `edit_date` it carried; the original carried none, so NULL sorts first.
+/// `m.edited` already honours `edit_hide`, which hides the history too.
 async fn attach_telegram_edits(
     pool: &MySqlPool,
     conversation_id: &str,
@@ -2679,7 +2147,6 @@ async fn attach_telegram_edits(
     let Ok(conversation_id) = conversation_id.parse::<i64>() else {
         return Ok(());
     };
-    // Only the edited ones, and by the id the API reported.
     let ids: Vec<i64> = msgs
         .iter()
         .filter(|m| m.edited)
@@ -2698,7 +2165,7 @@ async fn attach_telegram_edits(
          WHERE e.conversation_id = ? AND m.id IN ({placeholders})
          ORDER BY e.was_edited_at IS NOT NULL, e.was_edited_at ASC, e.id ASC",
     );
-    // Fixed template, computed placeholder count, every value bound.
+    // A fixed template with a computed count of `?` and every value bound.
     let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
     for id in &ids {
         q = q.bind(id);
@@ -2706,9 +2173,8 @@ async fn attach_telegram_edits(
     for row in q.fetch_all(pool).await? {
         let row_id: i64 = row.try_get("row_id")?;
         let row_id = row_id.to_string();
-        // The original version was sent when the message was sent; a later
-        // superseded version was current until the edit that replaced it, which is
-        // the date it carries.
+        // The original is dated by the message; later versions by the edit date
+        // they carried.
         let was: Option<i64> = row.try_get("was_edited_at")?;
         let sent_at: i64 = row.try_get("sent_at")?;
         let edit = MessageEdit {
@@ -2722,19 +2188,9 @@ async fn attach_telegram_edits(
     Ok(())
 }
 
-/// Where a search looks: everywhere, or inside one conversation.
-///
-/// ⚠ SCOPING IS NOT A FILTER APPLIED AFTERWARDS. Narrowing by fetching the
-/// global result and keeping the matching rows would be bounded by `limit`
-/// BEFORE the conversation is considered — a term that is common elsewhere and
-/// rare here would come back empty while the messages sat in the archive. The
-/// scope goes into the SQL, and the origins it cannot match are not queried at
-/// all.
-///
-/// ⚠ AND IT MAKES THE SLOW ORIGIN FAST. The global IRC search is a 10s scan
-/// of 3.7M rows because `LIKE '%term%'` cannot use an index (see below).
-/// `conversation_id` IS indexed, so a scoped search reads one conversation's
-/// rows instead of every row — the opposite of the usual "filtering costs extra".
+/// Where a search looks: everywhere, or inside one conversation. The scope is
+/// in the SQL, not a filter after `LIMIT`, and origins it cannot match are not
+/// queried.
 #[derive(Debug, Clone, Copy)]
 pub enum SearchScope<'a> {
     Everywhere,
@@ -2760,6 +2216,8 @@ impl SearchScope<'_> {
     }
 }
 
+/// Substring search across all origins, newest first. Retracted messages match;
+/// the reader hides them as a thread does.
 pub async fn search(
     pool: &MySqlPool,
     q: &str,
@@ -2769,10 +2227,7 @@ pub async fn search(
     let like = escape_like(q);
     let mut hits = Vec::new();
 
-    // ⚠ Two literals and a match, not a built string — the same shape
-    // `signal_messages` uses for its page direction, and for the same reason:
-    // the property being guarded (no interpolation anywhere) survives a reader
-    // checking it by eye. Repeated for each origin below.
+    // One literal per scope, not a built string; likewise for each origin below.
     let sql = if scope.id_for(Origin::Signal).is_some() {
         r"SELECT m.id AS id, m.thread_id AS cid, c.name AS cname, m.server_ts AS ts,
                  COALESCE(ct.display_name, m.sender_uuid) AS sender, m.body AS body,
@@ -2814,9 +2269,7 @@ pub async fn search(
             sender: r.try_get("sender")?,
             snippet: r.try_get::<Option<String>, _>("body")?.unwrap_or_default(),
             deleted: deleted != 0,
-            // Signal's native ts IS milliseconds, so this pair happens to equal
-            // the displayed `ts`. The other two do not, which is why the cursor
-            // is minted per-origin rather than once from `ts`.
+            // Signal's native unit is milliseconds, the same as `ts`.
             cursor: encode_cursor(ts, id),
         });
     }
@@ -2858,15 +2311,13 @@ pub async fn search(
                 .try_get::<Option<String>, _>("sender")?
                 .unwrap_or_default(),
             snippet: r.try_get::<Option<String>, _>("body")?.unwrap_or_default(),
-            deleted: false, // Google Chat's export records no retraction
-            // MICROSECONDS, deliberately unlike the `ts` above: two rows inside
-            // one millisecond are distinct here and identical there.
+            deleted: false, // not captured
+            // Microseconds, unlike `ts`.
             cursor: encode_cursor(ts_us, id),
         });
     }
 
-    // Telegram. Only what was said, as the list and the page do, and the id is
-    // numeric so the hit carries it as text the way the URL will.
+    // Telegram: only what was said.
     let sql = if scope.id_for(Origin::Telegram).is_some() {
         r"SELECT m.id AS id, m.conversation_id AS cid, t.name AS cname,
                  m.sent_at AS sent_at, m.sender_name AS sender, m.text AS body,
@@ -2887,9 +2338,8 @@ pub async fn search(
     let trows = if scope.covers(Origin::Telegram) {
         // dev-lint: allow-sqlx — `sql` is one of the two literals directly above.
         let mut q = sqlx::query(sql).bind(&like);
-        // ⚠ Bound as a STRING against a BIGINT column. MariaDB coerces it, and
-        // the id arrives from the URL as text; parsing it here would turn a
-        // malformed id into a 500 where the query simply matches nothing.
+        // Bound as a string against a BIGINT: a malformed id matches nothing
+        // rather than failing.
         if let Some(id) = scope.id_for(Origin::Telegram) {
             q = q.bind(id);
         }
@@ -2909,70 +2359,22 @@ pub async fn search(
             sender: r
                 .try_get::<Option<String>, _>("sender")?
                 .unwrap_or_default(),
-            // ⚠ The snippet is sent even for a retracted message, and the reader
-            // hides it — the archive-wide policy this repo settled on 2026-09-04.
-            // A search that cannot find what was retracted is not an archive's
-            // search.
             snippet: r.try_get::<Option<String>, _>("body")?.unwrap_or_default(),
             deleted: deleted != 0,
-            // SECONDS, matching what `telegram_messages` pages on. Minting this
-            // from `ts` would put milliseconds in a cursor the query compares
-            // against seconds, and every landing would miss.
+            // Seconds, as `telegram_messages` pages on.
             cursor: encode_cursor(sent_at, id),
         });
     }
 
-    // IRC. Searching only what was *said* — the same restriction the list and
-    // the page use. Joins, parts and server notices would otherwise dominate
-    // every result: 45% of the 3.69M lines (counted 2026-08-16), and they are
-    // the ones full of words like "connection" and "user" that somebody
-    // searching would actually type.
+    // IRC: messages and actions only. `LIKE '%term%'` cannot use an index, so
+    // the global form scans every line; the scoped form reads one conversation
+    // through the `conversation_id` index. Cost follows match density: `LIMIT`
+    // stops the scan early when matches are common.
     //
-    // ⚠ THE SUBSTRING SCAN MUST NOT BE JOINED TO, and this is the same trap
-    // the conversation list fell into. Written as one flat join, the optimizer
-    // drives from `irc_conversations` (315 rows) and reaches `irc_messages` by
-    // `ref` — 3.7M secondary-index entries, each followed by a primary-key
-    // lookup to read `text`, which is random I/O over a 502 MiB table behind a
-    // 128 MiB buffer pool. MEASURED 2026-08-14: 32.4s. Scanning
-    // `irc_messages` alone and joining the surviving 50 rows afterwards is
-    // 10.0s for a result set proved identical (same count, same id bounds).
-    //
-    // `is_status` therefore moves inside as a subquery against the small table,
-    // NOT to a filter after the join: applying it later would filter rows the
-    // `LIMIT` had already chosen, and a page would silently come back short.
-    //
-    // ⚠ 10s is still not fast, and no rewrite will fix that — `LIKE '%term%'`
-    // cannot use an index, so the floor is one pass over every row (a bare
-    // `SUM(LENGTH(text))` is already 7.5s). Going below it means a FULLTEXT
-    // index, which searches WORDS: `nix` would stop matching `nixos`. That is a
-    // decision about what search means rather than how it runs, so it is
-    // Pippijn's, and it is filed as #882.
-    //
-    // ⚠ SCOPED, THIS IS THE ONE THAT GETS DRAMATICALLY FASTER, which is the
-    // opposite of the usual "filtering costs extra". The global form is one pass
-    // over 3.7M rows because `LIKE '%term%'` cannot use an index;
-    // `conversation_id` IS indexed, so the scoped form reads one conversation's
-    // rows and does strictly less work than the query it refines.
-    //
-    // Measured 2026-09-21, `%kernel%`, LIMIT 50 (the 32.4s/10.0s pair above is
-    // from 2026-08-14 and is NOT today's baseline — the global form now runs in
-    // about 3.8s):
-    //
-    //     global, term present                  3,800ms
-    //     global, term absent                   3,857ms
-    //     scoped #c      (900,420 lines)           80ms
-    //     scoped #linux  (448,662 lines)          250ms
-    //     scoped #c, term absent  ← worst case   2,440ms
-    //
-    // ⚠ COST TRACKS MATCH DENSITY, NOT CONVERSATION SIZE, which is why the
-    // LARGEST conversation is the fastest: `LIMIT 50` is satisfied early when
-    // matches are common, and the scan stops. The worst case is therefore a big
-    // conversation where the term is ABSENT — every row read, nothing to stop
-    // early for — and even that is faster than the global search it replaces.
-    //
-    // The `is_status` exclusion stays even when scoped: it is cheap, and a
-    // reader who deep-links the status log should get the same nothing the list
-    // gives them rather than a search that quietly disagrees with the UI.
+    // The scan runs alone in a derived table and is joined afterwards. Joined
+    // directly, the optimizer drives from `irc_conversations` into random reads
+    // of `irc_messages`. `is_status` is a subquery inside, so it filters before
+    // `LIMIT` rather than shortening the page after it.
     let sql = if scope.id_for(Origin::Irc).is_some() {
         r"SELECT m.conversation_id AS cid, c.target AS cname,
                  TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) AS ts_s,
@@ -3007,8 +2409,7 @@ pub async fn search(
           LEFT JOIN irc_conversations c ON c.id = m.conversation_id
           ORDER BY m.sent_at DESC, m.id DESC"
     };
-    // ⚠ The scoped literal binds the id FIRST, matching the order its `?` appear
-    // in the statement rather than the order the other origins use.
+    // The scoped literal binds the id first, in the order of its `?`.
     let irows = if scope.covers(Origin::Irc) {
         // dev-lint: allow-sqlx — `sql` is one of the two literals directly above.
         let mut q = sqlx::query(sql);
@@ -3032,15 +2433,13 @@ pub async fn search(
                 .try_get::<Option<String>, _>("sender")?
                 .unwrap_or_default(),
             snippet: r.try_get::<Option<String>, _>("body")?.unwrap_or_default(),
-            deleted: false, // IRC has no retraction
-            // WHOLE SECONDS, the coarsest of the three: irssi's default format
-            // records none, so `id` is the real ordering inside a minute and a
-            // cursor without it addresses nothing.
+            deleted: false,
+            // Whole seconds; `id` orders lines within a minute.
             cursor: encode_cursor(ts_s, id),
         });
     }
 
-    hits.sort_by_key(|h| std::cmp::Reverse(h.ts)); // newest first
+    hits.sort_by_key(|h| std::cmp::Reverse(h.ts));
     hits.truncate(limit as usize);
     Ok(hits)
 }

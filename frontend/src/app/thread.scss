@@ -1,41 +1,24 @@
-// The Thread host is the right-hand pane and the scroll container (the shell's
-// grid places it; App owns the grid + mobile show/hide). Vertical padding lives
-// on the head/messages, not the host, so the sticky head pins flush to the top.
+// The Thread host is the right-hand pane and the scroll container. Vertical
+// padding is on the head and messages, so the sticky head pins flush to the top.
 :host {
-  // ⚠ A COLUMN, SO THE COMPOSER CAN SIT AT THE FOOT OF A SHORT CONVERSATION.
-  // `position: sticky; bottom: 0` alone does not do it: sticky only holds an
-  // element against an edge it would otherwise scroll past, so with less content
-  // than viewport the send box followed the last message and floated mid-screen.
-  // `margin-top: auto` on the composer claims the slack when there is any, and
-  // does nothing when there is not.
-  //
-  // ⚠ AND NOTHING MAY SHRINK — see `> *` below. A flex item's default is
-  // `flex-shrink: 1`, so when the thread overflows, every child gets compressed
-  // to fit: the two spacer divs standing in for collapsed messages lose the
-  // exact pixel heights the scroll windowing computed, and the day separators
-  // land over message text. That is what the multi-day scroll spec caught the
-  // first time this was written, as a 2px overlap — not a rounding artefact,
-  // a squashed layout.
+  // A column, so the composer's `margin-top: auto` puts it at the foot of a
+  // short conversation; sticky alone would float it under the last message.
+  // Nothing may shrink (see `> *`), or the spacers lose their computed heights.
   display: flex;
   flex-direction: column;
   height: 100%;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding: 0 1.5rem;
-  // We anchor the viewport ourselves when prepending/collapsing (thread.ts);
-  // the browser's native scroll-anchoring would compound with that.
+  // thread.ts anchors the viewport itself; native anchoring would compound it.
   overflow-anchor: none;
 
-  // Every child keeps the height it asked for. This is what makes the column
-  // above behave like the block layout it replaced, for everything except the
-  // composer's `margin-top: auto`.
   > * {
     flex: none;
   }
 }
 
-// Pinned so the conversation title stays visible even though we open scrolled to
-// the latest message. Opaque + above the day headers so messages scroll under it.
+// Pinned, so the title stays visible; opaque and above the day headers.
 .thread-head {
   position: sticky;
   top: 0;
@@ -43,13 +26,10 @@
   display: flex;
   align-items: center;
   gap: 0.25rem;
-  // Fixed, border-box height so the day headers can be offset just below it with
-  // a known clearance (they must never overlap the head — the overlap check
-  // treats two pinned/sticky elements sharing pixels as a stacked-header bug).
+  // A fixed height, so the day headers can sit just below it without overlap.
   height: 3rem;
   box-sizing: border-box;
-  // The theme surface (never a hardcoded fallback — `mat.theme` always defines
-  // the sys tokens, and they adapt to dark mode), so messages scroll under it.
+  // The theme's surface token, which adapts to dark mode.
   background: var(--mat-sys-surface);
   .back {
     display: none; // desktop: two-pane, no back needed
@@ -57,10 +37,7 @@
   h2 {
     margin: 0;
     font: var(--mat-sys-title-medium);
-    // ⚠ The title has to YIELD, now that a button sits after it. A long
-    // conversation name ("Saturday climbing & bouldering logistics crew") would
-    // otherwise push the search button off the right edge at phone width, where
-    // the head is already carrying a back arrow.
+    // The title yields, so a long name cannot push the buttons off a phone.
     flex: 1 1 auto;
     min-width: 0;
     overflow: hidden;
@@ -70,10 +47,8 @@
   .find {
     flex: 0 0 auto;
   }
-  // The date control sits before the search button and pushes both to the right.
-  // ⚠ The native input is kept NARROW and unstyled-by-default: at its intrinsic
-  // width it is about 130px, which at 412px leaves a long conversation name no
-  // room at all and was the first thing the phone render showed.
+  // The date control, before the search button. Kept narrow: at its intrinsic
+  // width it leaves a long title no room on a phone.
   .go-to-date {
     flex: 0 0 auto;
     margin-left: auto;
@@ -82,16 +57,14 @@
     gap: 0.15rem;
     cursor: pointer;
     input[type='date'] {
-      // Wide enough for the picker affordance, not for the whole dd/mm/yyyy.
       width: 1.6rem;
       border: 0;
       background: none;
       color: transparent;
       font: inherit;
       cursor: pointer;
-      // Firefox and Safari draw their own indicator; Chromium's is the only one
-      // that can be targeted, and hiding the TEXT while keeping the indicator is
-      // what makes the control icon-sized.
+      // Hide the text and keep Chromium's picker indicator, making the control
+      // icon-sized; Firefox and Safari draw their own.
       &::-webkit-datetime-edit,
       &::-webkit-inner-spin-button,
       &::-webkit-clear-button {
@@ -106,34 +79,23 @@
   }
 }
 
-// Telegram's formatting runs. Only the kinds the archive actually holds get a
-// rule; anything else renders as an unstyled span, which is the point — Telegram
-// adds entity kinds faster than this reader learns them and an unknown one must
-// look like plain text rather than disappear.
+// Telegram formatting runs. Kinds without a rule render as plain text.
 .body {
   .fmt-bold { font-weight: 600; }
   .fmt-italic { font-style: italic; }
   .fmt-strike { text-decoration: line-through; }
   .fmt-underline { text-decoration: underline; }
-  // ⚠ FAMILY ONLY — no ad-hoc size. A monospace face at the body's own size is
-  // what `code` means here; inventing `0.92em` puts a type size outside the M3
-  // scale, which dev-lint refuses (DL-SCSS-ADHOC-FONT-SIZE) and which drifts
-  // from every other size in the app the moment the scale changes.
+  // Family only: sizes come from the M3 scale (DL-SCSS-ADHOC-FONT-SIZE).
   .fmt-code,
   .fmt-pre {
     font-family: ui-monospace, monospace;
   }
-  // ⚠ A spoiler is HIDDEN UNTIL ASKED FOR, because that is what the sender chose
-  // — rendering it plainly would show something meant to be covered, which is
-  // the same mistake as printing a retracted message's words.
+  // Hidden until asked for, as the sender chose.
   .fmt-spoiler {
     border-radius: 0.2em;
     cursor: pointer;
-    // ⚠ NOT `currentColor`. It resolves to this element's own `color`, which
-    // the next rule sets to `transparent` — so the cover went transparent with
-    // the text and the spoiler rendered as an invisible GAP. Worse than showing
-    // it: the reader cannot tell anything is hidden. Caught by looking at the
-    // render; both the test and the markup were correct.
+    // Not `currentColor`, which the next rule makes transparent: the cover
+    // would vanish with the text.
     background: var(--mat-sys-on-surface);
     &:not(:hover):not(:focus) {
       color: transparent;
@@ -151,9 +113,8 @@
   white-space: nowrap;
 }
 
-// Searching inside the open conversation. Sits under the sticky head and above
-// the messages, so the thread stays where it was and comes back unchanged when
-// the panel closes.
+// In-thread search, between the sticky head and the messages; the thread stays
+// in place behind it.
 .thread-search {
   position: sticky;
   top: 3rem; // exactly the head's height, so the two never overlap
@@ -163,8 +124,7 @@
   mat-form-field {
     width: 100%;
   }
-  // The hit list is bounded and scrolls on its own: unbounded, a common word in
-  // a 14,000-message conversation pushes the thread entirely off screen.
+  // Bounded, so a common word cannot push the thread off screen.
   mat-action-list {
     max-height: 50vh;
     overflow-y: auto;
@@ -173,8 +133,7 @@
     opacity: 0.6;
     padding: 0 0.5rem 0.5rem;
   }
-  // A retracted hit reads as one, the same italic-and-dimmed the list and the
-  // thread body use for the same thing.
+  // A retracted hit, styled as elsewhere.
   .deleted {
     font-style: italic;
     opacity: 0.7;
@@ -194,9 +153,8 @@
   padding: 0.25rem 0;
 }
 
-// Each day is its own section, so its sticky header pins ONLY within that day's
-// messages and is replaced by the next day's header — the "current top message's
-// date" behaviour, with no stacking. Offset below the pinned head.
+// Each day is a section, so its sticky header pins only within that day and
+// is replaced by the next. Offset below the pinned head.
 .day {
   position: sticky;
   top: 3.25rem;
@@ -204,7 +162,7 @@
   text-align: center;
   margin: 0.5rem 0;
   pointer-events: none; // a floating label; let clicks reach messages beneath
-  // Furniture, not content — see `.meta` below.
+  // Furniture, not content; see `.meta`.
   user-select: none;
 
   span {
@@ -223,27 +181,12 @@
   padding: 0.4rem 0.6rem;
   border-radius: 0.5rem;
   background: color-mix(in srgb, var(--mat-sys-on-surface) 5%, transparent);
-  // NB no `content-visibility: auto` here: the window is capped (thread.ts), so
-  // the bubbles are cheap to render in full. content-visibility would render
-  // off-screen rows at a GUESSED height and resize them to real when scrolled
-  // into view — and with native scroll-anchoring disabled that resize shifts the
-  // viewport (the "history jumps as you scroll up" bug).
+  // No `content-visibility: auto`: it renders off-screen rows at a guessed
+  // height, and the resize on scroll would shift the viewport.
 
-  // The message a search hit put the reader on.
-  //
-  // ⚠ Landing on it is not the same as showing which one. `scrollToTs`
-  // puts the hit flush under the sticky header and, unmarked, it looks exactly
-  // like its neighbours — measured against a 2013 hit in #netchat, where a
-  // dozen lines share the minute and the reader has to work out which one they
-  // came for.
-  //
-  // A left rule plus a wash, not a background swap: `.out` already owns the
-  // background to say who spoke, and overriding it here would trade one fact
-  // for another. This composes with both.
-  //
-  // It does not fade on a timer. The marker's whole meaning is "this is where
-  // you were put", which stays true until the reader moves — `commitFromParam`
-  // clears it on the first scroll, the same moment `?at` goes.
+  // The message a landing put the reader on, marked so it can be told from its
+  // neighbours. A rule and a wash, since `.out` owns the background. Cleared on
+  // the first scroll.
   &.landed {
     box-shadow: inset 0.2rem 0 0 var(--mat-sys-primary);
     background: color-mix(in srgb, var(--mat-sys-primary) 12%, transparent);
@@ -253,12 +196,8 @@
     margin-left: auto;
     background: color-mix(in srgb, var(--mat-sys-primary) 15%, transparent);
   }
-  // ⚠ The nick and clock are FURNITURE here, and the copy path is why.
-  // Selecting inside one message hands the browser's own copy through
-  // untouched (thread.ts), so anything selectable is what a one-message copy
-  // yields — and "pippijn 14:32" pasted above the sentence is not what anyone
-  // asked for. Across two or more messages we rebuild the line from the model,
-  // where the same fields come back in irssi's order.
+  // Nick and clock are unselectable, so a copy inside one message is just its
+  // text; across messages thread.ts rebuilds lines from the model.
   .meta {
     font: var(--mat-sys-label-small);
     opacity: 0.7;
@@ -267,17 +206,8 @@
     flex-wrap: wrap;
     user-select: none;
   }
-  // What a message was a reply to, drawn as a quote above it.
-  //
-  // ⚠ It must not compete with the message. A quote that reads as loudly as
-  // the body turns every reply into two messages and doubles the height of a
-  // thread — 18% of the Telegram archive carries one. Hence the muted colour, the
-  // single clipped line, and the left rule doing the work a border box would do
-  // more heavily.
-  //
-  // The rule is on the LEFT in both directions, including `.out`. Mirroring it
-  // for outgoing messages was tried and reads as a different kind of thing
-  // rather than the same thing from the other side.
+  // What a message replied to, as a quiet one-line quote above it. The rule is
+  // on the left in both directions.
   .reply-quote {
     display: flex;
     gap: 0.4rem;
@@ -294,43 +224,21 @@
     opacity: 0.75;
     overflow: hidden;
 
-    // ⚠ `min-width: 0`, or the quote drags the bubble off the screen. A
-    // message is a flex ITEM, so its automatic minimum size is its MIN-CONTENT
-    // width — and a `white-space: nowrap` descendant makes that the whole
-    // string. That minimum BEATS the `max-width: 70%` above it, so a 120-character
-    // excerpt pushed the bubble 258px past the right edge of a 412px phone,
-    // taking the body, the meta line and the attachment row with it. The clipping
-    // looked right in the source and did nothing: there was no narrower width for
-    // the text to be clipped TO.
-    //
-    // So the nowrap lives on the clipped children, each of which opts out of the
-    // minimum in turn. Found by the layout harness, not by reading it.
+    // `min-width: 0`: a flex item's minimum is its min-content width, and the
+    // nowrap children would push the bubble off the screen. The nowrap is on the
+    // children, which opt out of the minimum in turn.
     min-width: 0;
 
-    // One line, clipped. A quote is an identifier, not a copy of what it names.
+    // One line, clipped.
     %clipped-line {
       min-width: 0;
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
     }
-    // ⚠ NEITHER HALF GROWS. With `flex-grow` on the excerpt, a SHORT quote
-    // spread itself across the bubble and pushed what follows it — the date on an
-    // unresolved quote — hard against the right edge, reading as a separate
-    // right-aligned column rather than as part of the same sentence.
-    //
-    // ⚠ AND THE NAME DOES NOT SHRINK EITHER — a cap, not a shrink factor.
-    // Flex distributes shrinkage in proportion to base size, which sounds like it
-    // would spare a short name beside a long excerpt and does not: a 95px name
-    // against a 700px excerpt still surrenders its proportional share, and
-    // "Alice Andersson" rendered as "Alice …" while the excerpt beside it kept
-    // nearly every word. That is backwards — the name is the half that IDENTIFIES
-    // the message, and the excerpt is the half a reader can afford to lose the
-    // end of. Seen in a render; it looked correct in the rule.
-    //
-    // So the excerpt absorbs all of it, and `max-width` — not shrinking — is what
-    // stops an absurd name from claiming the line. An ordinary one never reaches
-    // the cap.
+    // Neither half grows, so a short quote does not spread across the bubble.
+    // The name does not shrink either: it identifies the message, so the excerpt
+    // absorbs the squeeze and `max-width` caps an absurd name.
     .who {
       @extend %clipped-line;
       flex: 0 0 auto;
@@ -346,8 +254,7 @@
       }
     }
 
-    // Clickable only when the archive holds the target; `.missing` is the same
-    // quote with nothing to go to, so it gets no pointer and no hover.
+    // Clickable only when the archive holds the target.
     &:not(.missing) {
       cursor: pointer;
       &:hover,
@@ -369,24 +276,15 @@
   .tag {
     font-style: italic;
   }
-  // How far it got, on your own messages only. Quieter than `edited` and
-  // `deleted`: those mark something that HAPPENED to the message, this is ambient
-  // status and sits on nearly every outgoing bubble once a conversation is active.
-  //
-  // ⚠ Named for the field rather than for `read`, which it was called while
-  // Telegram was the only origin that could fill it. Signal reports `sent` and
-  // `delivered` through the same tag, and a rule called `.read` styling the word
-  // "sent" is the kind of drift nobody reads twice.
+  // How far an outgoing message got; quieter than `edited` and `deleted`.
   .tag.delivery {
     font-style: normal;
     &.unread {
       opacity: 0.55;
     }
   }
-  // The `edited` tag when there is a history behind it. Styled as the tag it
-  // replaces rather than as a button, because it sits in the meta line among the
-  // nick and the clock — the dotted underline is the whole affordance, the same
-  // one a revealed deletion uses.
+  // `edited` with a history behind it: a tag with a dotted underline, like a
+  // revealed deletion.
   button.tag.history-toggle {
     background: none;
     border: 0;
@@ -398,8 +296,7 @@
     text-decoration: underline dotted;
     text-underline-offset: 0.2em;
   }
-  // What it said before: indented under the meta line, quieter than the current
-  // text, and above it — see the template for why that order.
+  // Earlier versions, indented under the meta line and quieter than the text.
   .edit-history {
     margin: 0.15rem 0 0.25rem;
     padding-left: 0.5rem;
@@ -421,14 +318,8 @@
       word-break: break-word;
     }
   }
-  // Real <button>s, so revealing a retraction is keyboard-reachable and
-  // announced rather than a click target that only a mouse can find. Styled to
-  // sit exactly where the text would: the message keeps its place in the thread
-  // whether or not you choose to read it.
-  // ⚠ The dotted underline is the whole affordance. Without it `(deleted)` is
-  // indistinguishable from the plain placeholder it used to be, and nobody
-  // learns there is anything to click — found by looking at the render, which
-  // no assertion about the DOM was ever going to say.
+  // Real buttons, so revealing a retraction works from the keyboard, placed
+  // where the text would be. The dotted underline is the affordance.
   .body.reveal {
     text-decoration: underline dotted;
     text-underline-offset: 0.2em;
@@ -449,18 +340,8 @@
     opacity: 0.7;
     margin-top: 0.3rem;
   }
-  // A picture we hold for a LINK somebody posted, as opposed to a file that came
-  // with the message. It reads as a quotation rather than as content: a hairline
-  // says the thing lives somewhere else and the bubble is showing a copy. The
-  // anchor around it goes to the original, so provenance is one click away
-  // without a caption competing with the conversation.
-  // The control that offers to fetch a picture, and the note that one is on its
-  // way. Deliberately quiet: most links in a conversation are not pictures, so
-  // this sits under the line rather than competing with it.
-  /* An attachment the archive has NOT fetched, offered for the asking. Styled as
-     the link offer is — a dotted underline rather than a filled button — because
-     both are the same act: the archive saying "this exists, shall I get it?"
-     rather than a control that does something to the conversation. */
+  // An unfetched attachment offered for the asking, styled like the link offer:
+  // both ask "this exists; shall I get it?".
   .fetch-offer {
     display: inline-flex;
     align-items: center;
@@ -475,6 +356,7 @@
     text-underline-offset: 0.2em;
   }
 
+  // Offers to fetch a link's picture; quiet, since most links are not pictures.
   .link-offer {
     margin-top: 0.3rem;
     font: var(--mat-sys-label-medium);
@@ -496,6 +378,8 @@
     }
   }
 
+  // A picture held for a link, drawn as a quotation; the anchor goes to the
+  // original.
   .attach.link-image img {
     outline: 1px solid var(--mat-sys-outline-variant);
     outline-offset: 2px;
@@ -527,7 +411,7 @@
   }
   .reactions {
     margin-top: 0.25rem;
-    // Nobody said "👍 2". Furniture — see `.meta`.
+    // Furniture; see `.meta`.
     user-select: none;
     .chip {
       font: var(--mat-sys-label-medium);
@@ -536,9 +420,7 @@
       padding: 0 0.4rem;
       margin-right: 0.25rem;
 
-      // A chip the archive can put names to says so by being askable. Only a
-      // cursor, deliberately: who reacted is worth a hover and not worth a
-      // second row of text under every message that has one.
+      // A chip with names shows them on hover; the cursor hints at it.
       &.named {
         cursor: help;
       }
@@ -559,18 +441,14 @@
   }
 }
 
-// The composer sits at the foot of the scroll container and stays there while
-// the thread scrolls under it, mirroring `.thread-head` at the top. Sticky
-// rather than fixed: the host is the scroll container, so fixed would pin it to
-// the viewport and float it over the conversation list on desktop.
+// The composer stays at the foot of the scroll container, mirroring
+// `.thread-head`. Sticky, not fixed: fixed would float it over the list on
+// desktop.
 .composer {
   position: sticky;
   bottom: 0;
   z-index: 3;
-  // Claims the slack in the host's column when the conversation is shorter than
-  // the pane, which is what puts the box at the bottom of the screen rather than
-  // directly under the last message. Does nothing once the thread overflows,
-  // where sticky takes over.
+  // Takes the slack in a short conversation; sticky takes over once it overflows.
   margin-top: auto;
   display: flex;
   align-items: center;
@@ -579,8 +457,8 @@
   background: var(--mat-sys-surface);
   input {
     flex: 1;
-    // min-width: 0 so a long draft shrinks the field instead of pushing the
-    // send button off the edge — a flex item's default min-width is its content.
+    // A flex item's minimum is its content, so a long draft would push the
+    // button off.
     min-width: 0;
     font: var(--mat-sys-body-medium);
     color: var(--mat-sys-on-surface);
@@ -595,8 +473,8 @@
   }
 }
 
-// Carries both the far side's refusal and the "sent, not yet archived" note, so
-// it must not be styled as an error — one of the two messages is good news.
+// Both a refusal and the "sent, not yet archived" note, so not styled as an
+// error.
 .send-error {
   position: sticky;
   bottom: 0;

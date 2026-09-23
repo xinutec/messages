@@ -1,42 +1,23 @@
 //! Deciding, from a fetched page alone, whether a link in a message is a
 //! picture we can serve ourselves.
 //!
-//! ⚠ NOTHING HERE KNOWS A HOST, A PATH OR A PRODUCT URL. The rule is that a
-//! server which can be inlined says so itself, in the response:
-//!
-//!   * it NAMES ITS PRODUCT in the cookies it sets — Nextcloud and ownCloud set
-//!     `nc_sameSiteCookie{lax,strict}` and `oc_sessionPassphrase` on any page,
-//!     whatever the install is called or which sub-path it lives under;
-//!   * it NAMES ITS PICTURE in OpenGraph — `og:image` with an `og:image:type`,
-//!     which is the share page telling any client where the rendering is.
-//!
-//! So a share link resolves in two plain GETs and no browser: fetch the page,
-//! read what it says about itself, fetch the image it named. Measured against a
-//! live Nextcloud 34.0.3 on 2026-09-11: the page is 30 KB of HTML carrying the
-//! six `og:` tags in `tests/link_image_share.html`, and the advertised image
-//! answers `200 image/jpeg`, 412,697 bytes.
-//!
-//! The same-origin requirement below is the whole of the trust model: we fetch
-//! the image the page pointed at ONLY when it sits on the server that pointed at
-//! it, so a page cannot use us to fetch somewhere else.
+//! Nothing here knows a host, path or product URL. An inlineable server says so
+//! itself: it names its product in the cookies it sets (Nextcloud and ownCloud
+//! set `nc_sameSiteCookie{lax,strict}` and `oc_sessionPassphrase`), and names
+//! its picture in OpenGraph (`og:image`, `og:image:type`). So a share link
+//! resolves in two GETs: the page, then the image it names, and only if that
+//! image is on the same origin as the page.
 
 use url::Url;
 
 /// Which reader made a decision.
 ///
-/// ⚠ A VERDICT IS ONLY AS GOOD AS THE READER THAT MADE IT, and storing one
-/// without saying which reader made it makes a bug permanent. On 2026-09-11
-/// this reader fetched `…?x=1024&amp;y=1024&amp;token=…` literally, so the
-/// server saw parameters named `amp;token`, answered 404, and the link was
-/// recorded "not a picture" for ever — the control disappeared from the
-/// conversation and no amount of fixing the bug brought it back.
-///
-/// Bump this whenever what counts as a picture changes. Decisions made by an
+/// Bump this whenever what counts as a picture changes: decisions made by an
 /// older reader are offered again rather than believed.
 pub const READER_VERSION: i32 = 2;
 
-/// What is known about a link. A closed set, and the table's enum is its
-/// spelling: `offered` before anyone asks, and one of the three verdicts after.
+/// What is known about a link, spelled as the table's enum: `offered` before
+/// anyone asks, then one of three verdicts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkState {
     /// Registered from a message, with nothing fetched.
@@ -73,17 +54,13 @@ impl LinkState {
 
 /// Whether a link may still be asked for.
 ///
-/// ⚠ ONE PREDICATE, BECAUSE TWO WOULD DRIFT. Serving a page uses it to
-/// decide whether to draw a control, and the request endpoint uses it to decide
-/// whether a hash resolves to an address. If they disagree by so much as a state,
-/// the reader gets a button that answers 404 — which is exactly what a first cut
-/// of this did, offering rows the request path refused.
+/// Serving a page and the request endpoint both use this, so a control is never
+/// drawn for a link that cannot be requested.
 ///
 ///   * `offered` — registered, never asked about
-///   * `failed`  — the far side was unreachable, which is a fact about that
-///     afternoon rather than about the link
-///   * anything decided by an OLDER reader — see `READER_VERSION`
-///   * never `ok`: we hold the picture, so there is nothing to ask
+///   * `failed`  — unreachable at the time, not a verdict on the link
+///   * anything decided by an older reader; see `READER_VERSION`
+///   * never `ok`: the picture is held
 pub fn askable(state: LinkState, decided_by: Option<i32>) -> bool {
     match state {
         LinkState::Ok => false,
@@ -99,27 +76,19 @@ pub struct Advert {
     pub cloud: bool,
     /// `og:image`, kept only when same-origin with the page that named it.
     pub image: Option<Url>,
-    /// `og:image:type`, when given — the page's own word for what it is.
+    /// `og:image:type`, when given.
     pub image_type: Option<String>,
 }
 
 impl Advert {
-    /// Inlineable when the server named itself AND named a picture. Both, because
-    /// `og:image` alone is on half the web and says nothing about whether the
-    /// thing behind it is a file share we may read.
+    /// Inlineable when the server named itself and named a picture; `og:image`
+    /// alone is on half the web.
     pub fn is_inlineable_image(&self) -> bool {
         self.refusal().is_none()
     }
 
-    /// Why this page is not an inlineable picture, in the words of what was
-    /// missing.
-    ///
-    /// ⚠ A REFUSAL WITH NO REASON BECOMES PERMANENT AND UNEXPLAINABLE. That
-    /// sentence was already in this codebase, about the failure path, and was not
-    /// applied to the refusal that actually fires: a link decided "not a picture"
-    /// was stored with a NULL note, so when the verdict was wrong — a URL this
-    /// reader had mangled itself, 2026-09-11 — the control vanished from the
-    /// conversation and nothing anywhere could say why.
+    /// Why this page is not an inlineable picture, stored with the verdict so a
+    /// wrong one can be explained.
     pub fn refusal(&self) -> Option<&'static str> {
         if !self.cloud {
             return Some("the server does not name itself as a file cloud");
@@ -138,9 +107,7 @@ impl Advert {
     }
 }
 
-/// Cookie names a file cloud sets on any page it serves. Names, not paths: an
-/// install answers on whatever host and sub-path its owner chose, and none of
-/// that reaches here.
+/// Cookie names a file cloud sets on any page, whatever its host and path.
 fn names_a_file_cloud(cookie_name: &str) -> bool {
     cookie_name.starts_with("nc_sameSiteCookie") || cookie_name == "oc_sessionPassphrase"
 }
@@ -160,10 +127,7 @@ pub fn read_advert<'a>(
     let cloud = set_cookies.map(cookie_name).any(names_a_file_cloud);
     let image = meta_property(html, "og:image")
         .and_then(|v| Url::parse(&v).ok())
-        // ⚠ Same origin as the page that advertised it, or we are not fetching
-        // it. Without this a page could name any address at all and we would
-        // dutifully go there — the whole point of fetching server-side is that
-        // the server chooses where it goes.
+        // Same origin as the page that named it, or not fetched.
         .filter(|img| same_origin(img, page));
     Advert {
         cloud,
@@ -181,9 +145,8 @@ fn same_origin(a: &Url, b: &Url) -> bool {
 /// The `content` of `<meta property="NAME" …>`, whichever order the attributes
 /// come in and whichever quote the writer used.
 ///
-/// Hand-rolled rather than a parser dependency: this reads two tags out of a
-/// head, and a tolerant scan is honest about that. It does NOT understand HTML —
-/// it finds `<meta` and reads that tag's attributes to the closing `>`.
+/// A tolerant scan, not an HTML parser: it finds `<meta` and reads that tag's
+/// attributes.
 fn meta_property(html: &str, property: &str) -> Option<String> {
     let mut rest = html;
     while let Some(at) = rest.find("<meta") {
@@ -203,19 +166,9 @@ fn meta_property(html: &str, property: &str) -> Option<String> {
 
 /// The five entities an HTML attribute may carry, decoded.
 ///
-/// ⚠ `&amp;` IS THE WHOLE OF WHY THIS EXISTS, and it cost a wrong verdict.
-/// An `og:image` with a query string arrives as
-/// `…/preview?x=1024&amp;y=1024&amp;token=…`, because that is how an attribute
-/// spells an ampersand. Fetched raw, the server reads parameters called `amp;y`
-/// and `amp;token`, the token never arrives, and it answers 404 — so the fetcher
-/// concluded "not a picture" about a URL it had mangled itself. Measured
-/// 2026-09-11 against a live Nextcloud: raw → 404 application/json, decoded →
-/// 200 image/jpeg.
-///
-/// Hand-rolled like the rest of this reader, and the list is short because an
-/// attribute value cannot contain a raw `<` or `&`: these five are what a
-/// conforming writer emits, and anything else is left alone rather than guessed
-/// at.
+/// An `og:image` URL arrives as `…?x=1024&amp;y=1024&amp;token=…`; fetched
+/// undecoded, the server never sees the token. A conforming writer emits only
+/// these five; anything else is left alone.
 fn decode_entities(raw: &str) -> String {
     if !raw.contains('&') {
         return raw.to_owned();
@@ -250,9 +203,7 @@ fn attr(tag: &str, name: &str) -> Option<String> {
 
 /// Every http(s) URL in a line of message text.
 ///
-/// ⚠ Trailing punctuation is NOT part of a link. People write "look at
-/// https://host/x." and a naive scan keeps the full stop, which turns a good
-/// link into a 404 — and a 404 here is indistinguishable from "not a picture".
+/// Trailing punctuation is not part of a link.
 pub fn urls_in(text: &str) -> Vec<Url> {
     let mut out = Vec::new();
     for word in text.split_whitespace() {

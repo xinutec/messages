@@ -4,14 +4,10 @@
       <mat-icon>arrow_back</mat-icon>
     </button>
     <h2>{{ headTitle() }}</h2>
-    <!-- ⚠ Here rather than as a scope toggle on the shell's search box, because
-         that box is DISPLAY:NONE at phone width whenever a conversation is open
-         (app.scss) — the one moment searching this conversation is what you
-         want is the one moment it is off screen. -->
-    <!-- ⚠ A NATIVE date input, not a Material datepicker: it needs no date
-         adapter and no extra dependency, and on a phone it opens the OS picker
-         the reader already knows. Labelled rather than placeholdered — an empty
-         `type=date` renders as `dd/mm/yyyy` with no hint of what it jumps to. -->
+    <!-- Its own search, since the shell's box is hidden at phone width while a
+         conversation is open (app.scss). -->
+    <!-- A native date input: no adapter, and the phone's own picker. Labelled, since an
+         empty `type=date` shows only `dd/mm/yyyy`. -->
     <label class="go-to-date">
       <mat-icon aria-hidden="true">event</mat-icon>
       <span class="sr-only">Jump to a date</span>
@@ -38,21 +34,17 @@
       }
       @if (searchHits(); as hits) {
         <mat-action-list>
-          <!-- Tracked by index for the reason app.html gives: nothing in a hit is
-               unique, and this list is replaced wholesale by each search. -->
+          <!-- Tracked by index; see app.html. -->
           @for (h of hits; track $index) {
             <button mat-list-item lines="2" (click)="openHit(h)">
-              <!-- ⚠ A retraction is FOUND without being spelled out, the same
-                   rule the global result list follows: search matches text its
-                   sender withdrew, and printing it here hands it over unasked. -->
+              <!-- A retracted hit shows who and when, not the words. -->
               <span matListItemTitle [class.deleted]="h.deleted"
                 >{{ h.sender }}: {{ h.deleted ? '(deleted)' : h.snippet }}</span
               >
               <span matListItemLine>{{ h.ts | date: 'medium' }}</span>
             </button>
           } @empty {
-            <!-- Only when the search actually RAN. "No matches" is a claim about
-                 this conversation; a failed request must not be able to make it. -->
+            <!-- Only when the search ran: "No matches" is a claim. -->
             @if (searchFailed()) {
               <p class="error">Couldn't search. <button mat-button (click)="runThreadSearch()">Retry</button></p>
             } @else if (!searchBusy()) {
@@ -73,8 +65,7 @@
     @if (loadingOlder()) {
       <div class="loading-older"><mat-progress-bar mode="indeterminate" /></div>
     }
-    <!-- Stands in for older messages collapsed out of the DOM (see thread.ts);
-         a height-only box that keeps the scrollbar geometry roughly right. -->
+    <!-- Stands in for older messages collapsed out of the DOM (see thread.ts). -->
     <div [style.height.px]="topSpacer()"></div>
 
     <div class="messages" #messagesEl>
@@ -86,11 +77,7 @@
               <div class="meta">
                 <span>{{ m.sender }}</span>
                 <span>{{ m.ts | date: 'shortTime' }}</span>
-                <!-- ⚠ The tag is the WAY IN, not decoration. An edit is a
-                     separate row in the archive, so every version is held; what
-                     the reader sees is the current text, and this is how they
-                     ask what it said before. A plain tag would say a change
-                     happened and then refuse to show it. -->
+                <!-- The tag opens the earlier versions. -->
                 @if (m.edited) {
                   @if (m.edits.length) {
                     <button type="button" class="tag history-toggle" (click)="toggleHistory(m.id)"
@@ -101,36 +88,20 @@
                     <span class="tag">edited</span>
                   }
                 }
-                <!-- Only once revealed. While hidden the body already says
-                     `(deleted)` and a tag beside it is the same word twice; once
-                     the text is showing, this is what stops a retraction reading
-                     as an ordinary line. -->
+                <!-- Only once revealed; while hidden the body already says `(deleted)`. -->
                 @if (m.deleted && isRevealed(m.id)) {
                   <span class="tag">deleted</span>
                 }
-                <!-- ⚠ Drawn only when the archive can actually SAY. `delivery` is
-                     null for every incoming message, for Google Chat and IRC
-                     entirely, and for anything sent before capture began —
-                     Telegram's marks start 2026-09-17, Signal's receipts
-                     2026-09-18, and neither service keeps a history to go back
-                     for. A tick is a claim about somebody else's behaviour, and
-                     this one is never guessed.
-                     The title names who and when, which only Signal records. -->
+                <!-- Only when the archive can say; `delivery` is null otherwise. The title names
+                     who and when, which only Signal records. -->
                 @if (m.delivery; as d) {
                   <span class="tag delivery" [class.unread]="deliveryPending(d)"
                         [title]="readers(d)">{{ deliveryLabel(d) }}</span>
                 }
               </div>
-              <!-- What this message answered. Drawn ABOVE the body and above the
-                   deletion gate, because "this was a reply" stays true of a
-                   message whose words were withdrawn — it is the shape of the
-                   conversation, not its content.
-
-                   ⚠ Only clickable when the archive HOLDS the target. Signal
-                   quotes by timestamp and Telegram by an id the backfill may not
-                   have reached, so an unresolved quote is a real and ordinary
-                   outcome; it renders as plain text rather than a control that
-                   would go nowhere. -->
+              <!-- What this message replied to, above the body and outside the deletion gate:
+                   being a reply is not content. Clickable only when the archive holds the
+                   target. -->
               @if (m.reply_to; as r) {
                 @if (r.id) {
                   <button type="button" class="reply-quote" (click)="jumpToReply(r)"
@@ -147,19 +118,12 @@
                   </div>
                 }
               }
-              <!-- ⚠ A DELETION HIDES THE PICTURES TOO. Until 2026-09-03 the
-                   attachment loop was not gated on `m.deleted`, so a deleted
-                   message read `(deleted)` where its words had been and drew its
-                   images in full underneath — 17 of them, across the archive,
-                   with the bytes still on the PVC. Whatever a deletion meant, it
-                   did not mean that. Both halves sit behind the one control. -->
+              <!-- A deletion hides the pictures too; both sit behind the one control. -->
               @if (m.deleted && !isRevealed(m.id)) {
                 <button type="button" class="body deleted reveal" (click)="toggleReveal(m.id)"
                         aria-label="Show this deleted message">(deleted)</button>
               } @else {
-                <!-- Oldest first, above the current text, because that is the
-                     order they were written in and the last thing the eye should
-                     land on is what the message says NOW. -->
+                <!-- Oldest first, so the current text is last. -->
                 @if (isHistoryOpen(m.id)) {
                   <div class="edit-history">
                     @for (e of m.edits; track e.ts) {
@@ -171,34 +135,18 @@
                   </div>
                 }
                 @if (m.body) {
-                  <!-- An action is written in the third person about its sender,
-                       so every IRC client draws it `* nick waves`. The star is
-                       the client's, not the text's — the backend sends the words
-                       alone and `kind` says which they are.
-
-                       interpolation flush with the tags: white-space:pre-wrap
-                       would otherwise render the template indent as a leading space -->
-                  <!-- ⚠ SPANS FROM SLICES, never innerHTML. Every character comes
-                       from `body`; an entity only says where a run starts and what
-                       kind it is, so nothing a sender writes can become markup. A
-                       link's address goes through `[href]`, which Angular
-                       sanitises. An unrecognised kind falls through to a plain
-                       span — Telegram adds entity kinds faster than this archive
-                       learns them, and an unknown one must not blank the message.
-                       ⚠ Interpolation flush with the tags: the template's own
-                       indentation would otherwise render as spaces inside the
-                       message, which is the trap the reply excerpt documents. -->
+                  <!-- An action renders as `* nick waves`; the star is the client's. Interpolation
+                       is flush with the tags, since pre-wrap would show the template's indent. -->
+                  <!-- Spans from slices, never innerHTML: the text comes from `body`, a link's
+                       address goes through the sanitising `[href]`, and an unknown kind is a plain
+                       span. Flush with the tags, as above. -->
                   <div class="body" [class.deleted]="m.deleted"
                     >@if (m.kind === 'action') {<span>* </span>}@for (seg of segments(m); track $index) {@if (hrefOf(seg); as href) {<a
                         [href]="href" target="_blank" rel="noopener noreferrer"
                         >{{ seg.text }}</a>} @else {<span [class]="'fmt-' + seg.kind">{{ seg.text }}</span>}}</div>
                 }
-              <!-- A picture somebody linked, fetched by us and served from our
-                   side — never an <img> pointed at the other server, which would
-                   announce every reader to it on every render. The link stays
-                   underneath: the reader can still go and see whose it is.
-                   Absent until the fetch job has decided about the link, so a
-                   message that arrived a moment ago simply shows its link. -->
+              <!-- A picture somebody linked, served by us so the reader never contacts the other
+                   server; the link underneath goes to the original. -->
               @for (li of m.link_images; track li.id) {
                 <div class="attach link-image">
                   <a [href]="li.url" target="_blank" rel="noopener noreferrer">
@@ -206,10 +154,7 @@
                   </a>
                 </div>
               }
-              <!-- ⚠ AN OFFER, NOT A PICTURE. Opening a conversation does not
-                   fetch anything: it only says which links we could fetch. The
-                   reader asks, a scheduled job with its own way out of the
-                   cluster does the fetching, and the picture arrives here. -->
+              <!-- An offer: the reader asks, and the fetch service fetches. -->
               @for (o of m.link_offers; track o.id) {
                 <div class="link-offer">
                   @if (isAsking(o.id)) {
@@ -221,11 +166,7 @@
               }
               @for (a of m.attachments; track a.id) {
                 <div class="attach">
-                  <!-- The name comes from `attachment.ts`, which `copy-log.ts`
-                       also uses: the screen and the clipboard called a nameless
-                       unavailable image two different things while each worked
-                       it out for itself. The icon says what kind of thing it
-                       is, so only the name is printed here. -->
+                  <!-- Named by `attachment.ts`, as the clipboard names it; the icon gives the kind. -->
                   @if (a.available && a.is_image) {
                     <a [href]="attachmentUrl(a)" target="_blank" rel="noopener">
                       <img [src]="attachmentUrl(a)" [alt]="attachmentName(a) ?? 'image'" loading="lazy" />
@@ -235,18 +176,13 @@
                       <mat-icon>attach_file</mat-icon>{{ attachmentName(a) ?? attachmentNoun(a) }}
                     </a>
                   } @else if (a.fetch === 'wanted' || isAsking(a.id)) {
-                    <!-- ⚠ A LARGE FILE, so this can last minutes rather than the
-                         seconds a link picture takes. The state is on the ROW, not
-                         only in this component, so it survives a reload and a second
-                         reader sees it too. -->
+                    <!-- A large file can take minutes. The state is on the row, so it survives a
+                         reload. -->
                     <span class="waiting">
                       <mat-icon>attach_file</mat-icon>{{ attachmentName(a) ?? attachmentNoun(a) }} — fetching…
                     </span>
                   } @else if (a.fetch) {
-                    <!-- AN OFFER, NOT A FILE. The archive knows this is at Telegram
-                         and deliberately did not fetch it: the videos alone are
-                         3.3GB. Asking queues it for the feed, which is the only
-                         process holding a session. -->
+                    <!-- An offer: the file is at Telegram, unfetched. Asking queues it for the feed. -->
                     <button type="button" class="fetch-offer" (click)="requestMedia(a)">
                       <mat-icon>attach_file</mat-icon>{{ attachmentName(a) ?? attachmentNoun(a) }}
                       @if (a.size) { ({{ mib(a.size) }}) }
@@ -282,9 +218,8 @@
     <div [style.height.px]="bottomSpacer()"></div>
   }
 
-  <!-- IRC only: the other two origins are archives with no live client behind
-       them. Outside the loading/error branch so it stays put while a send
-       reloads the thread. -->
+  <!-- IRC only. Outside the loading branch, so it stays put while a send reloads the
+       thread. -->
   @if (canSend() && !threadError()) {
     <form class="composer" (submit)="$event.preventDefault(); send()">
       <input

@@ -15,9 +15,8 @@ pub struct AppState {
     pub pool: MySqlPool,
     pub cfg: Arc<Config>,
     pub http: reqwest::Client,
-    /// `None` when no send key is mounted: the archive still serves, and every
-    /// send is refused. Prepared once at boot rather than per request, because
-    /// it owns the 0400 copy of the key.
+    /// `None` when no send key is mounted. Prepared once at boot: it owns the
+    /// 0400 copy of the key.
     pub irc: Option<Arc<IrcSender>>,
 }
 

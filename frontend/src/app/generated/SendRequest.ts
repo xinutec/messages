@@ -5,9 +5,7 @@
  */
 export type SendRequest = { 
 /**
- * ⚠ The body and nothing else. Who it goes to is decided by the
- * conversation in the URL, looked up in the archive — a request cannot
- * name a network or a nick, so it cannot address somebody the archive has
- * never seen.
+ * The body only. The recipient comes from the conversation in the URL, so
+ * a request cannot address anyone the archive has not seen.
  */
 text: string, };

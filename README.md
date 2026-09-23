@@ -1,364 +1,173 @@
-# messages — Signal + Google Chat + IRC + Telegram archive viewer
+# messages — Signal, Google Chat, IRC and Telegram archive viewer
 
-A web UI for the message archive stored in the **`signal` MariaDB** on the isis
-k3s cluster — four origins ([Signal](../signal) live + history, the imported
-Google Chat tables, irssi's autologs, and Telegram live + history). Reading is all
-of it bar one thing: IRC conversations can be replied to, through the irssi that
-already holds the connections. Same per-service pattern as `life`/`health`.
+A web UI for the message archive in the **`signal` MariaDB** on the isis k3s
+cluster ([signal](../signal) writes it). It reads all four origins and can reply
+on IRC through the irssi that holds the connections.
 
 ```
  Browser ──VPN/login──▶ messages.xinutec.org (isis, ns: signal)
                             │  Rust/axum: Nextcloud OAuth2 (identity) + sessions
                             │  + API over the archive, + IRC send via ssh
                             ▼
-                        signal MariaDB  ─ messages / conversations / reactions   (Signal)
-                                        ├ gchat_messages / gchat_conversations…   (Google Chat)
-                                        ├ irc_messages / irc_conversations         (IRC)
+                        signal MariaDB  ─ messages / conversations / reactions        (Signal)
+                                        ├ gchat_messages / gchat_conversations…        (Google Chat)
+                                        ├ irc_messages / irc_conversations             (IRC)
                                         └ telegram_messages / telegram_conversations…  (Telegram)
 ```
 
-**IRC shows only what was said.** Its tables also hold joins, parts and server
-notices, and those are **45% of the 3.69M lines** (counted 2026-08-16: 33.5%
-`event`, 11.8% `notice`) — so every read
-restricts to `kind IN ('message', 'action')`; the conversation list gets that from
-`irc_conversation_stats`, which signal's triggers only count those kinds into.
-Excluded outright (`is_status`) is the conversation irssi files notices into: it
-is named after your own nick, so it would show as a DM with yourself.
+IRC shows only what was said: every read restricts to `kind IN ('message',
+'action')`, leaving out joins, parts and notices, and irssi's server-notice
+window (`is_status`) is not listed.
 
 ## Security model
-Two layers, strongest first:
-1. **Nextcloud login + allow-list (the real gate).** OAuth2 identity-only against
-   `dash.xinutec.org` (copied from `life`). A successfully-authenticated user is
-   still rejected (403) unless their NC id is in `ALLOWED_USERS` (currently
-   `pippijn`). This holds regardless of network path.
-2. **VPN-only by DNS.** `messages.xinutec.org` → `10.100.0.2` (isis's WireGuard
-   IP), so it isn't listed on the public internet. NB this is *obscurity*: the
-   isis ingress also answers on the public IP, so DNS alone doesn't firewall it
-   — hence the login carries the security.
-A third layer was considered and not built: an ingress
-`whitelist-source-range: "10.100.0.0/24"` would make VPN-only real rather than
-by-DNS, but only if client source IPs survive k3s servicelb — klipper may SNAT
-them, so check before trusting it.
+1. **Nextcloud login and allow-list, the real gate.** OAuth2 identity against
+   `dash.xinutec.org`; an authenticated user not in `ALLOWED_USERS` gets 403.
+2. **VPN-only by DNS.** `messages.xinutec.org` resolves to isis's WireGuard IP.
+   This is obscurity: the ingress also answers on the public IP.
+
+An ingress `whitelist-source-range` would make the second layer real, if client
+source IPs survive k3s servicelb; check before relying on it.
 
 ## Components
-- `src/` — Rust/axum backend. `nextcloud/identity.rs` + `session.rs` are the
-  `life` auth pattern verbatim; `routes/auth.rs` adds the allow-list check;
-  `archive.rs` is the read-only, origin-normalising query layer; `irc_send.rs` is
-  the one path that writes; `config.rs` builds the DB DSN from `DB_*` so it reuses
-  `signal-secret` in-namespace. The only table this app owns is `sessions`
-  (created on boot, `src/db.rs`).
-- `frontend/` — Angular (login gate → conversation list with origin filter →
-  thread view with reactions / edited / deleted markers, and a composer on IRC).
-  An outgoing **Telegram or Signal** message says how far it got — `sent`,
-  `delivered`, `read` — and ⚠ **says nothing when the archive cannot tell.**
-  `delivery` is a three-state field for that reason: Telegram's read marks start
-  2026-09-17 and Signal's receipts 2026-09-18, and neither service keeps a
-  history of reading, so nothing will ever fill the years before. Drawing our own
-  late start as somebody's behaviour is the one mistake this field exists to
-  avoid.
-  The two origins report DIFFERENT SHAPES through it. Telegram sends a
-  conversation-wide high-water mark: it can say read or not-read and names
-  nobody, and `delivered` is simply not a thing it reports. Signal sends a
-  receipt per message per person with the time they read it — so the tag names
-  the reader on hover, and in a **group** it counts (`read by 2`) rather than
-  saying `read`, because a receipt list is who HAS read it and never the
-  membership. A receipt authored by me is dropped: reading a thread on a linked
-  device syncs a read of my own messages too, and left in it would show a message
-  as read by the person who sent it.
-  A message that answered another shows it as a quote above itself, and clicking
-  the quote goes to what it answered. **Two of the four origins record the
-  association at all** — Signal quotes by TIMESTAMP and Telegram by message id —
-  so a quote can legitimately point at something the archive does not hold, and
-  says so rather than vanishing. Google Chat's `thread_id` is not this: 7,804
-  distinct threads over 7,922 messages means almost every message is its own, so
-  there is nothing there to draw.
-  Selecting across two or more messages and copying gives an irssi-style log —
-  `src/app/copy-log.ts`, the inverse of `signal/src/irclog.rs`, actions included.
-  `src/app/thread-window.ts` is the scrolling: it collapses all but a window of a
-  long thread out of the DOM and re-anchors the viewport around every change.
-  `src/app/attachment.ts` decides what an attachment is CALLED, because the
-  screen and the clipboard both print it and drifted while each decided alone.
-  A **deleted message shows `(deleted)` and nothing else until you click it** —
-  its words AND its pictures. The archive keeps both (65 of 68 deleted rows still
-  hold their text; 17 stored images hang off 3 of them), and the API sends them
-  unredacted, so this is the reader deciding what to put on screen rather than
-  anything being recovered. Until 2026-09-03 only the words were hidden and the
-  images drew in full. A revealed message still copies as `(deleted)`: the log is
-  built from the model, which the reveal does not touch.
-  `src/app/generated/` is written by ts-rs from the Rust wire types
-  (`scripts/gen-types.sh`) and imported through `src/app/models.ts`; don't
-  hand-edit either.
-- `Dockerfile` — multi-stage (Angular + Rust → one image), `xinutec/messages:latest`.
-- The k8s manifests are **not here** — they live in the home monorepo, see Deploy.
+- `src/` — the backend. `nextcloud/identity.rs` and `session.rs` are the login;
+  `routes/auth.rs` adds the allow-list; `archive.rs` is the origin-normalising
+  query layer; `irc_send.rs` sends; `config.rs` builds the database connection
+  from `DB_*`, so the app reuses `signal-secret`. The app owns only `sessions`
+  and `link_images` (`src/db.rs`).
+- `src/bin/link-fetch.rs` — the link-picture fetch service, the only part that
+  reaches the internet. It holds no credentials, database or disk.
+- `frontend/` — Angular: conversation list with origin filter, thread view, and
+  an IRC composer. `src/app/thread-window.ts` keeps a window of a long thread in
+  the DOM; `src/app/copy-log.ts` copies a selection as an irssi log (the inverse
+  of `signal/src/irclog.rs`); `src/app/attachment.ts` names attachments for both
+  screen and clipboard. `src/app/generated/` is written by ts-rs
+  (`scripts/gen-types.sh`) and imported through `src/app/models.ts`.
+- `Dockerfile` — one image, `xinutec/messages:latest`, with both binaries.
 
-## API (all require a valid session)
+## API (all require a session)
 - `GET /api/me` — current user.
-- `GET /api/conversations` — all origins, each tagged `origin`, newest first.
-- `GET /api/conversations/{origin}/{id}/messages?cursor=<opaque>&limit=` — one
-  page, oldest→newest, reactions attached; pass a previous page's `next_cursor`
-  as `cursor` to page backwards (the cursor carries `(native_ts, id)`, so paging
-  never skips messages that share a timestamp).
-- `GET /api/search?q=` — substring search across all origins.
-- `POST /api/conversations/irc/{id}/send` — say something, through irssi. Other
-  origins 404: a decision, not a gap (`routes/api.rs`). The body is the text and
-  nothing else — the recipient comes from `{id}`, so a request cannot address
-  anyone the archive has not seen.
-- `POST /api/telemetry` — fold client events into the server log. Always 204.
+- `GET /api/conversations` — every conversation, newest activity first.
+- `GET /api/conversations/{origin}/{id}/messages?cursor=&limit=&dir=&on=` — one
+  page, oldest first. `cursor` is opaque, `(native_ts, id)`, so rows sharing a
+  timestamp are never skipped. `dir` is `older` (default), `newer`, or `at` (the
+  cursor's own row and after, for landing). `on` is a day's local midnight in
+  epoch ms; the server converts it to the origin's unit.
+- `GET /api/search?q=[&origin=&id=]` — substring search, everywhere or in one
+  conversation. Each hit carries a cursor that lands on it.
+- `POST /api/conversations/irc/{id}/send` — say something through irssi. The
+  body is the text only; the recipient comes from `{id}`. Other origins 404:
+  Signal by decision (see `routes/api.rs`), Telegram because sending there is not
+  designed yet.
+- `GET /api/attachments/{id}`, `/api/gchat-attachments/{id}`,
+  `/api/telegram-media/{id}` — held bytes, one route per origin since attachment
+  ids are per origin. `POST /api/telegram-media/{id}/request` queues an
+  unfetched Telegram file; `GET …/state` reports its progress.
+- `GET /api/link-images/{id}`, `POST /api/link-images/{id}/request` — a picture
+  for a link in a message, by the URL's hash.
+- `POST /api/telemetry` — client events into the server log. Always 204.
 
-`{origin}` is `signal`, `gchat`, `irc` or `telegram`; `{id}` is the Signal
-`thread_id`, the gchat `group_id`, the numeric `irc_conversations.id`, or
-Telegram's folded peer id (a signed number — negative for a group or channel; see
-the `signal` repo's v15 migration for the fold). That, a conversation's
-`kind` (`dm`/`group`) and a message's (`message`/`action`) are all Rust enums, so
-they reach the frontend as string unions rather than `string`, and an unknown
-`{origin}` is a 404. A message's `kind` is IRC's only — the star on an action is
-drawn by the client, not carried in the text.
+`{origin}` is `signal`, `gchat`, `irc` or `telegram`. `{id}` is the Signal
+`thread_id`, the Google Chat `group_id`, the `irc_conversations.id`, or
+Telegram's folded peer id (see the signal repo's v15 migration).
 
 ## Local dev
 ```
-# backend (needs the DB; tunnel signal-db or point at a local MariaDB)
+# backend (needs the database; tunnel signal-db or use a local MariaDB)
 DB_HOST=127.0.0.1 DB_PORT=3306 DB_NAME=signal DB_USER=… DB_PASSWORD=… \
 NC_BASE_URL=https://dash.xinutec.org NC_CLIENT_ID=… NC_CLIENT_SECRET=… \
 NC_REDIRECT_URI=http://localhost:4200/auth/callback \
 SESSION_SECRET=$(openssl rand -hex 32) ALLOWED_USERS=pippijn \
   cargo run
-# frontend (proxies /api,/login,/auth,/logout to :8080)
+# frontend (proxies /api, /login, /auth, /logout to :8080)
 cd frontend && pnpm install && pnpm start  # http://localhost:4200
 ```
 
 ## Deploy (isis, namespace `signal`)
-The manifests are in the home monorepo (`xinutec/pippijn`
-`code/kubes/messages/k8s/`); run these from that checkout.
+Manifests are in the home monorepo (`xinutec/pippijn`, `code/kubes/messages/k8s/`).
+Push to main, wait for CI to build `xinutec/messages:latest`, then run
+`code/kubes/deploy.sh messages` from that checkout. It refuses unless the
+manifests are committed and pushed and isis's checkout matches, and restarts a
+`:latest` workload only when the registry has a newer image.
 
-**Every time:** push to main, wait for CI to build `xinutec/messages:latest`,
-then `code/kubes/deploy.sh messages` from the home monorepo.
-
-⚠ The hand-run `kubectl apply -f …` pair this used to name is superseded and was
-never rewritten here. `deploy.sh` is the single implementation for every app: it
-refuses unless the repo is on main with the manifests committed and pushed AND
-isis's own checkout at that same commit, deploys the HOST's files rather than
-this machine's, applies nothing when the cluster already matches, and restarts a
-`:latest` workload only when the registry says the running image is behind — the
-step a hand-run `apply` of an unchanged manifest silently skips, which is how
-this app would have been "deployed" without ever restarting.
-
-**Done once, written down in case it must be redone:** register the OAuth2 client
-in Nextcloud admin (redirect URI `https://messages.xinutec.org/auth/callback`);
-put a Cloudflare `Zone:DNS:Edit` token in `cert-manager` as
-`cloudflare-api-token` and apply `00-letsencrypt-dns-issuer.yaml`, because isis
-has HTTP-01 only and this cert needs DNS-01; `messages → 10.100.0.2` is already
-in `code/dns`; `NC_CLIENT_ID=… NC_CLIENT_SECRET=… ./k8s/secret.sh` writes the
-session key and OAuth client (DB creds come from `signal-secret`).
+One-time setup, in case it must be redone: register the OAuth2 client in
+Nextcloud admin (redirect URI `https://messages.xinutec.org/auth/callback`); put
+a Cloudflare `Zone:DNS:Edit` token in `cert-manager` as `cloudflare-api-token`
+and apply `00-letsencrypt-dns-issuer.yaml` (isis needs DNS-01); `messages →
+10.100.0.2` is in `code/dns`; `NC_CLIENT_ID=… NC_CLIENT_SECRET=…
+./k8s/secret.sh` writes the session key and OAuth client.
 
 ## Tests
-`gate.dhall` is the whole gate (and the pre-commit hook), twelve named checks:
-fmt, clippy, generated-type drift, the Rust suite against a throwaway MariaDB,
-then the frontend's deps + lint + e2e typecheck + build + unit tests + the
-browser suite, and the shared dev-lint rules. Run it with
+`gate.dhall` is the gate and the pre-commit hook:
 
 ```sh
 nix run ../dev-lint#gate -- . gate.json
 ```
 
-`gate.json` is rendered from the Dhall and committed, so running the gate needs
-no `dhall`; one of the checks re-renders and diffs the two.
+`gate.json` is rendered from the Dhall and committed; one check re-renders and
+diffs it.
 
-- **Backend** `tests/access.rs` — the allow-list, which is the gate the security
-  model above actually rests on (layer 2 is obscurity by its own admission). It
-  had no test until 2026-09-03. What it pins is FAIL-CLOSED: every way of ending
-  up with nobody on the list rejects everybody, including a blank or
-  comma-only `ALLOWED_USERS`. Ablated two ways — dropping the parser's
-  empty-entry filter, and reading "no list configured" as "no restriction" —
-  and each fails it.
-- **Backend** `tests/api_routes.rs` — the API through the real router, via
-  `tower`'s `oneshot`. Everything else tests the decisions a handler makes; this
-  tests that a request reaches it and that the auth extractor sits in front of
-  every route needing one. ⚠ It touches no archive table on purpose: those are
-  DROPped and recreated by `tests/archive.rs`, and cargo runs test binaries in
-  parallel against the one database. Every case is decided before the archive is
-  reached, which is the auth-and-routing surface and exactly what was untested.
-- **Backend** `tests/session_cookie.rs`, `tests/error_responses.rs` — the cookie
-  signature that makes a session unforgeable (tampered value, tampered or
-  truncated signature, a cookie signed by another secret), and the rule that a
-  500 describes nothing about itself. Both are about REJECTING, not the happy
-  path. Ablated three ways — `find` for `rfind`, dropping the MAC check, putting
-  the error in the body — and each fails only its own tests.
-- **Backend** `tests/archive.rs` — pure units always run; the end-to-end ones seed
-  a fixture into a throwaway MariaDB and assert the real queries. They need
-  `MESSAGES_TEST_DATABASE_URL` and skip without it, so **running `cargo test` bare
-  proves less than it looks like it does** — the gate's `tests` row starts an
-  ephemeral MariaDB via `dev-lint`'s `with-test-db`.
-- ⚠ **The composer is where jsdom lies to you.** A unit test for the IME guard
-  passed against a version that still sent the half-composed word: calling the
-  keydown handler in isolation never involves the `<form>`, and implicit
-  submission reached `send` by a route the guard did not cover. Composition,
-  implicit submission and the Android keyboard's viewport are browser behaviour;
-  `e2e/ui-pages.spec.ts` drives a real composition through CDP and a real
-  keyboard-sized viewport, and both were ablated. Do not accept a green vitest
-  run as evidence about the composer.
-- **Frontend** vitest (`pnpm test`): `app.spec.ts` shell, `thread.spec.ts` paging
-  and composer, `copy-log.spec.ts` the clipboard format, `thread-window.spec.ts`
-  the windowing arithmetic, `messages-store.spec.ts` shared state. ⚠ The window
-  engine's MEASURING half is not there and should not be: jsdom has no layout, so
-  every rect would be zero and the test would be of a fake. That half is
-  `e2e/thread-scroll.spec.ts`, in a real browser. Then Playwright, split by whether jsdom could have answered:
-  - `pnpm run ui-check` — **the whole browser suite, in the gate**: phone-width
-    layout, the copy specs, the Android-keyboard and IME specs, and the
-    scroll/routing/smoke behaviour specs. Seconds; `pnpm run ui-check` prints
-    the count, which is why one is not written here.
-  - ⚠ There was a second config for scroll/routing/smoke until 2026-09-03,
-    because they were written against `ng serve` and one was believed to need
-    it. Re-tested rather than inherited: they pass against the production build,
-    45/45 on repeat. The cost of that split was that the windowing engine — the
-    subtlest code here — had its only browser coverage in the suite nobody
-    ran.
+- `tests/archive.rs` — pure units, plus end-to-end tests against a fixture in a
+  throwaway MariaDB. Those need `MESSAGES_TEST_DATABASE_URL` and skip without
+  it; the gate's test row starts one via dev-lint's `with-test-db`.
+- `tests/access.rs`, `tests/session_cookie.rs`, `tests/error_responses.rs` — the
+  allow-list fails closed, sessions cannot be forged, and a 500 says nothing
+  about itself.
+- `tests/api_routes.rs` — requests through the real router reach the handlers
+  behind the auth extractor. It touches no archive table, since
+  `tests/archive.rs` recreates them in the same database.
+- Frontend unit tests (`pnpm test`, vitest) cover logic. jsdom has no layout,
+  fonts, or real Selection API, and does not submit forms on Enter, so
+  `pnpm run ui-check` runs the Playwright suite against the production build:
+  phone-width layout, copy, scrolling, routing, the Android keyboard and a real
+  IME composition. Treat vitest as no evidence about the composer.
 
 ## One concept, several readers
-
-Every field below is interpreted in more than one place, and each place can
-forget the rule independently. That is not hypothetical: **three of the four
-defects found on 2026-09-03 were exactly this**, and the last of them was found
-by writing this table rather than by anyone hitting it. Add a row when a field
-gains a second reader.
+Each field below is interpreted in more than one place; add a row when a field
+gains another reader.
 
 | field | Rust | thread.html | copy-log.ts | search |
 | --- | --- | --- | --- | --- |
-| `deleted` | Signal and Telegram read it; gchat/IRC are always `false` | hidden behind a click, body AND attachments | `(deleted)` and nothing else, attachments included | the hit matches and is listed, with `(deleted)` where the snippet goes |
-| `edited` | Signal and Telegram, by different mechanisms — see below. Telegram's is `edit_date` AND `edit_hide` | `edited` tag in the meta line | ` (edited)` on the last line | not shown |
-| `edits` | Signal walks an append-only chain; Telegram reads a separate table of superseded text | behind the `edited` tag | not shown | not shown |
-| `kind` | IRC (two of its column's four values) and Telegram (`message`, excluding `service`) | `* ` before the body | `HH:MM  * nick ` prefix | not shown |
-| `is_outgoing` | all four origins | `.out` class | nothing — the sender's name carries it | not shown |
+| `deleted` | Signal and Telegram; always `false` for Google Chat and IRC | hidden behind a click, body and attachments | `(deleted)` only, attachments included | listed, with `(deleted)` for the snippet |
+| `edited` | Signal and Telegram, by different mechanisms; Telegram's also honours `edit_hide` | `edited` tag | ` (edited)` on the last line | not shown |
+| `edits` | Signal: revision rows via `edit_of_ts`; Telegram: `telegram_message_edits` | behind the `edited` tag | not shown | not shown |
+| `kind` | IRC, and Telegram service events as `action` | `* ` before the body | `HH:MM  * nick ` prefix | not shown |
+| `is_outgoing` | all origins | `.out` class | nothing; the sender's name carries it | not shown |
 
-⚠ **AN EDIT DATE IS NOT AN EDIT TO SHOW.** Telegram carries `edit_hide` beside
-`edit_date`, documented as "whether the message should be shown as not modified to
-the user, even if an edit date is present" — it sets a date for its own reasons and
-asks clients not to surface it. This reader printed `edited` from the date alone,
-and Pippijn found it on an ordinary photo in a live conversation that Telegram
-itself showed as untouched. Measured as the archive re-read itself: **606 hidden
-against 51 genuine**, so about 92% of the tags were noise. The archive records both
-— it keeps what it was given — and the reader honours the instruction; the history
-panel is driven by the same `edited`, so one statement rather than two decisions.
+The server sends retracted text; every reader hides it until asked. A revealed
+message still copies as `(deleted)`, since the log is built from the model.
 
-⚠ **`edited` is also one word for two mechanisms, and that is the row most likely
-to grow a defect.** Signal sends an edit as a NEW message pointing at the original,
-so its history is the archive's natural shape. Telegram MUTATES the message and
-keeps its id, so the archive files the superseded text in `telegram_message_edits`
-and the row holds the current words. `attach_edits` reads the first and
-`attach_telegram_edits` the second; `messages_page` dispatches on origin rather
-than calling one of them for everything, because Signal's query against a Telegram
-id finds nothing and would report "never edited" for every edited message.
+`MessagesStore.title` names a conversation for the list, the search results and,
+before the list loads, the hit's own name; the thread header says
+"Conversation" until then.
 
-⚠ **A Telegram `channel` is a third `ConversationKind`, not a group.** Folding it
-into `group` would have cost nothing today and left no way back: a reader who wants
-people rather than announcement feeds cannot recover the distinction once the two
-are one value. `MessagesStore.unnamed` is a `Record` over the kind for the same
-reason `originLabels` is one — the ternary it replaced would have called a channel
-a Group.
+A message with neither body nor attachments draws an empty bubble but produces no
+copied line.
 
-**Naming a conversation is the same problem one level up, and had three answers
-until 2026-09-04.** `MessagesStore.title` is the namer: it trims, and falls back
-to "Direct message" or "Group" by kind. The conversation list used it; a search
-result said "(unnamed)" and passed whitespace through; the thread header says
-"Conversation". They are one question. The search row now asks `title` too,
-through the store, and keeps a fallback only for the case `title` cannot serve —
-the list has not arrived, so there is no `kind` to name a nameless conversation
-by. The thread header's "Conversation" is that same case and stays.
+`?at` carries a cursor and means *put me here*; `?from` carries a scroll position
+and means *I was here*. `at` wins on load, and the first scroll replaces it with
+`from` and clears the landed-message marker.
 
-A search row also carries the origin and the network, for the reason the
-conversation list does: the archive holds one IRC target on more than one
-network, and without the label the two are one row.
+Delivery state (`sent`, `delivered`, `read`) appears only where the archive can
+say: outgoing Signal and Telegram messages sent after capture began. Telegram
+reports a read position and names nobody; Signal reports per-person receipts, so
+a group says `read by 2` rather than `read`, and my own linked device's read
+sync is not counted.
 
-⚠ **One known divergence, deliberate.** A message with no body and no
-attachments (20 of them) draws an empty bubble but produces no line in a copied
-log; an empty log line would say less than nothing.
-
-**Deleted content: one policy, decided 2026-09-04.** Search excluded `deleted`
-rows in SQL while a thread sent the same text and hid it behind a click — two
-policies for one concept, chosen in two places, neither aware of the other. It
-is now the thread's, everywhere: **the server sends retracted text, and every
-reader hides it until asked**. A search that cannot find what was retracted is
-not an archive's search, so a hit is listed with `(deleted)` where its snippet
-would go — you learn a retraction matched, in which conversation and when,
-without being handed the words. Clicking through reaches the thread's reveal.
-
-⚠ **That sentence was aspirational until 2026-09-04's decision was finished by
-#1401.** A hit used to open the conversation at its NEWEST page while the
-message might be years back, so "clicking through reaches the reveal" described
-an intention rather than the app. A result now lands ON its message, marked,
-with the conversation loaded both sides of it.
-
-**`?at` and `?from` are different questions and must not be confused.** `at`
-carries a hit's opaque cursor and means *put me here*; `from` carries a scroll
-position and means *I was here*. `at` wins on load, and the first scroll clears
-it — the marker on the landed message has exactly that lifetime, because
-"this is where you were put" stops being true the moment the reader moves.
-
-⚠ **A landing's forward half is `dir=at`, NOT `dir=newer`.** Both `older` and
-`newer` are STRICT, so a landing composed of the pair skips the row it is aimed
-at — which shipped, put the reader one message past the hit, and had the marker
-naming its neighbour. The backend tests were right about each direction alone;
-what nothing tested was the two of them composed, and the frontend's mock
-described a backend that included the hit because that is what its author
-believed. `tests/archive.rs::a_landing_contains_the_message_it_landed_on` is the
-test that now holds the seam.
-
-Withholding the text server-side was the alternative and was rejected on cost,
-not on principle: searching and returning are separable (the `LIKE` runs in
-MySQL either way), so the hit could carry no text at all and a per-message
-endpoint could serve the reveal. It buys only that devtools cannot see a
-retraction on a screen its authenticated owner is already looking at, and costs
-an endpoint, a round trip and a second loading state. Revisit if this archive
-ever has a reader who is not its owner.
-
-⚠ **Sending is a capability, not a requirement, and the code has to keep saying
-so in one voice.** `main.rs`, `config.rs` and `IrcSender::prepare` each state
-that a viewer must serve the archive when it cannot send — and the code honoured
-it for a MISSING key while an unstageable one exited the process. `/run/irc` is
-an emptyDir, kept across a container restart, and the staged key is 0400: the
-second start of a pod met a file it owned and could not write. messages.xinutec.org
-answered 502 for 26 hours and 244 restarts on 2026-09-04/05. `prepare` clears the
-stale copy now, and `main.rs` treats a staging failure the way it treats a missing
-key — loudly logged, sending off, the archive still served.
+Sending is optional: without a usable key the app serves the archive and refuses
+to send.
 
 ## Known limits
-- The Signal reaction count approximates live state as distinct non-removed
-  authors per emoji, so a same-author add-then-remove inside one page is missed.
-- **Telegram reactions are aggregated by Telegram itself**, so — as with Google
-  Chat — you can see that four people laughed and not which four. A CUSTOM emoji
-  reaction is held as a document id with no characters to draw, and the thread
-  leaves those out rather than drawing a blank bubble with a count beside it: the
-  archive holds it, the screen cannot show it.
-- **Telegram media is recorded as a KIND and never fetched.** A photo shows as
-  having been a photo. Bytes are Signal-only in this archive (the `attachments`
-  PVC), so there is nothing for `/api/attachments` to serve and a Telegram message
-  carries an empty `attachments` list by construction.
-- **A Telegram video, sticker, voice note and PDF all read as `document`.** They
-  are one wire type (`messageMediaDocument`) and the finer label lives in the
-  document's attributes, which the pass that would also fetch the bytes would read.
-- **Telegram secret chats are absent and no login can reach them** — they are
-  device-local by construction and the server never holds them.
-- Signal edit history is flat: an edit shows as edited, not as a chain.
-- ⚠ **Telegram's edit history exists only for edits seen LIVE, and the backfilled
-  ones can never gain it.** Telegram serves the current text and an `edit_date`; it
-  does not serve superseded versions, so a message edited before this archive
-  existed arrives already-edited with nothing behind it. Measured on the first
-  ingest, 2026-09-13: **558 messages carry an `edit_date` and have no stored prior
-  version**, and no amount of re-running changes that. The `edited` tag is honest
-  for them; the history behind it is empty, which is the difference between "we do
-  not keep it" and "it was never ours to keep".
-- Attachments are Signal-only (the Google Chat export carries none, IRC has no
-  such thing), served from the PVC mounted read-only. Metadata-only history rows
-  are shown but marked not stored.
-- **A large attachment is read whole into memory** (`tokio::fs::read`), against
-  the pod's 256Mi limit. Not a risk at today's sizes — 591 stored files, largest
-  22.6 MB, mean 687 KB, measured 2026-09-03 — but the mechanism is unbounded
-  while the ceiling is not, so re-measure rather than assume if Signal's cap or
-  the limit moves. Streaming would remove the coupling.
-- **Copying reaches only what is rendered — and now says so.** The thread keeps a
-  bounded window in the DOM (400 messages), so a select-all in a long
-  conversation copies that window rather than the conversation. The limit is
-  unchanged; what changed on 2026-09-03 is that such a copy ends with
-  `--- copied 400 of 401794 messages; the rest were not loaded on screen`. The
-  notice rides in the text because a warning in the app is not there when the
-  paste is read somewhere else, and it appears only when the selection took the
-  WHOLE window — a deliberate two-line quote is not a truncated copy.
+- Signal reactions are distinct current authors per emoji, so a same-author
+  add-then-remove within one page is missed.
+- Google Chat reactors are named only as far as gchat-archive's second capture
+  has reached; Telegram truncates its reactor list. `count` stays authoritative.
+- A custom-emoji Telegram reaction has no characters to draw and is left out.
+- Telegram secret chats are device-local and absent.
+- A Telegram message edited before the archive saw it has no earlier versions:
+  Telegram serves only the current text.
+- A Google Chat picture's bytes are held only if a harvest fetched them; the
+  download URL needs Pippijn's session.
+- Attachments are read whole into memory to serve, against the pod's memory limit.
+- Copying reaches only the rendered window (400 messages). A select-all of a
+  longer conversation ends with `--- copied 400 of N messages; the rest were not
+  loaded on screen`.

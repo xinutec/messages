@@ -11,7 +11,7 @@ import type { ReplyTo } from "./ReplyTo";
 
 export type Message = { id: string, 
 /**
- * Epoch milliseconds (Google Chat's native µs are converted on the way out).
+ * Epoch milliseconds.
  */
 ts: number, sender: string, is_outgoing: boolean, 
 /**
@@ -23,40 +23,23 @@ kind: MessageKind, body: string | null, deleted: boolean, edited: boolean, react
  */
 link_images: Array<LinkImage>, 
 /**
- * What this message said BEFORE it was edited, oldest first — empty unless
- * it was. `body` is always the current text.
+ * Earlier versions, oldest first; `body` is the current text.
  */
 edits: Array<MessageEdit>, 
 /**
- * Links in `body` we could fetch a picture for but have not. Serving them
- * offers them; a reader has to ask.
+ * Links in `body` we could fetch a picture for, if asked.
  */
 link_offers: Array<LinkOffer>, 
 /**
- * What this message answered, for the origins that record it — Signal and
- * Telegram. Always `None` for Google Chat and IRC, neither of which has
- * the association at all.
+ * What this message replied to. Signal, Telegram and Google Chat.
  */
 reply_to: ReplyTo | null, 
 /**
- * How far this message got, for the origins that report it.
- *
- * ⚠ `None` IS "THE ARCHIVE CANNOT SAY", NEVER "UNDELIVERED". It covers
- * every INCOMING message, Google Chat and IRC entirely, and — the case this
- * field exists for — anything sent before capture began. Telegram's read
- * marks start 2026-09-17 and Signal's receipts 2026-09-18; neither service
- * keeps a history of reading, so nothing will ever fill the years before
- * those dates. Drawing our own late start as somebody's behaviour is the
- * mistake this three-state shape is here to make impossible.
+ * How far this message got. `None` means the archive cannot say: incoming
+ * messages, origins without receipts, and anything sent before capture began.
  */
 delivery: Delivery | null, 
 /**
- * Formatting runs inside `body` — Telegram only, empty everywhere else.
- *
- * ⚠ EMPTY MEANS NO FORMATTING RECORDED, NOT PLAIN TEXT. Only Telegram
- * sends these and only the recapture collected them; Signal's `textStyles`
- * are kept in `signal_frames` and have no columns yet (#1693), and Google
- * Chat and IRC have no such concept. A reader must not conclude from an
- * empty list that somebody wrote without emphasis.
+ * Formatting runs in `body`. Telegram only; empty means none recorded.
  */
 entities: Array<Entity>, };

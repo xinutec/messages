@@ -4,10 +4,8 @@
 #
 #   nix develop ~/Code/recall#android --command ./deploy.sh [<ip[:port]>]
 #
-# This is a single-purpose handheld app on ONE phone (the Pixel 9). DHCP drifts the
-# IP, so we key on the device *model*, never the IP: connect, verify it really is a
-# Pixel 9, then install by serial. A bare `adb install` could hit the wrong device
-# (a Pixel 5 is often also adb-connected) — so we never use it.
+# Keyed on the device model, never the IP (DHCP drifts) or a bare `adb install`
+# (another phone may be connected): verify it is the Pixel 9, install by serial.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -17,9 +15,8 @@ echo "building APK…"
 ./gradlew :app:assembleDebug -q
 APK="$PWD/app/build/outputs/apk/debug/app-debug.apk"
 
-# Endpoints to try, in order. :5555 (persistent `adb tcpip`) survives sleep, so try
-# it first — VPN IP (stable, 10.100.0.12) then the LAN DHCP reservation. Override
-# with an arg if wireless debugging rotated to a random port.
+# Endpoints in order: persistent `adb tcpip` :5555 on the VPN IP, then the LAN
+# reservation. An argument overrides, for a rotated wireless-debugging port.
 CANDIDATES=("${1:-}" "10.100.0.12:5555" "192.168.1.133:5555")
 
 for EP in "${CANDIDATES[@]}"; do

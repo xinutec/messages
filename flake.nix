@@ -1,5 +1,5 @@
-# Dev shell for the messages backend (Rust). Enter with: nix develop
-# Pure-Rust TLS (rustls) so there's no openssl/pkg-config native dep.
+# Dev shell for the messages backend. Enter with: nix develop
+# rustls, so no openssl or pkg-config.
 {
   description = "messages — Signal + Google Chat archive viewer backend";
 
@@ -19,11 +19,7 @@
             pkgs.rustfmt
             pkgs.clippy
             pkgs.sqlx-cli
-            # The server binaries the ephemeral test DB runs. That harness is
-            # `nix run ../dev-lint#with-test-db` — the gate's "tests (against a
-            # real MariaDB)" row — and NOT a script in this repository: three
-            # repos carried near-identical copies of one and they were folded
-            # into dev-lint.
+            # MariaDB for `nix run ../dev-lint#with-test-db`, the gate's test row.
             pkgs.mariadb
             pkgs.nodejs_24 # Angular 22 frontend (frontend/)
             pkgs.pnpm # the frontend's installer; node ships npm too, ignore it

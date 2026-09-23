@@ -9,22 +9,15 @@
 //!  → 303 …/login/flow?providedRedirectUri=&clientIdentifier=…
 //! ```
 //!
-//! After the sign-in it returns to the registered callback with `state=`, empty.
-//! A server that looks the pending login up by `state` therefore cannot complete a
-//! login from a cookie-less browser at all — found 2026-07-28 in the sibling
-//! fleetwatch service, whose Android WebView lost its NC cookie and could never sign
-//! in again. Every app in this family shares the flow, so every one shares the fix.
+//! It then returns to the callback with an empty `state`, so a server keyed on
+//! `state` cannot complete a login from a cookie-less browser. The pending login
+//! therefore travels in a signed cookie of our own, which binds it to the
+//! browser as `state` would and survives a pod restart; `state` is still checked
+//! when NC returns it.
 //!
-//! So the pending login travels in a cookie of our own. That binds it to the browser
-//! that started the login, which is the property `state` was there to prove; `state`
-//! is still sent, and still checked whenever NC gives it back. Being self-contained
-//! and signed, it also survives the pod restarting mid-login, which the in-memory map
-//! it replaces did not.
-//!
-//! Residual risk, accepted deliberately: when NC returns an empty `state` the cookie
-//! is the only binding, so a login-CSRF would become possible for someone who can both
-//! reach this (VPN-only) host and land a callback in the victim's browser inside the
-//! 10-minute window. The alternative is a login that cannot be performed at all.
+//! Accepted risk: with an empty `state` the cookie is the only binding, so a
+//! login-CSRF needs VPN access and a callback landed in the victim's browser
+//! within the 10-minute window.
 
 use chrono::{DateTime, Duration, Utc};
 use rand::Rng;
@@ -34,7 +27,7 @@ use crate::session::{sign_value, verify_value};
 /// Cookie holding the login in progress. Short-lived; cleared at the callback.
 pub const COOKIE_NAME: &str = "oauth_pending";
 
-/// How long a started login may take to come back. Matches the old state-map TTL.
+/// How long a started login may take to come back.
 pub fn ttl() -> Duration {
     Duration::seconds(600)
 }

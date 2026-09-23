@@ -9,12 +9,11 @@ export type SendResult = {
  */
 sent: boolean, 
 /**
- * Why not, when it did not. This is the far side's refusal — most often
- * that irssi has no tab open with that target, which is what decides.
+ * Why not: irssi's refusal, usually that it has no tab for the target.
  */
 error: string | null, 
 /**
- * Whether the message is already in the archive and so will appear without
- * waiting for the hourly import. A send can succeed with this false.
+ * Whether the message is already archived, visible without waiting for the
+ * import. A send can succeed with this false.
  */
 archived: boolean, };
