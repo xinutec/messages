@@ -370,6 +370,9 @@ pub struct Message {
     pub delivery: Option<Delivery>,
     /// Formatting runs in `body`. Telegram only; empty means none recorded.
     pub entities: Vec<Entity>,
+    /// The album this message was sent in, shared by its members: Telegram's
+    /// `grouped_id`, as a string because it exceeds a JavaScript number.
+    pub album: Option<String>,
 }
 
 /// A link the reader can ask us to fetch a picture for.
@@ -1407,6 +1410,7 @@ async fn signal_messages(
             reply_to: None,
             delivery: None,
             entities: Vec::new(),
+            album: None,
         });
     }
 
@@ -1666,6 +1670,7 @@ async fn gchat_messages(
             reply_to: None,
             delivery: None,
             entities: Vec::new(),
+            album: None,
         });
     }
 
@@ -1820,6 +1825,7 @@ async fn irc_messages(
             reply_to: None,
             delivery: None,
             entities: Vec::new(),
+            album: None,
             attachments: Vec::new(),
         });
     }
@@ -1867,6 +1873,7 @@ async fn telegram_messages(
                      m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at,
                      m.edit_hidden AS edit_hidden,
                      m.reply_to_msg_id AS reply_to_msg_id, m.kind AS kind,
+                     m.grouped_id AS grouped_id,
                      c.duration_s AS call_duration_s, c.reason AS call_reason,
                      c.video AS call_video
               FROM telegram_messages m
@@ -1883,6 +1890,7 @@ async fn telegram_messages(
                      m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at,
                      m.edit_hidden AS edit_hidden,
                      m.reply_to_msg_id AS reply_to_msg_id, m.kind AS kind,
+                     m.grouped_id AS grouped_id,
                      c.duration_s AS call_duration_s, c.reason AS call_reason,
                      c.video AS call_video
               FROM telegram_messages m
@@ -1899,6 +1907,7 @@ async fn telegram_messages(
                      m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at,
                      m.edit_hidden AS edit_hidden,
                      m.reply_to_msg_id AS reply_to_msg_id, m.kind AS kind,
+                     m.grouped_id AS grouped_id,
                      c.duration_s AS call_duration_s, c.reason AS call_reason,
                      c.video AS call_video
               FROM telegram_messages m
@@ -1974,6 +1983,9 @@ async fn telegram_messages(
             reply_to: None,
             delivery: None,
             entities: Vec::new(),
+            album: r
+                .try_get::<Option<i64>, _>("grouped_id")?
+                .map(|g| g.to_string()),
         });
     }
 

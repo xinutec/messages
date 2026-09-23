@@ -40,7 +40,7 @@ const THREAD = {
   messages: [
     { id: "1", ts: Date.UTC(2026, 0, 1, 12, 0), sender: "Alice Andersson", is_outgoing: false,
       body: "Morning! Did the referral letter come through yet? The clinic said they'd post it but it's been almost two weeks now.",
-      deleted: false, edited: true, reply_to: null, delivery: null, entities: [], reactions: [{ emoji: "👍", count: 3, who: ["Bob Bytecode", "Dana", "Test User"] }, { emoji: "❤️", count: 2, who: [] }, { emoji: "🎉", count: 1, who: ["Dana"] }],
+      deleted: false, edited: true, reply_to: null, delivery: null, entities: [], album: null, reactions: [{ emoji: "👍", count: 3, who: ["Bob Bytecode", "Dana", "Test User"] }, { emoji: "❤️", count: 2, who: [] }, { emoji: "🎉", count: 1, who: ["Dana"] }],
       attachments: [], link_images: [], link_offers: [], edits: [] },
     // A full-length reply excerpt on an outgoing bubble, the narrowest.
     { id: "2", ts: Date.UTC(2026, 0, 1, 12, 4), sender: "Test User", is_outgoing: true,
@@ -59,19 +59,32 @@ const THREAD = {
       attachments: [], link_images: [], link_offers: [], edits: [] },
     // Deleted, with words and a stored image behind the reveal.
     { id: "4", ts: Date.UTC(2026, 0, 1, 12, 11), sender: "Alice Andersson", is_outgoing: false,
-      body: "something said and then taken back", deleted: true, edited: false, reactions: [], reply_to: null, delivery: null, entities: [],
+      body: "something said and then taken back", deleted: true, edited: false, reactions: [], reply_to: null, delivery: null, entities: [], album: null,
       attachments: [{ id: "a2", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true }], link_images: [], link_offers: [], edits: [] },
     // A Telegram service event, rendered as an action.
     { id: "5", ts: Date.UTC(2026, 0, 1, 12, 20), sender: "Alice Andersson", is_outgoing: false,
       kind: "action", body: "made a 55-minute video call", deleted: false, edited: false,
-      reactions: [], reply_to: null, delivery: null, entities: [],
+      reactions: [], reply_to: null, delivery: null, entities: [], album: null,
       attachments: [], link_images: [], link_offers: [], edits: [] },
     // Named reactors: the names are in a title and must not widen the chip.
     { id: "6", ts: Date.UTC(2026, 0, 1, 12, 24), sender: "Alice Andersson", is_outgoing: false,
-      body: "Six of us are in.", deleted: false, edited: false, reply_to: null, delivery: null, entities: [],
+      body: "Six of us are in.", deleted: false, edited: false, reply_to: null, delivery: null, entities: [], album: null,
       reactions: [{ emoji: "👍", count: 6, who: ["Alice Andersson", "Bob Bytecode", "Test User", "Dana", "Erin Example"] },
                   { emoji: "🎉", count: 1, who: ["Dana"] }],
       attachments: [], link_images: [], link_offers: [], edits: [] },
+    // An outgoing album of three: a captioned member, then two pictures.
+    { id: "7", ts: Date.UTC(2026, 0, 1, 12, 30), sender: "Test User", is_outgoing: true,
+      body: "From the climbing wall on Saturday, the three of us at the top of the orange route", deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740993",
+      delivery: { state: "delivered", read_by: [] },
+      attachments: [{ id: "p7", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true }], link_images: [], link_offers: [], edits: [] },
+    { id: "8", ts: Date.UTC(2026, 0, 1, 12, 30), sender: "Test User", is_outgoing: true,
+      body: null, deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740993",
+      delivery: { state: "delivered", read_by: [] },
+      attachments: [{ id: "p8", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true }], link_images: [], link_offers: [], edits: [] },
+    { id: "9", ts: Date.UTC(2026, 0, 1, 12, 30), sender: "Test User", is_outgoing: true,
+      body: null, deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740993",
+      delivery: { state: "delivered", read_by: [] },
+      attachments: [{ id: "p9", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true }], link_images: [], link_offers: [], edits: [] },
   ],
   has_more: false,
   next_cursor: null,
@@ -147,6 +160,24 @@ test("open thread — meta + reactions + attachment: lays out cleanly @ phone wi
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
+/// An album renders as one set: its members in one grid, under one meta line.
+test("an album is one set under one meta line @ phone width", async ({ page }, testInfo) => {
+  await mockApi(page);
+  await page.goto("/conversation/signal/dm:a");
+  const album = page.locator(".run.album");
+  await expect(album).toHaveCount(1);
+  await expect(album.locator(".msg")).toHaveCount(3);
+  await expect(album.locator(".meta:visible")).toHaveCount(1);
+  await album.scrollIntoViewIfNeeded();
+  await expect
+    .poll(() => album.locator("img").evaluateAll((els) =>
+      els.filter((e) => e instanceof HTMLImageElement && e.complete && e.naturalWidth > 0).length))
+    .toBe(3);
+  await page.screenshot({ path: testInfo.outputPath("album.png") });
+  await expectNoTextOverlaps(page, testInfo);
+  await expectNoHorizontalOverflow(page, testInfo);
+});
+
 /// Who reacted lives in a `title`, which cannot change the chip's size, and
 /// `count` stays the number.
 test("who reacted is a hover, and the chip still says the count @ phone width", async ({ page }) => {
@@ -214,7 +245,9 @@ test("searching a conversation is reachable with the thread open @ phone width",
   await expect(panel.getByText("Test User: (deleted)")).toBeVisible();
   await expect(panel.getByText("something withdrawn")).toHaveCount(0);
 
-  await expectNoTextOverlaps(page, testInfo);
+  // Scoped to the panel: a day header pins behind it, which a geometric scan
+  // cannot tell from a collision.
+  await expectNoTextOverlaps(page, testInfo, ".thread-search");
   await expectNoHorizontalOverflow(page, testInfo);
 });
 

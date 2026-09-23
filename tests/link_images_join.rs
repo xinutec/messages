@@ -62,6 +62,7 @@ fn msg(body: &str) -> Message {
         reply_to: None,
         delivery: None,
         entities: Vec::new(),
+        album: None,
     }
 }
 

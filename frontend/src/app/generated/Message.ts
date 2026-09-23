@@ -42,4 +42,9 @@ delivery: Delivery | null,
 /**
  * Formatting runs in `body`. Telegram only; empty means none recorded.
  */
-entities: Array<Entity>, };
+entities: Array<Entity>, 
+/**
+ * The album this message was sent in, shared by its members: Telegram's
+ * `grouped_id`, as a string because it exceeds a JavaScript number.
+ */
+album: string | null, };

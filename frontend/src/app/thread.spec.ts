@@ -11,7 +11,7 @@ import { Conversation, Message, MessagesPage, ReplyTo } from './models';
 import { MAX_RESTORE_PAGES } from './thread-window';
 
 function msg(id: string, ts: number): Message {
-  return { id, ts, sender: 's', is_outgoing: false, kind: 'message', body: 'b', deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [], reply_to: null, delivery: null, entities: [] };
+  return { id, ts, sender: 's', is_outgoing: false, kind: 'message', body: 'b', deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [], reply_to: null, delivery: null, entities: [], album: null };
 }
 
 function makeApi() {
@@ -70,8 +70,39 @@ describe('Thread', () => {
     thread.messages.set([msg('a', d1), msg('b', d1b), msg('c', d2)]);
     const groups = thread.dayGroups();
     expect(groups.length).toBe(2);
-    expect(groups[0].items.map((m) => m.id)).toEqual(['a', 'b']);
-    expect(groups[1].items.map((m) => m.id)).toEqual(['c']);
+    expect(groups[0].runs.map((r) => r.map((m) => m.id))).toEqual([['a'], ['b']]);
+    expect(groups[1].runs.map((r) => r.map((m) => m.id))).toEqual([['c']]);
+  });
+
+  it('dayGroups joins adjacent members of one album into a run', () => {
+    const { thread } = setup();
+    const at = (h: number): number => new Date(2026, 5, 1, h, 0, 0).getTime();
+    const inAlbum = (id: string, h: number, album: string, sender = 's'): Message => ({
+      ...msg(id, at(h)),
+      album,
+      sender,
+    });
+    thread.messages.set([
+      msg('a', at(8)),
+      inAlbum('p1', 9, 'A'),
+      inAlbum('p2', 9, 'A'),
+      inAlbum('p3', 9, 'A'),
+      // Another album straight after: a new run, not a longer one.
+      inAlbum('q1', 10, 'B'),
+      // Same album id, different sender: not the same set.
+      inAlbum('q2', 10, 'B', 'other'),
+      msg('z', at(11)),
+      // A member separated from its album by another message stands alone.
+      inAlbum('p4', 12, 'A'),
+    ]);
+    expect(thread.dayGroups()[0].runs.map((r) => r.map((m) => m.id))).toEqual([
+      ['a'],
+      ['p1', 'p2', 'p3'],
+      ['q1'],
+      ['q2'],
+      ['z'],
+      ['p4'],
+    ]);
   });
 
   it('rendered window equals retained messages when nothing is collapsed', () => {

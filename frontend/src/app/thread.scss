@@ -118,7 +118,7 @@
 .thread-search {
   position: sticky;
   top: 3rem; // exactly the head's height, so the two never overlap
-  z-index: 2;
+  z-index: 3; // above the day headers, which pin behind it
   background: var(--mat-sys-surface);
   padding: 0.5rem 0.5rem 0;
   mat-form-field {
@@ -428,6 +428,76 @@
   }
 }
 
+// An album is one bubble: its members' pictures tile a two-column grid under
+// one meta line, and the captioned member comes last at full width.
+.run.album {
+  max-width: min(70%, 40rem);
+  margin: 0.4rem 0;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--mat-sys-on-surface) 5%, transparent);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.2rem;
+  &.out {
+    margin-left: auto;
+    background: color-mix(in srgb, var(--mat-sys-primary) 15%, transparent);
+  }
+  .album-meta {
+    grid-column: 1 / -1;
+    font: var(--mat-sys-label-small);
+    opacity: 0.7;
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    user-select: none;
+    .tag.delivery.unread {
+      opacity: 0.55;
+    }
+  }
+  > .msg {
+    max-width: none;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    background: none;
+    .meta {
+      display: none;
+    }
+    .attach {
+      margin-top: 0;
+    }
+    .attach a {
+      display: block;
+    }
+    .attach img {
+      width: 100%;
+      max-width: none;
+      max-height: none;
+      aspect-ratio: 1;
+      object-fit: cover;
+    }
+  }
+  // Its own two-column tiling, so its picture lines up with the others and the
+  // caption closes the set.
+  > .msg.captioned {
+    grid-column: 1 / -1;
+    order: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.2rem;
+    > * {
+      grid-column: 1 / -1;
+    }
+    > .attach {
+      grid-column: auto;
+    }
+    > .body {
+      order: 1;
+    }
+  }
+}
+
 // Phone: full-width pane with a working back button and roomier bubbles.
 @media (max-width: 767px) {
   :host {
@@ -438,6 +508,12 @@
   }
   .msg {
     max-width: 85%;
+  }
+  .run.album {
+    max-width: min(85%, 40rem);
+  }
+  .run.album > .msg {
+    max-width: none;
   }
 }
 

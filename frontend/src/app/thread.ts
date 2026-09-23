@@ -174,17 +174,24 @@ export class Thread {
 
 
 
-  /** Rendered messages grouped by day, each with a sticky date header. */
+  /** Rendered messages grouped by day, each with a sticky date header. Within a
+   *  day, adjacent members of one album (same `album`, same sender) form a run,
+   *  drawn as one set; every other message is a run of one. */
   readonly dayGroups = computed(() => {
-    const groups: { key: string; ts: number; items: Message[] }[] = [];
+    const groups: { key: string; ts: number; runs: Message[][] }[] = [];
     let lastKey: string | null = null;
     for (const m of this.rendered()) {
       const key = new Date(m.ts).toDateString();
-      if (key === lastKey) {
-        groups[groups.length - 1].items.push(m);
-      } else {
-        groups.push({ key, ts: m.ts, items: [m] });
+      if (key !== lastKey) {
+        groups.push({ key, ts: m.ts, runs: [] });
         lastKey = key;
+      }
+      const runs = groups[groups.length - 1].runs;
+      const prev = runs.at(-1)?.at(-1);
+      if (m.album != null && prev?.album === m.album && prev.sender === m.sender) {
+        runs[runs.length - 1].push(m);
+      } else {
+        runs.push([m]);
       }
     }
     return groups;

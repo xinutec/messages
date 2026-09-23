@@ -72,8 +72,21 @@
       @for (g of dayGroups(); track g.key) {
         <section>
           <div class="day"><span>{{ g.ts | date: 'fullDate' }}</span></div>
-          @for (m of g.items; track m.id) {
-            <div class="msg" [class.out]="m.is_outgoing" [class.landed]="landedId() === m.id" [attr.data-id]="m.id" [attr.data-ts]="m.ts">
+          @for (run of g.runs; track run[0].id) {
+          <!-- An album is one set: its members share a grid and one meta line. -->
+          <div class="run" [class.album]="run.length > 1" [class.out]="run[0].is_outgoing">
+            @if (run.length > 1) {
+              <div class="meta album-meta">
+                <span>{{ run[0].sender }}</span>
+                <span>{{ run[0].ts | date: 'shortTime' }}</span>
+                @if (run[run.length - 1].delivery; as d) {
+                  <span class="tag delivery" [class.unread]="deliveryPending(d)"
+                        [title]="readers(d)">{{ deliveryLabel(d) }}</span>
+                }
+              </div>
+            }
+            @for (m of run; track m.id) {
+            <div class="msg" [class.out]="m.is_outgoing" [class.captioned]="!!m.body" [class.landed]="landedId() === m.id" [attr.data-id]="m.id" [attr.data-ts]="m.ts">
               <div class="meta">
                 <span>{{ m.sender }}</span>
                 <span>{{ m.ts | date: 'shortTime' }}</span>
@@ -209,6 +222,8 @@
                 </div>
               }
             </div>
+            }
+          </div>
           }
         </section>
       }

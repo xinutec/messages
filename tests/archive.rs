@@ -508,6 +508,14 @@ async fn seed(pool: &MySqlPool) {
     .execute(pool)
     .await
     .unwrap();
+    // An album: msgs 12 and 13 were sent as one set. The id is above 2^53.
+    sqlx::query(
+        "UPDATE telegram_messages SET grouped_id = 7777777777777777777
+          WHERE conversation_id = 4242 AND msg_id IN (12, 13)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
     // Formatting on msg 11, one run retracted.
     sqlx::query(
         "INSERT INTO telegram_message_entities
@@ -1765,6 +1773,42 @@ async fn a_telegram_page_is_speech_in_order_including_a_shared_second() {
         "the row above the boundary shares its second and must not come back"
     );
     assert!(!oldest.has_more, "that is the start of the conversation");
+}
+
+/// Album members carry Telegram's `grouped_id`, as a string: it exceeds what a
+/// JavaScript number holds exactly.
+#[tokio::test]
+async fn a_telegram_album_member_carries_its_album_id() {
+    let Some(pool) = seeded_pool().await else {
+        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
+        return;
+    };
+    let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 50, PageDir::Older)
+        .await
+        .unwrap();
+    let albums: Vec<(Option<&str>, Option<&str>)> = page
+        .messages
+        .iter()
+        .map(|m| (m.body.as_deref(), m.album.as_deref()))
+        .collect();
+    assert_eq!(
+        albums,
+        vec![
+            (Some("hoi"), None),
+            (Some("ook hoi"), None),
+            (Some("same second"), Some("7777777777777777777")),
+            (Some("third go"), Some("7777777777777777777")),
+            (Some("forget it"), None),
+            (Some("changed the photo"), None),
+            (Some("telegram touched this"), None),
+        ]
+    );
+
+    let signal =
+        archive::messages_page(&pool, Origin::Signal, "dm:alice", None, 50, PageDir::Older)
+            .await
+            .unwrap();
+    assert!(signal.messages.iter().all(|m| m.album.is_none()));
 }
 
 /// Telegram's edit history, the original first: it carries no edit date.
