@@ -113,6 +113,30 @@ test("scroll position is reflected in ?from", async ({ page }) => {
   await page.waitForURL(/[?&]from=1000\b/);
 });
 
+/** A reader who scrolls back in the same frame as the open's scroll to the end
+ *  gets one scroll event for both, and stays where they scrolled. The nightly
+ *  gate met this under load; here it is forced by scrolling from a
+ *  MutationObserver, before the first frame. */
+test("a scroll in the open's own frame is the reader's", async ({ page }) => {
+  await mockApi(page);
+  await page.route("**/api/conversations/**/messages**", (r) =>
+    r.fulfill({ json: { messages: bulk("only", 1000, 40), has_more: false, next_cursor: null, prev_cursor: null } }),
+  );
+  await page.addInitScript(() => {
+    const mo = new MutationObserver(() => {
+      const t = document.querySelector<HTMLElement>(".thread");
+      if (t && t.scrollTop > 0) {
+        t.scrollTop = 0;
+        mo.disconnect();
+      }
+    });
+    mo.observe(document, { childList: true, subtree: true, attributes: true });
+  });
+  await page.goto("/conversation/signal/dm:a");
+  await page.waitForURL(/[?&]from=1000\b/);
+  expect(await page.locator(".thread").evaluate((t) => t.scrollTop)).toBeLessThan(50);
+});
+
 /** The `?from` debounce must not fire after leaving the conversation: it
  *  navigates with `replaceUrl`, which would put the reader back in it. */
 test("leaving during the ?from debounce does not navigate back into the thread", async ({ page }) => {

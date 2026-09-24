@@ -73,11 +73,12 @@ export class ThreadWindow {
   private following = true;
 
   /** The container height at the last scroll, so a scroll the resize caused is
-   *  not taken for the reader's. */
-  private hostHeight = 0;
+   *  not taken for the reader's. Null until the first scroll, which has nothing
+   *  to have resized from. */
+  private hostHeight: number | null = null;
   /** The content height likewise, so growth below a reader at the end is not
    *  taken for them leaving. */
-  private hostScrollHeight = 0;
+  private hostScrollHeight: number | null = null;
 
   /** The observer behind `observeShrink`, and the message block it watches. */
   private ro: ResizeObserver | null = null;
@@ -154,8 +155,8 @@ export class ThreadWindow {
   noteScroll(): void {
     const h = this.host.clientHeight;
     const sh = this.host.scrollHeight;
-    const grew = Math.max(0, sh - this.hostScrollHeight);
-    const resized = h !== this.hostHeight;
+    const grew = this.hostScrollHeight == null ? 0 : Math.max(0, sh - this.hostScrollHeight);
+    const resized = this.hostHeight != null && h !== this.hostHeight;
     this.hostHeight = h;
     this.hostScrollHeight = sh;
     if (resized) return;

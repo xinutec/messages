@@ -85,6 +85,18 @@ describe('ThreadWindow', () => {
     expect(win.repinAfterResize()).toBe(false);
   });
 
+  it('takes the first scroll event for where the reader is, not for a resize', () => {
+    // The open's scroll to the end and a reader's scroll back in the same frame
+    // arrive as one event: the first `noteScroll`, with no height recorded yet.
+    const { win, host } = harness(10);
+    win.scrollToBottom();
+    Object.defineProperty(host, 'clientHeight', { value: 800 });
+    Object.defineProperty(host, 'scrollHeight', { value: 3000 });
+    host.scrollTop = 0;
+    win.noteScroll();
+    expect(win.repinAfterResize()).toBe(false);
+  });
+
   it('follows the end again for a fresh conversation', () => {
     const { win } = harness(10);
     win.scrollToTs(1_000_005);
