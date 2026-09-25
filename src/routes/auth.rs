@@ -13,7 +13,7 @@ use serde::Deserialize;
 use crate::error::AppError;
 use crate::nextcloud::identity;
 use crate::pending_login;
-use crate::session::{COOKIE_NAME, UserSession, create_session, destroy_session};
+use crate::session::{COOKIE_NAME, SESSION_TTL_DAYS, UserSession, create_session, destroy_session};
 use crate::state::AppState;
 
 fn session_cookie(value: String) -> Cookie<'static> {
@@ -22,7 +22,7 @@ fn session_cookie(value: String) -> Cookie<'static> {
         .http_only(true)
         .secure(true)
         .same_site(SameSite::Lax)
-        .max_age(time::Duration::days(7))
+        .max_age(time::Duration::days(SESSION_TTL_DAYS))
         .build()
 }
 
@@ -39,9 +39,12 @@ fn pending_cookie(value: String) -> Cookie<'static> {
 }
 
 /// Only allow same-site internal paths as a post-login redirect target.
+///
+/// A browser reads `/\host` as `//host`, another site, so a backslash in the
+/// second place is refused like a slash.
 pub fn validate_return_to(return_to: Option<&str>) -> String {
     match return_to {
-        Some(p) if p.starts_with('/') && !p.starts_with("//") => p.to_string(),
+        Some(p) if p.starts_with('/') && !p[1..].starts_with(['/', '\\']) => p.to_string(),
         _ => "/".to_string(),
     }
 }

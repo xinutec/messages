@@ -5,25 +5,14 @@
 //! configuring nobody must reject everybody.
 
 use messages::config::{Config, parse_allowed_users};
-use sqlx::mysql::MySqlConnectOptions;
 
-/// A Config with nonsense in every field `is_allowed` does not read.
+#[path = "support/config.rs"]
+mod support;
+
 fn cfg(allowed: &[&str]) -> Config {
     Config {
-        db_options: MySqlConnectOptions::new(),
-        session_secret: String::new(),
-        bind_addr: String::new(),
-        nc_base_url: String::new(),
-        nc_client_id: String::new(),
-        nc_client_secret: String::new(),
-        nc_redirect_uri: String::new(),
         allowed_users: allowed.iter().map(|s| (*s).to_string()).collect(),
-        static_dir: None,
-        attachments_dir: String::new(),
-        link_images_dir: "/link-images".into(),
-        telegram_media_dir: "/telegram-media".into(),
-        link_fetcher_url: "http://link-fetch.invalid".into(),
-        irc_send: None,
+        ..support::config()
     }
 }
 
@@ -39,7 +28,6 @@ fn a_listed_user_is_allowed_and_nobody_else_is() {
 
 #[test]
 fn an_empty_list_admits_nobody() {
-    // An empty list admits nobody.
     let c = cfg(&[]);
     assert!(!c.is_allowed("pippijn"));
     assert!(!c.is_allowed(""));

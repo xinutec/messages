@@ -6,21 +6,27 @@
 //! No archive table is touched: `tests/archive.rs` drops and recreates them in
 //! the same database, in parallel. Every case is decided before the handler
 //! reads the archive; the `is_status` guard is tested in `tests/archive.rs`.
-//! Only `sessions` is used. Skipped without `MESSAGES_TEST_DATABASE_URL`.
+//! Only `sessions` is used. Skipped without `MESSAGES_TEST_DATABASE_URL`, except
+//! in CI.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use messages::config::Config;
 use messages::session::{self, UserSession};
 use messages::state::AppState;
 use sqlx::MySqlPool;
-use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
+use sqlx::mysql::MySqlPoolOptions;
 use tower::ServiceExt;
 
+#[path = "support/database.rs"]
+mod database;
+#[path = "support/config.rs"]
+mod support;
+
+/// The secret `support::config` signs with.
 const SECRET: &str = "test session secret";
 
 async fn pool() -> Option<MySqlPool> {
-    let url = std::env::var("MESSAGES_TEST_DATABASE_URL").ok()?;
+    let url = database::database_url()?;
     let pool = MySqlPoolOptions::new()
         .max_connections(4)
         .connect(&url)
@@ -32,28 +38,13 @@ async fn pool() -> Option<MySqlPool> {
     Some(pool)
 }
 
-fn cfg() -> Config {
-    Config {
-        db_options: MySqlConnectOptions::new(),
-        session_secret: SECRET.to_string(),
-        bind_addr: String::new(),
-        nc_base_url: "https://nc.invalid".to_string(),
-        nc_client_id: String::new(),
-        nc_client_secret: String::new(),
-        nc_redirect_uri: String::new(),
-        allowed_users: vec!["pippijn".to_string()],
-        static_dir: None,
-        attachments_dir: "/nonexistent".to_string(),
-        link_images_dir: "/link-images".into(),
-        telegram_media_dir: "/telegram-media".into(),
-        link_fetcher_url: "http://link-fetch.invalid".into(),
-        // No send key; the send cases below are decided before it matters.
-        irc_send: None,
-    }
-}
-
 fn app(pool: MySqlPool) -> axum::Router {
-    messages::routes::router(AppState::new(pool, cfg(), reqwest::Client::new(), None))
+    messages::routes::router(AppState::new(
+        pool,
+        support::config(),
+        reqwest::Client::new(),
+        None,
+    ))
 }
 
 async fn go(pool: &MySqlPool, method: &str, uri: &str, cookie: Option<&str>) -> StatusCode {

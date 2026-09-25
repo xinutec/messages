@@ -1,8 +1,11 @@
-//! The telemetry label is the endpoint's security boundary, not a cosmetic cap.
-//!
-//! A newline in a label would forge log lines.
+//! What the client sends is flattened before it is logged: a newline in any
+//! field would forge log lines.
 
-use messages::routes::telemetry::one_line;
+use std::sync::{Arc, Mutex};
+
+use axum::Json;
+use messages::routes::telemetry::{TelemetryEvent, one_line, record};
+use messages::session::{AuthUser, UserSession};
 
 /// Cap used throughout, matching the endpoint's own.
 const MAX: usize = 160;
@@ -58,4 +61,46 @@ fn a_bidi_override_cannot_disguise_what_the_line_says() {
         "a bidi override survived: {flat:?}"
     );
     assert_eq!(flat, "Save Delete");
+}
+
+/// Every field the client controls, not only the label, reaches the log as one
+/// line.
+#[tokio::test]
+async fn no_field_of_an_event_can_forge_a_log_line() {
+    #[derive(Clone, Default)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let log = Captured::default();
+    let writer = log.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let forged = "x\nclient-event kind=tap path=/admin label=forged";
+    record(
+        AuthUser(UserSession {
+            user_id: "pippijn".to_string(),
+            display_name: "Pippijn".to_string(),
+        }),
+        Json(vec![TelemetryEvent {
+            kind: forged.to_string(),
+            path: forged.to_string(),
+            label: Some(forged.to_string()),
+            at: 0,
+        }]),
+    )
+    .await;
+
+    let text = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
+    assert_eq!(text.lines().count(), 1, "one event, one line: {text:?}");
 }

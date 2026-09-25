@@ -1,11 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { SwUpdate, VersionReadyEvent } from '@angular/service-worker';
-import {
-  type PagePort,
-  type ServiceWorkerPort,
-  SwUpdates,
-  type UpdateOutcome,
-} from '@xinutec/ui-harness/sw-updates';
+import { type PagePort, type ServiceWorkerPort, SwUpdates } from '@xinutec/ui-harness/sw-updates';
 import { filter } from 'rxjs';
 
 /** Session-scoped, so it survives the very reload it guards. */
@@ -58,10 +53,5 @@ export class AppSwUpdates {
 
   start(): void {
     this.policy.start();
-  }
-
-  /** Manual "check for updates", for a settings screen to call. */
-  checkNow(): Promise<UpdateOutcome> {
-    return this.policy.checkNow();
   }
 }

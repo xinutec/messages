@@ -8,22 +8,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { App } from './app';
 import { MessagesApi } from './messages-api';
 import { Conversation, Me, Message, MessagesPage, SearchHit } from './models';
+import { testMessage } from './test-message';
 
-function msg(id: string, ts: number, extra: Partial<Message> = {}): Message {
-  return {
-    id,
-    ts,
-    sender: 's',
-    is_outgoing: false,
-    kind: 'message',
-    body: 'b',
-    deleted: false,
-    edited: false,
-    reactions: [],
-    attachments: [], link_images: [], link_offers: [], edits: [], reply_to: null, delivery: null, entities: [], album: null, previews: [],
-    ...extra,
-  };
-}
+const msg = (id: string, ts: number): Message => testMessage({ id, ts });
 
 const CONVS: Conversation[] = [
   { origin: 'signal', id: 'dm:a', name: 'Alice', kind: 'dm', network: null, message_count: 5, last_ts: 200 },
@@ -217,17 +204,20 @@ describe('App', () => {
     const spy = vi.spyOn(console, 'warn').mockImplementation((...a) => { warnings.push(a.map(String).join(' ')); });
     const err = vi.spyOn(console, 'error').mockImplementation((...a) => { warnings.push(a.map(String).join(' ')); });
     try {
-    const fixture = render(makeApi({ search: vi.fn(() => of(both)) }));
-    fixture.componentInstance.query.set('line');
-    fixture.componentInstance.runSearch();
-    await fixture.whenStable();
-    fixture.detectChanges();
+      const fixture = render(makeApi({ search: vi.fn(() => of(both)) }));
+      fixture.componentInstance.query.set('line');
+      fixture.componentInstance.runSearch();
+      await fixture.whenStable();
+      fixture.detectChanges();
 
-    const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
-    expect(text).toContain('first line');
-    expect(text).toContain('second line');
-    expect(warnings.join(' ')).not.toContain('NG0955');
-    } finally { spy.mockRestore(); err.mockRestore(); }
+      const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
+      expect(text).toContain('first line');
+      expect(text).toContain('second line');
+      expect(warnings.join(' ')).not.toContain('NG0955');
+    } finally {
+      spy.mockRestore();
+      err.mockRestore();
+    }
   });
 
   it('title falls back when a conversation is unnamed', () => {

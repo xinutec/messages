@@ -102,7 +102,34 @@ pub struct LinkImageState {
     pub content_type: Option<String>,
 }
 
-/// GET /api/gchat-attachments/{id} → stream a Google Chat picture from the PVC.
+/// Serve bytes the archive says it holds.
+///
+/// By the basename of the stored name under `dir`, so a stored path cannot
+/// escape the mount. The row claims the bytes exist, so a read failure means the
+/// mount and the archive disagree: logged, and a 404 for the client.
+async fn serve_held(
+    what: &str,
+    dir: &str,
+    stored: &str,
+    content_type: Option<String>,
+) -> Result<Response, AppError> {
+    let Some(name) = std::path::Path::new(stored).file_name() else {
+        tracing::warn!("{what}: the stored name names no file: {stored:?}");
+        return Err(AppError::NotFound);
+    };
+    let path = std::path::Path::new(dir).join(name);
+    let bytes = tokio::fs::read(&path).await.map_err(|e| {
+        tracing::warn!(
+            "{what}: recorded as held, but reading {} failed: {e}",
+            path.display()
+        );
+        AppError::NotFound
+    })?;
+    let ct = content_type.unwrap_or_else(|| "application/octet-stream".to_string());
+    Ok(([(header::CONTENT_TYPE, ct)], Body::from(bytes)).into_response())
+}
+
+/// GET /api/gchat-attachments/{id} → a Google Chat picture from the PVC.
 ///
 /// Each origin's attachment ids are independent, hence a route per origin.
 pub async fn gchat_attachment(
@@ -110,86 +137,40 @@ pub async fn gchat_attachment(
     AuthUser(_user): AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Response, AppError> {
-    let Some((content_type, stored_path)) = archive::gchat_attachment_blob(&app.pool, id).await?
-    else {
+    let Some((content_type, stored)) = archive::gchat_attachment_blob(&app.pool, id).await? else {
         return Err(AppError::NotFound);
     };
-    // As for Signal's below: a read failure here means the mount and the
-    // archive disagree, which is logged.
-    let Some(name) = std::path::Path::new(&stored_path).file_name() else {
-        tracing::warn!("gchat attachment {id}: stored_path names no file: {stored_path:?}");
-        return Err(AppError::NotFound);
-    };
-    let path = std::path::Path::new(&app.cfg.attachments_dir).join(name);
-    let bytes = tokio::fs::read(&path).await.map_err(|e| {
-        tracing::warn!(
-            "gchat attachment {id}: archive says stored, but reading {} failed: {e}",
-            path.display()
-        );
-        AppError::NotFound
-    })?;
-    let ct = content_type.unwrap_or_else(|| "application/octet-stream".to_string());
-    Ok(([(axum::http::header::CONTENT_TYPE, ct)], bytes).into_response())
+    let what = format!("gchat attachment {id}");
+    serve_held(&what, &app.cfg.attachments_dir, &stored, content_type).await
 }
 
-/// GET /api/attachments/{id} → stream a Signal attachment blob from the PVC.
-/// Resolves by basename under the attachments dir, so a stored path cannot
-/// escape the mount.
+/// GET /api/attachments/{id} → a Signal attachment from the PVC.
 pub async fn attachment(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Response, AppError> {
-    let Some((content_type, stored_path)) = archive::attachment_blob(&app.pool, id).await? else {
+    let Some((content_type, stored)) = archive::attachment_blob(&app.pool, id).await? else {
         return Err(AppError::NotFound);
     };
-    // `stored_path` is set, so the archive claims the bytes exist. A read
-    // failure is a mount or a removed file, and its cause is logged; the client
-    // still gets 404.
-    let Some(name) = std::path::Path::new(&stored_path).file_name() else {
-        tracing::warn!("attachment {id}: stored_path names no file: {stored_path:?}");
-        return Err(AppError::NotFound);
-    };
-    let path = std::path::Path::new(&app.cfg.attachments_dir).join(name);
-    let bytes = tokio::fs::read(&path).await.map_err(|e| {
-        tracing::warn!(
-            "attachment {id}: archive says stored, but reading {} failed: {e}",
-            path.display()
-        );
-        AppError::NotFound
-    })?;
-    let ct = content_type.unwrap_or_else(|| "application/octet-stream".to_string());
-    Ok(([(header::CONTENT_TYPE, ct)], Body::from(bytes)).into_response())
+    let what = format!("attachment {id}");
+    serve_held(&what, &app.cfg.attachments_dir, &stored, content_type).await
 }
 
 /// GET /api/telegram-media/{id} → bytes the archive holds for a Telegram message.
 ///
 /// `{id}` is the message's API id. The join keeps the lookup inside that
-/// message's conversation. Read failures are logged as for `attachment`.
+/// message's conversation.
 pub async fn telegram_media(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Response, AppError> {
-    let Some((content_type, stored_name)) = archive::telegram_media_blob(&app.pool, id).await?
-    else {
+    let Some((content_type, stored)) = archive::telegram_media_blob(&app.pool, id).await? else {
         return Err(AppError::NotFound);
     };
-    // Only the file component of the stored name is used.
-    let Some(name) = std::path::Path::new(&stored_name).file_name() else {
-        tracing::warn!("telegram media {id}: stored_name names no file: {stored_name:?}");
-        return Err(AppError::NotFound);
-    };
-    let path = std::path::Path::new(&app.cfg.telegram_media_dir).join(name);
-    let bytes = tokio::fs::read(&path).await.map_err(|e| {
-        tracing::warn!(
-            "telegram media {id}: archive says stored, but reading {} failed: {e}",
-            path.display()
-        );
-        AppError::NotFound
-    })?;
-    let ct = content_type.unwrap_or_else(|| "application/octet-stream".to_string());
-    Ok(([(header::CONTENT_TYPE, ct)], Body::from(bytes)).into_response())
+    let what = format!("telegram media {id}");
+    serve_held(&what, &app.cfg.telegram_media_dir, &stored, content_type).await
 }
 
 /// GET /api/telegram-media/{id}/state → has it arrived yet?
@@ -232,23 +213,11 @@ pub async fn link_image(
     AuthUser(_user): AuthUser,
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
-    let Some((content_type, stored_name)) = archive::link_image_blob(&app.pool, &id).await? else {
+    let Some((content_type, stored)) = archive::link_image_blob(&app.pool, &id).await? else {
         return Err(AppError::NotFound);
     };
-    // As for `attachment`: a read failure means the mount and the row disagree.
-    let Some(name) = std::path::Path::new(&stored_name).file_name() else {
-        tracing::warn!("link image {id}: stored_name names no file: {stored_name:?}");
-        return Err(AppError::NotFound);
-    };
-    let path = std::path::Path::new(&app.cfg.link_images_dir).join(name);
-    let bytes = tokio::fs::read(&path).await.map_err(|e| {
-        tracing::warn!(
-            "link image {id}: recorded as stored, but reading {} failed: {e}",
-            path.display()
-        );
-        AppError::NotFound
-    })?;
-    Ok(([(header::CONTENT_TYPE, content_type)], Body::from(bytes)).into_response())
+    let what = format!("link image {id}");
+    serve_held(&what, &app.cfg.link_images_dir, &stored, Some(content_type)).await
 }
 
 /// POST /api/link-images/{id}/request → a reader tapped "show this picture".

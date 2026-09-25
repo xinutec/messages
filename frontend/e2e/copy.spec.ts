@@ -1,5 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import type { MessageKind } from "../src/app/models";
+import { testMessage } from "../src/app/test-message";
+
 /**
  * Copying a selection out of a thread with a real drag, ⌘C and clipboard;
  * jsdom's Selection API is wrong here.
@@ -13,9 +16,8 @@ const ME = { user_id: "u1", display_name: "Test User" };
 const conversations = (total = 4) => [
   { origin: "irc", id: "7", name: "#chan", kind: "group", network: "xinutec", message_count: total, last_ts: Date.UTC(2026, 7, 14, 9, 5) },
 ];
-const line = (id: string, ts: number, sender: string, body: string, kind = "message") => ({
-  id, ts, sender, body, kind, is_outgoing: false, deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [],
-});
+const line = (id: string, ts: number, sender: string, body: string, kind: MessageKind = "message") =>
+  testMessage({ id, ts, sender, body, kind });
 
 const MESSAGES = [
   line("a", Date.UTC(2026, 7, 13, 14, 32), "pippijn", "hello there"),

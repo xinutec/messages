@@ -1,7 +1,5 @@
-//! Client activity trace: what the browser sees and the API does not.
-//!
-//! What the browser sees and the API does not: taps that hit a cache, disabled
-//! controls, route changes. Folded into the request log, so a session reads as
+//! Client activity trace: what the browser sees and the API does not, such as
+//! taps that hit a cache, disabled controls and route changes. Folded into the request log, so a session reads as
 //! one timeline: `client-event kind=nav path=/conversations`, then
 //! `client-event kind=tap label="Signal"`, then the request the tap caused.
 //! Nothing is stored.
@@ -36,10 +34,10 @@ pub struct TelemetryEvent {
 /// The client batches a handful; this bounds a buggy or hostile one.
 const MAX_EVENTS: usize = 100;
 
-/// Longest label kept, in characters.
+/// Longest field kept, in characters.
 ///
 /// Counted in chars, so a multi-byte glyph is never split.
-const MAX_LABEL: usize = 160;
+const MAX_FIELD: usize = 160;
 
 /// Format characters that are invisible, or that reorder what is displayed.
 ///
@@ -58,9 +56,10 @@ fn is_deceptive_format(c: char) -> bool {
     )
 }
 
-/// Flatten a client-supplied label to a single harmless log field.
+/// Flatten a client-supplied string to a single harmless log field.
 ///
-/// The endpoint's security boundary: a newline in a label would forge log lines.
+/// The endpoint's security boundary: a newline in any logged field would forge
+/// log lines, so every string the client sends passes through here.
 /// Control characters become spaces, whitespace runs collapse (which also
 /// catches U+2028 and U+2029), and the result is capped in chars.
 pub fn one_line(label: &str, max: usize) -> String {
@@ -92,12 +91,11 @@ pub async fn record(
     Json(events): Json<Vec<TelemetryEvent>>,
 ) -> StatusCode {
     for e in events.into_iter().take(MAX_EVENTS) {
-        let label = one_line(&e.label.unwrap_or_default(), MAX_LABEL);
         tracing::info!(
             user = %user.user_id,
-            kind = %e.kind,
-            path = %e.path,
-            label = %label,
+            kind = %one_line(&e.kind, MAX_FIELD),
+            path = %one_line(&e.path, MAX_FIELD),
+            label = %one_line(&e.label.unwrap_or_default(), MAX_FIELD),
             at = e.at,
             "client-event"
         );

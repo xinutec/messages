@@ -1,6 +1,4 @@
 import { Component, computed, inject, signal } from '@angular/core';
-import { AppSwUpdates } from './sw-updates';
-import { BUILD_INFO } from './build-info';
 import { DatePipe } from '@angular/common';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, NavigationEnd, Router, RouterOutlet } from '@angular/router';
@@ -15,8 +13,10 @@ import { MatToolbarModule } from '@angular/material/toolbar';
 
 import { Subject, catchError, filter, fromEvent, of, switchMap } from 'rxjs';
 
+import { BUILD_INFO } from './build-info';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
+import { AppSwUpdates } from './sw-updates';
 import { Telemetry } from './telemetry';
 import { Conversation, Origin, SearchHit } from './models';
 
@@ -54,8 +54,8 @@ export class App {
   readonly loading = this.store.loading;
   readonly conversations = this.store.conversations;
 
-  /** One label per origin, in filter-button order. A `Record`, so a new origin
-   *  is a type error until labelled. */
+  /** One label per origin. A `Record`, so a new origin is a type error until
+   *  labelled; `origins` gives the button order. */
   readonly originLabels: Record<Origin, string> = {
     signal: 'Signal',
     gchat: 'Google Chat',
@@ -188,7 +188,6 @@ export class App {
     this.results.set(null);
     this.searchFailed.set(false);
   }
-
 
   /** Open a search result on the message it found. Routes from the hit, which
    *  carries origin and id, so it works before the list loads. `from: null`: a

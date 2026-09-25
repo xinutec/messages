@@ -8,8 +8,6 @@
 //!       204                 reached it; not a picture we may inline
 //!       502                 could not reach it, or it broke the limits
 
-use std::time::Duration;
-
 use anyhow::Result;
 use axum::extract::State;
 use axum::http::{StatusCode, header};
@@ -86,6 +84,3 @@ async fn fetch(State(svc): State<Svc>, Json(req): Json<FetchRequest>) -> Respons
         }
     }
 }
-
-/// Timeouts are the service's own business; the caller sets its own on top.
-const _: Duration = Duration::from_secs(0);

@@ -79,7 +79,8 @@
   }
 }
 
-// Telegram formatting runs. Kinds without a rule render as plain text.
+// Formatting runs, Telegram's and Signal's. Kinds without a rule render as
+// plain text.
 .body {
   .fmt-bold { font-weight: 600; }
   .fmt-italic { font-style: italic; }

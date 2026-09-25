@@ -28,7 +28,8 @@ pub struct Config {
     /// Address to bind the HTTP server to.
     pub bind_addr: String,
 
-    /// Base URL of the Nextcloud instance, no trailing slash.
+    /// Base URL of the Nextcloud instance, no trailing slash. Checked to parse
+    /// at load.
     pub nc_base_url: String,
     /// OAuth2 client registered in NC admin (identity flow).
     pub nc_client_id: String,
@@ -99,11 +100,14 @@ impl Config {
 
         let allowed_users = parse_allowed_users(&env("ALLOWED_USERS")?);
 
+        let nc_base_url = env("NC_BASE_URL")?.trim_end_matches('/').to_string();
+        url::Url::parse(&nc_base_url).context("NC_BASE_URL must be a URL")?;
+
         Ok(Self {
             db_options,
             session_secret: env("SESSION_SECRET")?,
             bind_addr: env_or("BIND_ADDR", "0.0.0.0:8080"),
-            nc_base_url: env("NC_BASE_URL")?.trim_end_matches('/').to_string(),
+            nc_base_url,
             nc_client_id: env("NC_CLIENT_ID")?,
             nc_client_secret: env("NC_CLIENT_SECRET")?,
             nc_redirect_uri: env("NC_REDIRECT_URI")?,

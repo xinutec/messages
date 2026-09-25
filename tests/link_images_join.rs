@@ -12,8 +12,11 @@ use url::Url;
 const HELD: &str = "https://cloud.example.org/nc/s/HELD";
 const REFUSED: &str = "https://example.com/not-a-picture";
 
+#[path = "support/database.rs"]
+mod database;
+
 async fn pool() -> Option<MySqlPool> {
-    let url = std::env::var("MESSAGES_TEST_DATABASE_URL").ok()?;
+    let url = database::database_url()?;
     let pool = MySqlPoolOptions::new()
         .max_connections(2)
         .connect(&url)

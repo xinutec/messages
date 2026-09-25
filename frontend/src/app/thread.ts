@@ -29,7 +29,6 @@ const MEDIA_WATCH_INTERVAL_MS = 4000;
  *  conversation asks again. */
 const MEDIA_WATCH_LIMIT_MS = 15 * 60 * 1000;
 
-
 @Component({
   selector: 'app-thread',
   templateUrl: './thread.html',
@@ -96,19 +95,11 @@ export class Thread {
   }
 
   protected toggleHistory(id: string): void {
-    this.openHistories.update((cur) => {
-      const next = new Set(cur);
-      if (!next.delete(id)) next.add(id);
-      return next;
-    });
+    this.openHistories.update((cur) => toggled(cur, id));
   }
 
   protected toggleReveal(id: string): void {
-    this.revealedIds.update((cur) => {
-      const next = new Set(cur);
-      if (!next.delete(id)) next.add(id);
-      return next;
-    });
+    this.revealedIds.update((cur) => toggled(cur, id));
   }
 
   // Bound from the route; both absent on `/`. The router encodes ids containing
@@ -172,7 +163,9 @@ export class Thread {
   /** Pending re-check for a scroll whose work was deferred — see `deferScrollCheck`. */
   private recheck: ReturnType<typeof setTimeout> | null = null;
 
-
+  /** Bumped whenever the thread is reset. A fetch answering an older generation
+   *  belongs to a conversation the reader has left, and is dropped. */
+  private generation = 0;
 
   /** Rendered messages grouped by day, each with a sticky date header. Within a
    *  day, adjacent members of one album (same `album`, same sender) form a run,
@@ -279,9 +272,15 @@ export class Thread {
   readonly landedId = signal<string | null>(null);
 
   private resetState(): void {
+    this.generation++;
     this.messages.set([]);
     this.win.reset();
     this.revealedIds.set(new Set());
+    this.openHistories.set(new Set());
+    for (const id of [...this.watching.keys()]) this.stopWatching(id);
+    this.asking.set(new Set());
+    this.loadingOlder.set(false);
+    this.loadingNewer.set(false);
     this.hasMore.set(false);
     this.floating.set(false);
     this.landedId.set(null);
@@ -302,10 +301,13 @@ export class Thread {
     const half = Math.floor(PAGE / 2);
     const at = 'at' in where ? where.at : undefined;
     const on = 'onDay' in where ? where.onDay : undefined;
+    const gen = this.generation;
     const [older, newer] = await Promise.all([
       firstValueFrom(this.api.messages(origin, id, at, half, 'older', on)),
       firstValueFrom(this.api.messages(origin, id, at, half, 'at', on)),
     ]);
+    // Another load has begun; it owns the thread now.
+    if (gen !== this.generation) return true;
 
     // An unreadable cursor makes the halves the two ends of the archive, out of
     // order. Their order is the only evidence, so check it and let the caller
@@ -486,6 +488,7 @@ export class Thread {
    *  opens pinned to the latest message, like a chat app. */
   private async loadThread(origin: Origin, id: string): Promise<void> {
     this.resetState();
+    const gen = this.generation;
     this.threadError.set(false);
     this.loadingThread.set(true);
     const at = this.route.snapshot.queryParamMap.get('at');
@@ -498,6 +501,7 @@ export class Thread {
       // `?on`, a picked date, likewise.
       if (onDay != null && (await this.loadAround(origin, id, { onDay }))) return;
       const first = await firstValueFrom(this.api.messages(origin, id, undefined, PAGE));
+      if (gen !== this.generation) return;
       let msgs = first.messages;
       let hasMore = first.has_more;
       let cursor = first.next_cursor;
@@ -515,6 +519,7 @@ export class Thread {
       ) {
         pages++;
         const older = await firstValueFrom(this.api.messages(origin, id, cursor, PAGE));
+        if (gen !== this.generation) return;
         if (older.messages.length === 0) break;
         msgs = [...older.messages, ...msgs];
         hasMore = older.has_more;
@@ -534,6 +539,7 @@ export class Thread {
       this.win.trimToWindow();
       // `watchContent` holds the bottom as images load.
     } catch {
+      if (gen !== this.generation) return;
       this.threadError.set(true);
       this.loadingThread.set(false);
     }
@@ -610,10 +616,11 @@ export class Thread {
     if (this.messages().length === 0) return;
 
     this.polling = true;
+    const gen = this.generation;
     try {
       const page = await firstValueFrom(this.api.messages(o, i, undefined, PAGE));
       // The reader may have switched conversations meanwhile.
-      if (this.origin() !== o || this.id() !== i) return;
+      if (gen !== this.generation) return;
 
       const held = this.messages();
       const known = new Set(held.map((m) => m.id));
@@ -890,13 +897,15 @@ export class Thread {
     }, 60);
   }
 
-  private fetchOlder(): void {
+  fetchOlder(): void {
     const o = this.origin();
     const i = this.id();
     if (o == null || i == null || !this.hasMore() || this.cursor == null || this.loadingOlder()) return;
     this.loadingOlder.set(true);
+    const gen = this.generation;
     this.api.messages(o, i, this.cursor, PAGE).subscribe({
       next: (page) => {
+        if (gen !== this.generation) return;
         // Prepend, keeping the viewport on the same message.
         this.win.keepingAnchor('fetchOlder', () => {
           this.messages.update((cur) => [...page.messages, ...cur]);
@@ -907,7 +916,9 @@ export class Thread {
         this.win.enforceMax('bottom');
         this.scheduleFromParam();
       },
-      error: () => this.loadingOlder.set(false),
+      error: () => {
+        if (gen === this.generation) this.loadingOlder.set(false);
+      },
     });
   }
 
@@ -920,8 +931,10 @@ export class Thread {
     if (o == null || i == null || !this.floating()) return;
     if (this.newerCursor == null || this.loadingNewer()) return;
     this.loadingNewer.set(true);
+    const gen = this.generation;
     this.api.messages(o, i, this.newerCursor, PAGE, 'newer').subscribe({
       next: (page) => {
+        if (gen !== this.generation) return;
         // Append, keeping the viewport on the same message.
         this.win.keepingAnchor('fetchNewer', () => {
           this.messages.update((cur) => [...cur, ...page.messages]);
@@ -932,7 +945,9 @@ export class Thread {
         this.win.enforceMax('top');
         this.scheduleFromParam();
       },
-      error: () => this.loadingNewer.set(false),
+      error: () => {
+        if (gen === this.generation) this.loadingNewer.set(false);
+      },
     });
   }
 
@@ -958,4 +973,11 @@ export class Thread {
       replaceUrl: true,
     });
   }
+}
+
+/** `set` with `id` added if absent, removed if present. */
+function toggled(set: ReadonlySet<string>, id: string): ReadonlySet<string> {
+  const next = new Set(set);
+  if (!next.delete(id)) next.add(id);
+  return next;
 }

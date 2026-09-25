@@ -1,5 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import type { Attachment } from "../src/app/models";
+import { testMessage } from "../src/app/test-message";
+
 /**
  * Opening a conversation lands at the latest message, even after lazy images
  * on the newest messages load and grow. jsdom has no scroll geometry, so only a
@@ -19,8 +22,8 @@ const LOREM =
   "tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, " +
   "quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo.";
 
-function imageAttachment(k: number) {
-  return { id: `att${k}`, content_type: "image/svg+xml", file_name: `pic${k}.svg`, size: 12_345, available: true, is_image: true };
+function imageAttachment(k: number): Attachment {
+  return { id: `att${k}`, content_type: "image/svg+xml", file_name: `pic${k}.svg`, size: 12_345, available: true, is_image: true, fetch: null };
 }
 
 // One full page of the newest messages, far taller than the viewport, with
@@ -28,18 +31,16 @@ function imageAttachment(k: number) {
 // four carry an image.
 function newestPage(n: number) {
   const base = Date.UTC(2026, 0, 1, 12, 0, 0);
-  return Array.from({ length: n }, (_, k) => ({
-    id: String(k),
-    ts: base + k * 60_000,
-    sender: "Alice",
-    is_outgoing: k % 5 === 0,
-    body: k % 3 === 0 ? `msg${k} — ${LOREM}` : `msg${k}`,
-    deleted: false,
-    edited: false,
-    reactions: [],
-    attachments: k >= n - 4 ? [imageAttachment(k)] : [],
-    link_images: [], link_offers: [], edits: [],
-  }));
+  return Array.from({ length: n }, (_, k) =>
+    testMessage({
+      id: String(k),
+      ts: base + k * 60_000,
+      sender: "Alice",
+      is_outgoing: k % 5 === 0,
+      body: k % 3 === 0 ? `msg${k} — ${LOREM}` : `msg${k}`,
+      attachments: k >= n - 4 ? [imageAttachment(k)] : [],
+    }),
+  );
 }
 
 async function mockApi(page: Page): Promise<void> {
@@ -107,17 +108,14 @@ test("opening a long conversation lands at the latest message", async ({ page })
  * scrolling to the bottom of a floating window fetches forward.
  */
 function pageAt(prefix: string, startTs: number, n: number) {
-  return Array.from({ length: n }, (_, k) => ({
-    id: `${prefix}${k}`,
-    ts: startTs + k * 60_000,
-    sender: "Alice",
-    is_outgoing: false,
-    body: k % 3 === 0 ? `${prefix}${k} — ${LOREM}` : `${prefix}${k}`,
-    deleted: false,
-    edited: false,
-    reactions: [],
-    attachments: [], link_images: [], link_offers: [], edits: [],
-  }));
+  return Array.from({ length: n }, (_, k) =>
+    testMessage({
+      id: `${prefix}${k}`,
+      ts: startTs + k * 60_000,
+      sender: "Alice",
+      body: k % 3 === 0 ? `${prefix}${k} — ${LOREM}` : `${prefix}${k}`,
+    }),
+  );
 }
 
 test("scrolling to the bottom of a landing fetches forwards", async ({ page }) => {

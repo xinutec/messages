@@ -7,6 +7,8 @@ import {
   expectIconFontLoaded,
 } from "@xinutec/ui-harness";
 
+import { testMessage } from "../src/app/test-message";
+
 /**
  * Phone-width layout checks: the conversation list and an open thread at a
  * Pixel viewport, with the backend mocked and busy data. Asserts that no two
@@ -38,12 +40,12 @@ const PIXELS =
 /** A busy thread: every element that can crowd or overflow a bubble. */
 const THREAD = {
   messages: [
-    { id: "1", ts: Date.UTC(2026, 0, 1, 12, 0), sender: "Alice Andersson", is_outgoing: false,
+    testMessage({ id: "1", ts: Date.UTC(2026, 0, 1, 12, 0), sender: "Alice Andersson", is_outgoing: false,
       body: "Morning! Did the referral letter come through yet? The clinic said they'd post it but it's been almost two weeks now.",
       deleted: false, edited: true, reply_to: null, delivery: null, entities: [], album: null, previews: [], reactions: [{ emoji: "👍", count: 3, who: ["Bob Bytecode", "Dana", "Test User"] }, { emoji: "❤️", count: 2, who: [] }, { emoji: "🎉", count: 1, who: ["Dana"] }],
-      attachments: [], link_images: [], link_offers: [], edits: [] },
+      attachments: [], link_images: [], link_offers: [], edits: [] }),
     // A full-length reply excerpt on an outgoing bubble, the narrowest.
-    { id: "2", ts: Date.UTC(2026, 0, 1, 12, 4), sender: "Test User", is_outgoing: true,
+    testMessage({ id: "2", ts: Date.UTC(2026, 0, 1, 12, 4), sender: "Test User", is_outgoing: true,
       body: "Not yet — chasing them this afternoon.", deleted: false, edited: false, reactions: [],
       // Two readers, on the narrowest bubble; rendered through a DM route and a
       // group route below.
@@ -51,30 +53,30 @@ const THREAD = {
       reply_to: { id: "1", cursor: "1_1", ts: Date.UTC(2026, 0, 1, 12, 0), sender: "Alice Andersson",
         excerpt: "Morning! Did the referral letter come through yet? The clinic said they'd post it but it's been almost two weeks n…",
         deleted: false },
-      attachments: [{ id: "a1", content_type: "application/pdf", file_name: "referral-scan-2026-final-v2.pdf", size: 91234, available: false, is_image: false }], link_images: [], link_offers: [], edits: [] },
+      attachments: [{ id: "a1", content_type: "application/pdf", file_name: "referral-scan-2026-final-v2.pdf", size: 91234, available: false, is_image: false, fetch: null }], link_images: [], link_offers: [], edits: [] }),
     // An unresolved quote, the longer wording.
-    { id: "3", ts: Date.UTC(2026, 0, 1, 12, 9), sender: "Alice Andersson", is_outgoing: false,
+    testMessage({ id: "3", ts: Date.UTC(2026, 0, 1, 12, 9), sender: "Alice Andersson", is_outgoing: false,
       body: "Thankyouuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu", deleted: false, edited: false, reactions: [], delivery: null,
       reply_to: { id: null, cursor: null, ts: Date.UTC(2025, 5, 3, 8, 30), sender: null, excerpt: null, deleted: false },
-      attachments: [], link_images: [], link_offers: [], edits: [] },
+      attachments: [], link_images: [], link_offers: [], edits: [] }),
     // Deleted, with words and a stored image behind the reveal.
-    { id: "4", ts: Date.UTC(2026, 0, 1, 12, 11), sender: "Alice Andersson", is_outgoing: false,
+    testMessage({ id: "4", ts: Date.UTC(2026, 0, 1, 12, 11), sender: "Alice Andersson", is_outgoing: false,
       body: "something said and then taken back", deleted: true, edited: false, reactions: [], reply_to: null, delivery: null, entities: [], album: null, previews: [],
-      attachments: [{ id: "a2", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true }], link_images: [], link_offers: [], edits: [] },
+      attachments: [{ id: "a2", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true, fetch: null }], link_images: [], link_offers: [], edits: [] }),
     // A Telegram service event, rendered as an action.
-    { id: "5", ts: Date.UTC(2026, 0, 1, 12, 20), sender: "Alice Andersson", is_outgoing: false,
+    testMessage({ id: "5", ts: Date.UTC(2026, 0, 1, 12, 20), sender: "Alice Andersson", is_outgoing: false,
       kind: "action", body: "made a 55-minute video call", deleted: false, edited: false,
       reactions: [], reply_to: null, delivery: null, entities: [], album: null, previews: [],
-      attachments: [], link_images: [], link_offers: [], edits: [] },
+      attachments: [], link_images: [], link_offers: [], edits: [] }),
     // Named reactors: the names are in a title and must not widen the chip.
-    { id: "6", ts: Date.UTC(2026, 0, 1, 12, 24), sender: "Alice Andersson", is_outgoing: false,
+    testMessage({ id: "6", ts: Date.UTC(2026, 0, 1, 12, 24), sender: "Alice Andersson", is_outgoing: false,
       body: "Six of us are in.", deleted: false, edited: false, reply_to: null, delivery: null, entities: [], album: null, previews: [],
       reactions: [{ emoji: "👍", count: 6, who: ["Alice Andersson", "Bob Bytecode", "Test User", "Dana", "Erin Example"] },
                   { emoji: "🎉", count: 1, who: ["Dana"] }],
-      attachments: [], link_images: [], link_offers: [], edits: [] },
+      attachments: [], link_images: [], link_offers: [], edits: [] }),
     // A link preview, and a reply to a message the archive does not hold whose
     // quote carried its author and text.
-    { id: "10", ts: Date.UTC(2026, 0, 1, 12, 27), sender: "Alice Andersson", is_outgoing: false,
+    testMessage({ id: "10", ts: Date.UTC(2026, 0, 1, 12, 27), sender: "Alice Andersson", is_outgoing: false,
       body: "Look: https://xinutec.org/a/rather/long/path/that/keeps/going/and/going", deleted: false, edited: false, reactions: [],
       reply_to: { id: null, cursor: null, ts: Date.UTC(2025, 5, 3, 8, 30), sender: "Bob Bytecode",
         excerpt: "Did anybody write down the address of that place with the enormous climbing wall and the good coffee?", deleted: false },
@@ -82,42 +84,41 @@ const THREAD = {
       previews: [{ url: "https://xinutec.org/a/rather/long/path/that/keeps/going/and/going",
                    title: "A page with a title long enough to need wrapping on a phone screen",
                    description: "And a description that says a little more about what is on the page." }],
-      attachments: [], link_images: [], link_offers: [], edits: [] },
+      attachments: [], link_images: [], link_offers: [], edits: [] }),
     // An outgoing album of three: a captioned member, then two pictures.
-    { id: "7", ts: Date.UTC(2026, 0, 1, 12, 30), sender: "Test User", is_outgoing: true,
+    testMessage({ id: "7", ts: Date.UTC(2026, 0, 1, 12, 30), sender: "Test User", is_outgoing: true,
       body: "From the climbing wall on Saturday, the three of us at the top of the orange route", deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740993", previews: [],
       delivery: { state: "delivered", read_by: [] },
-      attachments: [{ id: "p7", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true }], link_images: [], link_offers: [], edits: [] },
-    { id: "8", ts: Date.UTC(2026, 0, 1, 12, 30), sender: "Test User", is_outgoing: true,
+      attachments: [{ id: "p7", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true, fetch: null }], link_images: [], link_offers: [], edits: [] }),
+    testMessage({ id: "8", ts: Date.UTC(2026, 0, 1, 12, 30), sender: "Test User", is_outgoing: true,
       body: null, deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740993", previews: [],
       delivery: { state: "delivered", read_by: [] },
-      attachments: [{ id: "p8", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true }], link_images: [], link_offers: [], edits: [] },
-    { id: "9", ts: Date.UTC(2026, 0, 1, 12, 30), sender: "Test User", is_outgoing: true,
+      attachments: [{ id: "p8", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true, fetch: null }], link_images: [], link_offers: [], edits: [] }),
+    testMessage({ id: "9", ts: Date.UTC(2026, 0, 1, 12, 30), sender: "Test User", is_outgoing: true,
       body: null, deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740993", previews: [],
       delivery: { state: "delivered", read_by: [] },
-      attachments: [{ id: "p9", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true }], link_images: [], link_offers: [], edits: [] },
+      attachments: [{ id: "p9", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true, fetch: null }], link_images: [], link_offers: [], edits: [] }),
   ],
   has_more: false,
   next_cursor: null,
+  prev_cursor: null,
 };
 
 /** A thread taller than the pane, so there is a scroll position the keyboard
  *  can disturb. */
 const LONG_THREAD = {
-  messages: Array.from({ length: 60 }, (_, i) => ({
-    id: String(i + 1),
-    ts: Date.UTC(2026, 0, 2, 10, 0) + i * 60_000,
-    sender: i % 2 ? "Test User" : "Alice Andersson",
-    is_outgoing: i % 2 === 1,
-    body: `line number ${i + 1} of the conversation`,
-    deleted: false,
-    edited: false,
-    reply_to: null,
-    // Every delivery rung is laid out; `delivered` is the longest word.
-    delivery: i % 2 === 1 ? { state: ["sent", "delivered", "read"][(i >> 1) % 3], read_by: [] } : null,
-    reactions: [],
-    attachments: [], link_images: [], link_offers: [], edits: [],
-  })),
+  messages: Array.from({ length: 60 }, (_, i) =>
+    testMessage({
+      id: String(i + 1),
+      ts: Date.UTC(2026, 0, 2, 10, 0) + i * 60_000,
+      sender: i % 2 ? "Test User" : "Alice Andersson",
+      is_outgoing: i % 2 === 1,
+      body: `line number ${i + 1} of the conversation`,
+      // Every delivery rung is laid out; `delivered` is the longest word.
+      delivery:
+        i % 2 === 1 ? { state: (["sent", "delivered", "read"] as const)[(i >> 1) % 3], read_by: [] } : null,
+    }),
+  ),
   has_more: false,
   next_cursor: null,
   prev_cursor: null,
@@ -171,7 +172,7 @@ test("open thread — meta + reactions + attachment: lays out cleanly @ phone wi
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
-/// A link preview renders as a card, and an unresolved quote shows what it quoted.
+// A link preview renders as a card, and an unresolved quote shows what it quoted.
 test("a link preview and a quoted message from before the archive @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   await page.goto("/conversation/signal/dm:a");
@@ -187,7 +188,7 @@ test("a link preview and a quoted message from before the archive @ phone width"
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
-/// An album renders as one set: its members in one grid, under one meta line.
+// An album renders as one set: its members in one grid, under one meta line.
 test("an album is one set under one meta line @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   await page.goto("/conversation/signal/dm:a");
@@ -205,8 +206,8 @@ test("an album is one set under one meta line @ phone width", async ({ page }, t
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
-/// Who reacted lives in a `title`, which cannot change the chip's size, and
-/// `count` stays the number.
+// Who reacted lives in a `title`, which cannot change the chip's size, and
+// `count` stays the number.
 test("who reacted is a hover, and the chip still says the count @ phone width", async ({ page }) => {
   await mockApi(page);
   await page.goto("/conversation/signal/dm:a");
@@ -220,7 +221,7 @@ test("who reacted is a hover, and the chip still says the count @ phone width", 
   await expect(page.getByText("❤️ 2")).toHaveAttribute("title", "");
 });
 
-/// Two receipts are everybody in a DM, and two people in a group.
+// Two receipts are everybody in a DM, and two people in a group.
 test("a group counts its readers; a DM says read @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   const tag = () => page.locator('.msg[data-id="2"] .tag.delivery');
@@ -238,8 +239,8 @@ test("a group counts its readers; a DM says read @ phone width", async ({ page }
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
-/// The shell's search box is hidden at phone width with a thread open, so the
-/// thread carries its own.
+// The shell's search box is hidden at phone width with a thread open, so the
+// thread carries its own.
 test("searching a conversation is reachable with the thread open @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   await page.route("**/api/search**", (r) =>
@@ -278,7 +279,7 @@ test("searching a conversation is reachable with the thread open @ phone width",
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
-/// "No matches" is a claim, so a failed request must not make it.
+// "No matches" is a claim, so a failed request must not make it.
 test("a failed conversation search says so rather than \"no matches\" @ phone width", async ({ page }) => {
   await mockApi(page);
   await page.route("**/api/search**", (r) => r.fulfill({ status: 500, body: "" }));
@@ -292,8 +293,8 @@ test("a failed conversation search says so rather than \"no matches\" @ phone wi
   await expect(page.getByText("No matches in this conversation.")).toHaveCount(0);
 });
 
-/// The date goes to the server as local midnight in milliseconds; the server
-/// converts it to the origin's unit.
+// The date goes to the server as local midnight in milliseconds; the server
+// converts it to the origin's unit.
 test("picking a date asks the server for that day @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   const asked: string[] = [];
@@ -318,17 +319,15 @@ test("picking a date asks the server for that day @ phone width", async ({ page 
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
-/// Formatting renders from the body: the visible text is exactly what was sent.
+// Formatting renders from the body: the visible text is exactly what was sent.
 test("telegram formatting renders from the body, never from the entity @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   const body = "👋 bold here, a link https://example.com/x and a secret plus unknownfmt";
   await page.route("**/messages**", (r) =>
     r.fulfill({
       json: {
-        messages: [{
-          id: "1", ts: Date.UTC(2026, 0, 1, 12, 0), sender: "Alice Andersson", is_outgoing: false,
-          kind: "message", body, deleted: false, edited: false, reactions: [], attachments: [],
-          link_images: [], link_offers: [], edits: [], reply_to: null, delivery: null,
+        messages: [testMessage({
+          id: "1", ts: Date.UTC(2026, 0, 1, 12, 0), sender: "Alice Andersson", body,
           entities: [
             // UTF-16 units: the leading 👋 is two, so "bold" starts at 3.
             { kind: "bold", offset: 3, length: 4, url: null },
@@ -337,7 +336,7 @@ test("telegram formatting renders from the body, never from the entity @ phone w
             // An unknown kind renders as plain text.
             { kind: "someFutureKind", offset: 61, length: 10, url: null },
           ],
-        }],
+        })],
         has_more: false, next_cursor: null, prev_cursor: null,
       },
     }),

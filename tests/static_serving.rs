@@ -6,8 +6,10 @@ use axum::http::{Request, StatusCode};
 use messages::config::Config;
 use messages::routes;
 use messages::state::AppState;
-use sqlx::mysql::MySqlConnectOptions;
 use tower::ServiceExt;
+
+#[path = "support/config.rs"]
+mod support;
 
 /// A static dir shaped like a real `ng build` output.
 struct StaticDir(std::path::PathBuf);
@@ -40,20 +42,8 @@ async fn get(path: &str) -> (StatusCode, String) {
         .connect_lazy("mysql://unused:unused@127.0.0.1:1/unused")
         .expect("lazy pool");
     let cfg = Config {
-        db_options: MySqlConnectOptions::new(),
-        session_secret: String::new(),
-        bind_addr: String::new(),
-        nc_base_url: String::new(),
-        nc_client_id: String::new(),
-        nc_client_secret: String::new(),
-        nc_redirect_uri: String::new(),
-        allowed_users: Vec::new(),
         static_dir: Some(dir.0.to_string_lossy().into_owned()),
-        attachments_dir: String::new(),
-        telegram_media_dir: "/telegram-media".into(),
-        link_images_dir: "/link-images".into(),
-        link_fetcher_url: "http://link-fetch.invalid".into(),
-        irc_send: None,
+        ..support::config()
     };
     let res = routes::router(AppState::new(pool, cfg, reqwest::Client::new(), None))
         .oneshot(Request::get(path).body(Body::empty()).unwrap())

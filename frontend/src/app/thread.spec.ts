@@ -1,18 +1,17 @@
 import { ComponentRef, provideZonelessChangeDetection } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
-import { BehaviorSubject, Observable, of } from 'rxjs';
+import { BehaviorSubject, Observable, Subject, of } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 
 import { Thread } from './thread';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
 import { Conversation, Message, MessagesPage, ReplyTo } from './models';
+import { testMessage } from './test-message';
 import { MAX_RESTORE_PAGES } from './thread-window';
 
-function msg(id: string, ts: number): Message {
-  return { id, ts, sender: 's', is_outgoing: false, kind: 'message', body: 'b', deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [], reply_to: null, delivery: null, entities: [], album: null, previews: [] };
-}
+const msg = (id: string, ts: number): Message => testMessage({ id, ts });
 
 function makeApi() {
   return {
@@ -47,6 +46,30 @@ function page(
   return of({ messages, has_more, next_cursor, prev_cursor });
 }
 
+/** Let the thread finish loading: its fetches resolve on later ticks. */
+async function settle(thread: Thread, tries = 40): Promise<void> {
+  for (let i = 0; i < tries && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+}
+
+/** A thread whose route carries `params`, as a deep link or a landing does. */
+function setupWithQuery(params: Record<string, string>): ComponentFixture<Thread> {
+  TestBed.configureTestingModule({
+    providers: [
+      provideZonelessChangeDetection(),
+      provideRouter([]),
+      { provide: MessagesApi, useValue: makeApi() },
+      {
+        provide: ActivatedRoute,
+        useValue: {
+          snapshot: { queryParamMap: convertToParamMap(params) },
+          queryParamMap: of(convertToParamMap(params)),
+        },
+      },
+    ],
+  });
+  return TestBed.createComponent(Thread);
+}
+
 /** A thread routed to an IRC conversation and settled on `held`. The initial
  *  load must finish first: `pollNewer` declines to run during one. */
 async function opened(held: Message[]): Promise<{ thread: Thread; api: { messages: ReturnType<typeof vi.fn> } }> {
@@ -56,7 +79,7 @@ async function opened(held: Message[]): Promise<{ thread: Thread; api: { message
   ref.setInput('origin', 'irc');
   ref.setInput('id', '7');
   fixture.detectChanges();
-  for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+  await settle(thread);
   expect(thread.messages().map((m) => m.id)).toEqual(held.map((m) => m.id));
   return { thread, api };
 }
@@ -169,6 +192,31 @@ describe('Thread', () => {
     expect(thread.sendError()).toContain('after the next import');
   });
 
+  it('drops an older page that arrives after the reader switched conversations', async () => {
+    const { thread, ref, fixture } = setup();
+    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    api.messages.mockReturnValue(page([msg('a2', 200)], true, 'older-than-a2'));
+    ref.setInput('origin', 'irc');
+    ref.setInput('id', '7');
+    fixture.detectChanges();
+    await settle(thread);
+
+    // Scrolling up asks for conversation 7's older page, which is slow.
+    const late = new Subject<MessagesPage>();
+    api.messages.mockReturnValueOnce(late);
+    thread.fetchOlder();
+
+    // The reader opens conversation 8 before it arrives.
+    api.messages.mockReturnValue(page([msg('b1', 500)]));
+    ref.setInput('id', '8');
+    fixture.detectChanges();
+    await settle(thread);
+
+    late.next({ messages: [msg('a1', 100)], has_more: false, next_cursor: null, prev_cursor: null });
+    late.complete();
+    expect(thread.messages().map((m) => m.id)).toEqual(['b1']);
+  });
+
   it('merges messages that arrived since the page was loaded', async () => {
     const { thread, api } = await opened([msg('1', 100), msg('2', 200)]);
     api.messages.mockReturnValueOnce(page([msg('1', 100), msg('2', 200), msg('3', 300)]));
@@ -235,7 +283,7 @@ async function threeRendered(): Promise<ComponentFixture<Thread>> {
   ref.setInput('origin', 'irc');
   ref.setInput('id', '7');
   fixture.detectChanges();
-  for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+  await settle(thread);
   fixture.detectChanges();
   return fixture;
 }
@@ -321,7 +369,7 @@ describe('Thread reply jump', () => {
 });
 
 describe('Thread rendering', () => {
-  it('draws an action with its star, which the backend no longer sends', async () => {
+  it('draws an action with its star, which the template supplies', async () => {
     // The body is the words alone; the template supplies the star.
     const { thread, ref, fixture } = setup();
     const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
@@ -334,7 +382,7 @@ describe('Thread rendering', () => {
     ref.setInput('origin', 'irc');
     ref.setInput('id', '7');
     fixture.detectChanges();
-    for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    await settle(thread);
     fixture.detectChanges();
     const bodies = [...(fixture.nativeElement as HTMLElement).querySelectorAll('.msg .body')].map(
       (e) => e.textContent,
@@ -363,7 +411,7 @@ describe('Thread edit history', () => {
     ref.setInput('origin', 'signal');
     ref.setInput('id', 'dm:a');
     fixture.detectChanges();
-    for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    await settle(thread);
     fixture.detectChanges();
     return fixture;
   }
@@ -405,7 +453,7 @@ describe('Thread edit history', () => {
     ref.setInput('origin', 'gchat');
     ref.setInput('id', 'gc1');
     fixture.detectChanges();
-    for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    await settle(thread);
     fixture.detectChanges();
     const el = fixture.nativeElement as HTMLElement;
     expect(el.querySelector('.tag')?.textContent).toContain('edited');
@@ -414,12 +462,11 @@ describe('Thread edit history', () => {
 });
 
 describe('Thread link offers', () => {
-  async function withOffer(): Promise<{ f: ComponentFixture<Thread>; api: { requestLinkImage: ReturnType<typeof vi.fn>; linkImageState: ReturnType<typeof vi.fn> } }> {
+  async function withOffer(): Promise<{ f: ComponentFixture<Thread>; api: { requestLinkImage: ReturnType<typeof vi.fn> } }> {
     const { thread, ref, fixture } = setup();
     const api = TestBed.inject(MessagesApi) as unknown as {
       messages: ReturnType<typeof vi.fn>;
       requestLinkImage: ReturnType<typeof vi.fn>;
-      linkImageState: ReturnType<typeof vi.fn>;
     };
     api.messages.mockReturnValue(
       page([
@@ -434,7 +481,7 @@ describe('Thread link offers', () => {
     ref.setInput('origin', 'irc');
     ref.setInput('id', '7');
     fixture.detectChanges();
-    for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    await settle(thread);
     fixture.detectChanges();
     return { f: fixture, api };
   }
@@ -555,7 +602,7 @@ describe('Thread copy', () => {
     ref.setInput('origin', 'irc');
     ref.setInput('id', '7');
     fixture.detectChanges();
-    for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    await settle(thread);
     fixture.detectChanges();
 
     const text = (fixture.nativeElement as HTMLElement).querySelector('.attach')?.textContent ?? '';
@@ -582,7 +629,7 @@ async function withLinkImage(deleted = false): Promise<ComponentFixture<Thread>>
   ref.setInput('origin', 'irc');
   ref.setInput('id', '7');
   fixture.detectChanges();
-  for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+  await settle(thread);
   fixture.detectChanges();
   return fixture;
 }
@@ -608,7 +655,7 @@ async function withDeleted(withImage = false): Promise<ComponentFixture<Thread>>
   ref.setInput('origin', 'irc');
   ref.setInput('id', '7');
   fixture.detectChanges();
-  for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+  await settle(thread);
   fixture.detectChanges();
   return fixture;
 }
@@ -719,7 +766,7 @@ describe('Thread composer — typing with an IME', () => {
     ref.setInput('origin', 'irc');
     ref.setInput('id', '7');
     fixture.detectChanges();
-    for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    await settle(thread);
     return { thread, api };
   }
 
@@ -750,7 +797,7 @@ describe('Thread composer — typing with an IME', () => {
     expect(api.send).toHaveBeenCalledTimes(1);
   });
 
-  it('sends on a plain Enter, as before', async () => {
+  it('sends on a plain Enter', async () => {
     const { thread, api } = await composer();
     thread.draft.set('hello world');
     const e = enter();
@@ -759,25 +806,12 @@ describe('Thread composer — typing with an IME', () => {
     expect(e.defaultPrevented).toBe(true);
   });
 });
+
 describe('restoring a saved scroll depth', () => {
-/** A stale `?from` older than anything returned, with the API always claiming
- *  another page. */
+  /** A stale `?from` older than anything returned, with the API always claiming
+   *  another page. */
   async function openWithFrom(from: string): Promise<{ calls: number }> {
-    TestBed.configureTestingModule({
-      providers: [
-        provideZonelessChangeDetection(),
-        provideRouter([]),
-        { provide: MessagesApi, useValue: makeApi() },
-        {
-          provide: ActivatedRoute,
-          useValue: {
-            snapshot: { queryParamMap: convertToParamMap({ from }) },
-            queryParamMap: of(convertToParamMap({ from })),
-          },
-        },
-      ],
-    });
-    const fixture = TestBed.createComponent(Thread);
+    const fixture = setupWithQuery({ from });
     const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
     // Every page is newer than `from`, so only the bound ends the loop. The
     // supply is finite so that removing the bound fails rather than hangs.
@@ -788,7 +822,7 @@ describe('restoring a saved scroll depth', () => {
     fixture.componentRef.setInput('id', '7');
     fixture.detectChanges();
     const thread = fixture.componentInstance;
-    for (let i = 0; i < 200 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    await settle(thread, 200);
     expect(thread.loadingThread()).toBe(false);
     return { calls: api.messages.mock.calls.length };
   }
@@ -809,26 +843,12 @@ describe('restoring a saved scroll depth', () => {
 /** Landing on a search hit. `?at` means "put me here", `?from` "I was here";
  *  `at` wins on load and `commitFromParam` replaces it on the first scroll. */
 describe('landing on a search hit', () => {
-/** `newerHasMore`: whether the conversation runs on past the hit. */
+  /** `newerHasMore`: whether the conversation runs on past the hit. */
   async function openAt(at: string, newerHasMore = true): Promise<{
     thread: Thread;
     calls: { cursor?: string; dir?: string }[];
   }> {
-    TestBed.configureTestingModule({
-      providers: [
-        provideZonelessChangeDetection(),
-        provideRouter([]),
-        { provide: MessagesApi, useValue: makeApi() },
-        {
-          provide: ActivatedRoute,
-          useValue: {
-            snapshot: { queryParamMap: convertToParamMap({ at }) },
-            queryParamMap: of(convertToParamMap({ at })),
-          },
-        },
-      ],
-    });
-    const fixture = TestBed.createComponent(Thread);
+    const fixture = setupWithQuery({ at });
     const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
     const calls: { cursor?: string; dir?: string }[] = [];
     api.messages.mockImplementation(
@@ -845,7 +865,7 @@ describe('landing on a search hit', () => {
     fixture.componentRef.setInput('id', '7');
     fixture.detectChanges();
     const thread = fixture.componentInstance;
-    for (let i = 0; i < 40 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    await settle(thread);
     return { thread, calls };
   }
 
@@ -910,11 +930,11 @@ describe('landing again without changing conversation', () => {
     fixture.componentRef.setInput('id', '7');
     fixture.detectChanges();
     const thread = fixture.componentInstance;
-    for (let i = 0; i < 40 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    await settle(thread);
     expect(loads).toBe(1);
 
     qp.next(convertToParamMap({ at: '9000_11' }));
-    for (let i = 0; i < 40 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    await settle(thread);
     expect(loads).toBe(2);
   });
 });
@@ -925,21 +945,7 @@ describe('growing a landing forwards', () => {
     thread: Thread;
     dirs: (string | undefined)[];
   }> {
-    TestBed.configureTestingModule({
-      providers: [
-        provideZonelessChangeDetection(),
-        provideRouter([]),
-        { provide: MessagesApi, useValue: makeApi() },
-        {
-          provide: ActivatedRoute,
-          useValue: {
-            snapshot: { queryParamMap: convertToParamMap({ at: '5000_9' }) },
-            queryParamMap: of(convertToParamMap({ at: '5000_9' })),
-          },
-        },
-      ],
-    });
-    const fixture = TestBed.createComponent(Thread);
+    const fixture = setupWithQuery({ at: '5000_9' });
     const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
     const dirs: (string | undefined)[] = [];
     let n = 0;
@@ -962,7 +968,7 @@ describe('growing a landing forwards', () => {
     fixture.componentRef.setInput('id', '7');
     fixture.detectChanges();
     const thread = fixture.componentInstance;
-    for (let i = 0; i < 40 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    await settle(thread);
     // Render the message block, or `step()` has nothing to measure.
     fixture.detectChanges();
     return { thread, dirs };
@@ -999,21 +1005,7 @@ describe('growing a landing forwards', () => {
  *  cursor reads as absent), so the landing falls back to the newest page. */
 describe('landing with a cursor the server could not read', () => {
   it('falls back to the newest page rather than joining two ends', async () => {
-    TestBed.configureTestingModule({
-      providers: [
-        provideZonelessChangeDetection(),
-        provideRouter([]),
-        { provide: MessagesApi, useValue: makeApi() },
-        {
-          provide: ActivatedRoute,
-          useValue: {
-            snapshot: { queryParamMap: convertToParamMap({ at: 'not-a-cursor' }) },
-            queryParamMap: of(convertToParamMap({ at: 'not-a-cursor' })),
-          },
-        },
-      ],
-    });
-    const fixture = TestBed.createComponent(Thread);
+    const fixture = setupWithQuery({ at: 'not-a-cursor' });
     const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
     api.messages.mockImplementation(
       (_o: unknown, _i: unknown, cursor?: string, _l?: number, dir?: string) => {
@@ -1026,7 +1018,7 @@ describe('landing with a cursor the server could not read', () => {
     fixture.componentRef.setInput('id', '7');
     fixture.detectChanges();
     const thread = fixture.componentInstance;
-    for (let i = 0; i < 40 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    await settle(thread);
 
     expect(thread.messages().map((m) => m.id)).toEqual(['newest']);
     // Not floating: this is the newest page.
@@ -1038,21 +1030,7 @@ describe('landing with a cursor the server could not read', () => {
  *  scroll. */
 describe('marking the message that was landed on', () => {
   async function land(): Promise<Thread> {
-    TestBed.configureTestingModule({
-      providers: [
-        provideZonelessChangeDetection(),
-        provideRouter([]),
-        { provide: MessagesApi, useValue: makeApi() },
-        {
-          provide: ActivatedRoute,
-          useValue: {
-            snapshot: { queryParamMap: convertToParamMap({ at: '5000_9' }) },
-            queryParamMap: of(convertToParamMap({ at: '5000_9' })),
-          },
-        },
-      ],
-    });
-    const fixture = TestBed.createComponent(Thread);
+    const fixture = setupWithQuery({ at: '5000_9' });
     const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
     api.messages.mockImplementation(
       (_o: unknown, _i: unknown, _c?: string, _l?: number, dir?: string) =>
@@ -1064,7 +1042,7 @@ describe('marking the message that was landed on', () => {
     fixture.componentRef.setInput('id', '7');
     fixture.detectChanges();
     const thread = fixture.componentInstance;
-    for (let i = 0; i < 40 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    await settle(thread);
     return thread;
   }
 
@@ -1106,7 +1084,7 @@ describe('the delivery tag', () => {
     ref.setInput('origin', 'signal');
     ref.setInput('id', 'dm:a');
     fixture.detectChanges();
-    for (let i = 0; i < 20 && thread.loadingThread(); i++) await new Promise((r) => setTimeout(r, 0));
+    await settle(thread);
     fixture.detectChanges();
     const root = fixture.nativeElement as HTMLElement;
     return (id: string) => root.querySelector(`.msg[data-id="${id}"] .tag.delivery`);

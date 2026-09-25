@@ -41,7 +41,8 @@ reply_to: ReplyTo | null,
  */
 delivery: Delivery | null, 
 /**
- * Formatting runs in `body`. Telegram only; empty means none recorded.
+ * Formatting runs in `body`: Telegram's entities, and Signal's text styles
+ * under the same kinds. Empty means none recorded.
  */
 entities: Array<Entity>, 
 /**

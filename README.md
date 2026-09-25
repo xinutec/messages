@@ -138,7 +138,7 @@ gains another reader.
 | --- | --- | --- | --- | --- |
 | `deleted` | Signal and Telegram; always `false` for Google Chat and IRC | hidden behind a click, body and attachments | `(deleted)` only, attachments included | listed, with `(deleted)` for the snippet |
 | `edited` | Signal and Telegram, by different mechanisms; Telegram's also honours `edit_hide` | `edited` tag | ` (edited)` on the last line | not shown |
-| `edits` | Signal: revision rows via `edit_of_ts`; Telegram: `telegram_message_edits` | behind the `edited` tag | not shown | not shown |
+| `edits` | Signal: revision rows via `edit_of_ts`, left out of pages and counts; Telegram: `telegram_message_edits` | behind the `edited` tag | not shown | Signal: a match in any version is one hit on the edited message |
 | `kind` | IRC, and Telegram service events as `action` | `* ` before the body | `HH:MM  * nick ` prefix | not shown |
 | `entities` | Telegram entities; Signal text styles mapped to the same kinds, from an edited message's newest revision | formatted runs, overlaps combined | plain text | not shown |
 | `is_outgoing` | all origins | `.out` class | nothing; the sender's name carries it | not shown |

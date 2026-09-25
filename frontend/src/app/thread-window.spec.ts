@@ -2,6 +2,7 @@ import { signal } from '@angular/core';
 import { describe, expect, it } from 'vitest';
 
 import { Message } from './models';
+import { testMessage } from './test-message';
 import { MAX_RENDERED, ThreadWindow } from './thread-window';
 
 /** The bookkeeping half of the engine: the cap, window arithmetic, and
@@ -9,18 +10,7 @@ import { MAX_RENDERED, ThreadWindow } from './thread-window';
  *  `e2e/thread-scroll.spec.ts`. */
 
 function msgs(n: number): Message[] {
-  return Array.from({ length: n }, (_, i) => ({
-    id: String(i),
-    ts: 1_000_000 + i,
-    sender: 's',
-    is_outgoing: false,
-    kind: 'message' as const,
-    body: 'b',
-    deleted: false,
-    edited: false,
-    reactions: [],
-    attachments: [], link_images: [], link_offers: [], edits: [], reply_to: null, delivery: null, entities: [], album: null, previews: [],
-  }));
+  return Array.from({ length: n }, (_, i) => testMessage({ id: String(i), ts: 1_000_000 + i }));
 }
 
 function harness(n: number) {

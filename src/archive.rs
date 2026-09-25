@@ -9,8 +9,6 @@ use std::collections::HashMap;
 use crate::link_image::{LinkState, askable};
 use sqlx::{AssertSqlSafe, MySqlPool, Row};
 
-/// Which archive a conversation came from.
-///
 /// Which archive a conversation came from: the URL segment, the `origin` field
 /// and every per-origin match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -37,8 +35,6 @@ impl Origin {
     }
 }
 
-/// Whether a conversation is one-to-one, a group, or a broadcast.
-///
 /// Whether a conversation is one-to-one, a group, or a broadcast. `channel` is
 /// Telegram's alone, kept separate so a reader can leave broadcasts out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -93,7 +89,7 @@ impl MessageKind {
     }
 }
 
-/// Telegram stores unix seconds; the API uses milliseconds.
+/// Telegram and IRC store seconds; the API uses milliseconds.
 pub fn s_to_ms(s: i64) -> i64 {
     s * 1_000
 }
@@ -368,7 +364,8 @@ pub struct Message {
     /// How far this message got. `None` means the archive cannot say: incoming
     /// messages, origins without receipts, and anything sent before capture began.
     pub delivery: Option<Delivery>,
-    /// Formatting runs in `body`. Telegram only; empty means none recorded.
+    /// Formatting runs in `body`: Telegram's entities, and Signal's text styles
+    /// under the same kinds. Empty means none recorded.
     pub entities: Vec<Entity>,
     /// The album this message was sent in, shared by its members: Telegram's
     /// `grouped_id`, as a string because it exceeds a JavaScript number.
@@ -424,10 +421,6 @@ pub fn excerpt(body: Option<&str>) -> Option<String> {
     Some(out)
 }
 
-/// Resolve Signal's quotes for one page.
-///
-/// Signal quotes by timestamp, so a quote of something older than the archive
-/// resolves to nothing.
 /// A Signal quote: the target's timestamp, and its author and text as the quote
 /// carries them.
 struct Quote {
@@ -437,6 +430,8 @@ struct Quote {
     text: Option<String>,
 }
 
+/// Resolve Signal's quotes for one page. Signal quotes by timestamp; a target
+/// the archive does not hold keeps what the quote itself says.
 async fn attach_signal_replies(
     pool: &MySqlPool,
     thread_id: &str,
@@ -552,8 +547,7 @@ async fn attach_gchat_attachments(
     Ok(())
 }
 
-/// Resolve Google Chat's quote-replies for one page.
-/// Google Chat quote-replies name the target's message id within the group.
+/// Resolve Google Chat's quote-replies for one page. They name the target's message id within the group.
 /// Not `thread_id`, which is the topic: a DM message is its own topic but can
 /// still quote another.
 async fn attach_gchat_replies(
@@ -619,7 +613,6 @@ async fn attach_gchat_replies(
     Ok(())
 }
 
-/// Resolve Telegram's replies for one page.
 /// Resolve Telegram's replies for one page. Service events resolve too, since
 /// the page returns them: an id in a [`ReplyTo`] must be somewhere the reader can
 /// be taken.
@@ -758,9 +751,12 @@ async fn attach_edits(
         };
         // Earlier versions, in order: the original's text, then every revision
         // but the newest, each stamped with when it was sent.
-        let older_bodies = std::iter::once(m.body.clone())
-            .chain(list.iter().rev().skip(1).rev().map(|(_, b)| b.clone()));
-        let stamps = std::iter::once(m.ts).chain(list.iter().rev().skip(1).rev().map(|(t, _)| *t));
+        let Some((_, earlier)) = list.split_last() else {
+            continue;
+        };
+        let older_bodies =
+            std::iter::once(m.body.clone()).chain(earlier.iter().map(|(_, b)| b.clone()));
+        let stamps = std::iter::once(m.ts).chain(earlier.iter().map(|(t, _)| *t));
         m.edits = stamps
             .zip(older_bodies)
             .map(|(ts, body)| MessageEdit { ts, body })
@@ -1166,9 +1162,12 @@ pub struct MessagesPage {
 pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
     let mut out = Vec::new();
 
+    // An edit's revision rows are versions, not messages: the page leaves them
+    // out, so the count does too.
     let signal = sqlx::query(
         r"SELECT c.thread_id AS id, c.type AS kind, c.name AS name,
-                 COUNT(m.id) AS cnt, MAX(m.server_ts) AS last_ts
+                 COUNT(CASE WHEN m.edit_of_ts IS NULL THEN m.id END) AS cnt,
+                 MAX(m.server_ts) AS last_ts
           FROM conversations c
           LEFT JOIN messages m ON m.thread_id = c.thread_id
           GROUP BY c.thread_id, c.type, c.name",
@@ -1276,7 +1275,7 @@ pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
             kind: kind_from_is_dm(is_channel == 0),
             network: r.try_get("network")?,
             message_count: r.try_get("cnt")?,
-            last_ts: last_s.map(|s| s * 1000),
+            last_ts: last_s.map(s_to_ms),
         });
     }
 
@@ -1409,13 +1408,12 @@ pub async fn messages_page(
     limit: i64,
     dir: PageDir,
 ) -> Result<MessagesPage> {
-    let page = match origin {
+    let mut page = match origin {
         Origin::Signal => signal_messages(pool, id, cursor, limit, dir).await?,
         Origin::Gchat => gchat_messages(pool, id, cursor, limit, dir).await?,
         Origin::Irc => irc_messages(pool, id, cursor, limit, dir).await?,
         Origin::Telegram => telegram_messages(pool, id, cursor, limit, dir).await?,
     };
-    let mut page = page;
     // Signal stores an edit as a new row pointing at the original; Telegram
     // edits in place and files the old text beside it.
     match origin {
@@ -1429,7 +1427,6 @@ pub async fn messages_page(
         Origin::Gchat | Origin::Irc => {}
     }
     attach_link_images(pool, &mut page.msgs).await?;
-    let page = page;
     let has_more = page.msgs.len() as i64 == limit;
     Ok(MessagesPage {
         messages: page.msgs,
@@ -1523,7 +1520,7 @@ async fn signal_messages(
         }
     };
     // `ORDER BY` takes no bound parameter, hence one literal per direction.
-    // dev-lint: allow-sqlx — `sql` is one of the two literals directly above.
+    // dev-lint: allow-sqlx — `sql` is one of the three literals directly above.
     let rows = sqlx::query(sql)
         .bind(thread_id)
         .bind(cur_ts)
@@ -1791,7 +1788,7 @@ async fn gchat_messages(
         }
     };
     // `ORDER BY` takes no bound parameter, hence one literal per direction.
-    // dev-lint: allow-sqlx — `sql` is one of the two literals directly above.
+    // dev-lint: allow-sqlx — `sql` is one of the three literals directly above.
     let rows = sqlx::query(sql)
         .bind(group_id)
         .bind(cur_ts)
@@ -1888,8 +1885,6 @@ async fn gchat_messages(
     Ok(Fetched::new(msgs, keys, dir))
 }
 
-/// One page of an IRC conversation.
-///
 /// One page of an IRC conversation. irssi logs only `%H:%M`, so many lines share
 /// a timestamp and `id` carries the order: the importer writes files in path
 /// order, and logs only append. Only messages and actions, the population
@@ -1947,7 +1942,7 @@ async fn irc_messages(
         }
     };
     // `ORDER BY` takes no bound parameter, hence one literal per direction.
-    // dev-lint: allow-sqlx — `sql` is one of the two literals directly above.
+    // dev-lint: allow-sqlx — `sql` is one of the three literals directly above.
     let rows = sqlx::query(sql)
         .bind(conversation_id)
         .bind(cur_ts)
@@ -1974,7 +1969,7 @@ async fn irc_messages(
         let body: Option<String> = r.try_get("body")?;
         msgs.push(Message {
             id: id.to_string(),
-            ts: ts_s * 1000,
+            ts: s_to_ms(ts_s),
             sender: r
                 .try_get::<Option<String>, _>("sender")?
                 .unwrap_or_default(),
@@ -2407,20 +2402,34 @@ pub async fn search(
     let mut hits = Vec::new();
 
     // One literal per scope, not a built string; likewise for each origin below.
+    //
+    // A match in an edit's revision row is reported as the message it revises,
+    // where the thread shows it, and a message matching in several versions is
+    // one hit: the newest.
     let sql = if scope.id_for(Origin::Signal).is_some() {
-        r"SELECT m.id AS id, m.thread_id AS cid, c.name AS cname, m.server_ts AS ts,
+        r"SELECT COALESCE(o.id, m.id) AS id, m.thread_id AS cid, c.name AS cname,
+                 COALESCE(o.server_ts, m.server_ts) AS ts,
                  COALESCE(ct.display_name, m.sender_uuid) AS sender, m.body AS body,
-                 m.deleted AS deleted
+                 COALESCE(o.deleted, m.deleted) AS deleted
           FROM messages m
+          LEFT JOIN messages o
+                 ON m.edit_of_ts IS NOT NULL AND o.thread_id = m.thread_id
+                AND o.sender_uuid = m.sender_uuid AND o.server_ts = m.edit_of_ts
+                AND o.edit_of_ts IS NULL
           LEFT JOIN conversations c ON c.thread_id = m.thread_id
           LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
           WHERE m.body LIKE ? AND m.thread_id = ?
           ORDER BY m.server_ts DESC LIMIT ?"
     } else {
-        r"SELECT m.id AS id, m.thread_id AS cid, c.name AS cname, m.server_ts AS ts,
+        r"SELECT COALESCE(o.id, m.id) AS id, m.thread_id AS cid, c.name AS cname,
+                 COALESCE(o.server_ts, m.server_ts) AS ts,
                  COALESCE(ct.display_name, m.sender_uuid) AS sender, m.body AS body,
-                 m.deleted AS deleted
+                 COALESCE(o.deleted, m.deleted) AS deleted
           FROM messages m
+          LEFT JOIN messages o
+                 ON m.edit_of_ts IS NOT NULL AND o.thread_id = m.thread_id
+                AND o.sender_uuid = m.sender_uuid AND o.server_ts = m.edit_of_ts
+                AND o.edit_of_ts IS NULL
           LEFT JOIN conversations c ON c.thread_id = m.thread_id
           LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
           WHERE m.body LIKE ?
@@ -2436,9 +2445,13 @@ pub async fn search(
     } else {
         Vec::new()
     };
+    let mut seen = std::collections::HashSet::new();
     for r in srows {
         let deleted: i8 = r.try_get("deleted")?;
         let id: i64 = r.try_get("id")?;
+        if !seen.insert(id) {
+            continue;
+        }
         let ts: i64 = r.try_get("ts")?;
         hits.push(SearchHit {
             origin: Origin::Signal,
@@ -2607,7 +2620,7 @@ pub async fn search(
             origin: Origin::Irc,
             conversation_id: cid.to_string(),
             conversation_name: r.try_get("cname")?,
-            ts: ts_s * 1000,
+            ts: s_to_ms(ts_s),
             sender: r
                 .try_get::<Option<String>, _>("sender")?
                 .unwrap_or_default(),

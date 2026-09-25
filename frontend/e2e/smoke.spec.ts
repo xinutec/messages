@@ -1,6 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { expectIconFontLoaded, expectNoTextOverlaps } from "@xinutec/ui-harness";
 
+import { testMessage } from "../src/app/test-message";
+
 /**
  * The authenticated shell at a phone viewport, backend mocked: the Material
  * Icons font loads (no ligature words) and no text collides. jsdom sees neither.
@@ -73,7 +75,7 @@ function multiDayThread() {
   for (let d = 0; d < 2; d++) {
     for (let k = 0; k < 25; k++) {
       const ts = base + d * 86_400_000 + k * 60_000;
-      out.push({ id: `${d}-${k}`, ts, sender: "Alice", is_outgoing: false, body: `msg ${d}-${k}`, deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [] });
+      out.push(testMessage({ id: `${d}-${k}`, ts, sender: "Alice", body: `msg ${d}-${k}` }));
     }
   }
   return out;
@@ -84,9 +86,10 @@ test("message body has no spurious leading/trailing whitespace", async ({ page }
   await page.route("**/api/conversations/**/messages**", (r) =>
     r.fulfill({
       json: {
-        messages: [{ id: "1", ts: Date.UTC(2026, 0, 1, 12), sender: "Alice", is_outgoing: false, body: "Hello world", deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [] }],
+        messages: [testMessage({ id: "1", ts: Date.UTC(2026, 0, 1, 12), sender: "Alice", body: "Hello world" })],
         has_more: false,
         next_cursor: null,
+        prev_cursor: null,
       },
     }),
   );

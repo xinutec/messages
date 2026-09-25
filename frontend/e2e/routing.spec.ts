@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { testMessage } from "../src/app/test-message";
+
 /**
  * Navigation state lives in the URL: `/conversation/:origin/:id`, with
  * `?origin` and `?from` as query params, so it survives refresh and Back works.
@@ -12,10 +14,11 @@ const CONVERSATIONS = [
 ];
 const MESSAGES_PAGE = {
   messages: [
-    { id: "1", ts: 1_717_000_000_000, sender: "Alice", is_outgoing: false, body: "hi", deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [] },
+    testMessage({ id: "1", ts: 1_717_000_000_000, sender: "Alice", body: "hi" }),
   ],
   has_more: false,
   next_cursor: null,
+  prev_cursor: null,
 };
 
 async function mockApi(page: Page): Promise<void> {
@@ -47,9 +50,7 @@ test("deep-linking an origin filter restores it on load", async ({ page }) => {
   await expect(page.getByText("Alice")).toHaveCount(0);
 });
 
-function m(ts: number, body: string) {
-  return { id: String(ts), ts, sender: "s", is_outgoing: false, body, deleted: false, edited: false, reactions: [], attachments: [], link_images: [], link_offers: [], edits: [] };
-}
+const m = (ts: number, body: string) => testMessage({ id: String(ts), ts, body });
 
 function bulk(prefix: string, startTs: number, n: number) {
   return Array.from({ length: n }, (_, k) => m(startTs + k * 10, `${prefix}${k}`));

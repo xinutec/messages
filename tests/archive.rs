@@ -2,8 +2,8 @@
 //!
 //! Pure units always run. The database tests seed a fixture into
 //! `MESSAGES_TEST_DATABASE_URL`, which must be a throwaway database: the archive
-//! tables are dropped and recreated. Skipped when it is unset; CI and the gate
-//! supply one. Never point it at the real signal database.
+//! tables are dropped and recreated. Skipped when it is unset, except in CI; CI
+//! and the gate supply one. Never point it at the real signal database.
 
 use messages::archive::{
     self, ConversationKind, DeliveryState, EXCERPT_CHARS, MessageKind, Origin, PageDir, call_text,
@@ -175,8 +175,13 @@ use messages::config::Config;
 use messages::irc_send::IrcSender;
 use messages::state::AppState;
 
+#[path = "support/database.rs"]
+mod database;
+#[path = "support/config.rs"]
+mod support;
+
 async fn test_pool() -> Option<MySqlPool> {
-    let url = std::env::var("MESSAGES_TEST_DATABASE_URL").ok()?;
+    let url = database::database_url()?;
     let pool = MySqlPoolOptions::new()
         .max_connections(4)
         .connect(&url)
@@ -266,6 +271,10 @@ async fn seed(pool: &MySqlPool) {
     for stmt in ddl {
         sqlx::query(stmt).execute(pool).await.expect("ddl");
     }
+    // The app's own tables: a page with a link in it reads `link_images`.
+    messages::db::ensure_schema(pool)
+        .await
+        .expect("the app's own tables");
 
     // Signal: a DM (Alice) with 4 messages + reactions, and a group with 1.
     sqlx::query("INSERT INTO conversations (thread_id, type, name) VALUES ('dm:alice','dm','Alice'),('group:g1','group','Grp')").execute(pool).await.unwrap();
@@ -281,6 +290,14 @@ async fn seed(pool: &MySqlPool) {
          ('dm:alice','me',4000,'gone',1,1,0),
          ('group:g1','alice',5000,'grp findme msg',0,0,0)",
     ).execute(pool).await.unwrap();
+    // ts=3000's edit: a revision row, which is a version, not a fifth message.
+    sqlx::query(
+        "INSERT INTO messages (thread_id, sender_uuid, server_ts, body, is_outgoing, deleted, edited, edit_of_ts)
+         VALUES ('dm:alice','alice',3500,'edited once more',0,0,0,3000)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
     // Quotes, by UPDATE so the thread keeps its four messages: one resolves, one
     // targets a deleted message, one a timestamp the archive does not hold.
     sqlx::query(
@@ -617,7 +634,6 @@ async fn seed(pool: &MySqlPool) {
 #[tokio::test]
 async fn conversations_normalise_and_sort_across_origins() {
     let Some(pool) = seeded_pool().await else {
-        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
         return;
     };
 
@@ -893,6 +909,41 @@ async fn search_spans_origins_finds_deleted_newest_first() {
     );
 }
 
+/// A match in an edit's revision is the edited message: one hit, where the
+/// thread shows it, whichever of its versions matched.
+#[tokio::test]
+async fn a_signal_edit_is_found_as_the_message_it_edits() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let page = archive::messages_page(&pool, Origin::Signal, "dm:alice", None, 100, PageDir::Older)
+        .await
+        .unwrap();
+    let edited = page
+        .messages
+        .iter()
+        .find(|m| m.ts == 3000)
+        .expect("the edited message");
+
+    // Only the revision says this.
+    let hits = archive::search(&pool, "once more", 50, archive::SearchScope::Everywhere)
+        .await
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(
+        parse_cursor(&hits[0].cursor),
+        Some((3000, edited.id.parse().unwrap())),
+        "the hit lands on the message as the thread shows it"
+    );
+    assert_eq!(hits[0].ts, 3000);
+
+    // Both versions say this; it is still one message.
+    let hits = archive::search(&pool, "edited on", 50, archive::SearchScope::Everywhere)
+        .await
+        .unwrap();
+    assert_eq!(hits.len(), 1, "one message, however many versions match");
+}
+
 /// `is_status` must filter inside the IRC scan, before `LIMIT`: the newest
 /// `findme` is the status window's, so filtering after the join would return a
 /// page one short.
@@ -1048,7 +1099,6 @@ async fn irc_page_orders_lines_that_share_a_minute() {
 #[tokio::test]
 async fn irc_target_names_the_network_and_flags_the_status_log() {
     let Some(pool) = seeded_pool().await else {
-        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
         return;
     };
 
@@ -1091,7 +1141,6 @@ async fn irc_target_names_the_network_and_flags_the_status_log() {
 #[tokio::test]
 async fn a_sent_message_and_its_later_import_are_one_row() {
     let Some(pool) = seeded_pool().await else {
-        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
         return;
     };
 
@@ -1167,7 +1216,6 @@ async fn a_sent_message_and_its_later_import_are_one_row() {
 #[tokio::test]
 async fn an_unlogged_send_records_nothing_and_is_not_an_error() {
     let Some(pool) = seeded_pool().await else {
-        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
         return;
     };
 
@@ -1194,7 +1242,6 @@ async fn an_unlogged_send_records_nothing_and_is_not_an_error() {
 #[tokio::test]
 async fn the_echo_takes_its_timestamp_from_the_log_line() {
     let Some(pool) = seeded_pool().await else {
-        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
         return;
     };
 
@@ -1291,20 +1338,8 @@ async fn sending_state(pool: &MySqlPool) -> AppState {
     assert!(sender.is_some(), "the fixture key should stage");
 
     let cfg = Config {
-        db_options: sqlx::mysql::MySqlConnectOptions::new(),
         session_secret: SEND_SECRET.to_string(),
-        bind_addr: String::new(),
-        nc_base_url: "https://nc.invalid".to_string(),
-        nc_client_id: String::new(),
-        nc_client_secret: String::new(),
-        nc_redirect_uri: String::new(),
-        allowed_users: vec!["pippijn".to_string()],
-        static_dir: None,
-        attachments_dir: "/nonexistent".to_string(),
-        link_images_dir: "/link-images".into(),
-        telegram_media_dir: "/telegram-media".into(),
-        link_fetcher_url: "http://link-fetch.invalid".into(),
-        irc_send: None,
+        ..support::config()
     };
     AppState::new(pool.clone(), cfg, reqwest::Client::new(), sender)
 }
@@ -1313,11 +1348,6 @@ const SEND_SECRET: &str = "test session secret";
 
 async fn send_to(pool: &MySqlPool, conversation_id: i32) -> axum::http::StatusCode {
     use tower::ServiceExt;
-
-    // `seed` drops `sessions` and recreates only the archive tables.
-    messages::db::ensure_schema(pool)
-        .await
-        .expect("sessions table");
 
     let cookie = messages::session::create_session(
         pool,
@@ -1353,7 +1383,6 @@ async fn send_to(pool: &MySqlPool, conversation_id: i32) -> axum::http::StatusCo
 #[tokio::test]
 async fn sending_to_the_status_log_is_refused_and_to_a_conversation_is_not() {
     let Some(pool) = seeded_pool().await else {
-        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
         return;
     };
 
@@ -1696,7 +1725,6 @@ async fn a_message_nobody_edited_has_no_history() {
 #[tokio::test]
 async fn telegram_conversations_keep_their_kind_and_count_only_speech() {
     let Some(pool) = seeded_pool().await else {
-        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
         return;
     };
     let convs = archive::list_conversations(&pool).await.unwrap();
@@ -1725,7 +1753,6 @@ async fn telegram_conversations_keep_their_kind_and_count_only_speech() {
 #[tokio::test]
 async fn a_telegram_page_is_speech_in_order_including_a_shared_second() {
     let Some(pool) = seeded_pool().await else {
-        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
         return;
     };
     let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 3, PageDir::Older)
@@ -1784,7 +1811,6 @@ async fn a_telegram_page_is_speech_in_order_including_a_shared_second() {
 #[tokio::test]
 async fn a_telegram_album_member_carries_its_album_id() {
     let Some(pool) = seeded_pool().await else {
-        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
         return;
     };
     let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 50, PageDir::Older)
@@ -1819,7 +1845,6 @@ async fn a_telegram_album_member_carries_its_album_id() {
 #[tokio::test]
 async fn a_telegram_edit_history_starts_with_what_was_said_first() {
     let Some(pool) = seeded_pool().await else {
-        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
         return;
     };
     let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 50, PageDir::Older)
@@ -1857,7 +1882,6 @@ async fn a_telegram_edit_history_starts_with_what_was_said_first() {
 #[tokio::test]
 async fn telegram_reactions_are_drawable_and_a_retraction_keeps_its_words() {
     let Some(pool) = seeded_pool().await else {
-        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
         return;
     };
     let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 50, PageDir::Older)
@@ -1891,7 +1915,6 @@ async fn telegram_reactions_are_drawable_and_a_retraction_keeps_its_words() {
 #[tokio::test]
 async fn a_telegram_search_hit_lands_on_its_own_message() {
     let Some(pool) = seeded_pool().await else {
-        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
         return;
     };
     let hits = archive::search(&pool, "third go", 20, archive::SearchScope::Everywhere)
@@ -1926,7 +1949,6 @@ async fn a_telegram_search_hit_lands_on_its_own_message() {
 #[tokio::test]
 async fn a_non_numeric_telegram_id_is_an_empty_page() {
     let Some(pool) = seeded_pool().await else {
-        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
         return;
     };
     let page = archive::messages_page(
@@ -1947,7 +1969,6 @@ async fn a_non_numeric_telegram_id_is_an_empty_page() {
 #[tokio::test]
 async fn a_hidden_telegram_edit_is_not_shown_as_edited() {
     let Some(pool) = seeded_pool().await else {
-        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
         return;
     };
     let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 50, PageDir::Older)
@@ -1978,7 +1999,6 @@ async fn a_hidden_telegram_edit_is_not_shown_as_edited() {
 #[tokio::test]
 async fn telegram_media_arrives_as_attachments_with_availability() {
     let Some(pool) = seeded_pool().await else {
-        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
         return;
     };
     let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 50, PageDir::Older)
@@ -2016,7 +2036,6 @@ async fn telegram_media_arrives_as_attachments_with_availability() {
 #[tokio::test]
 async fn requesting_media_queues_only_what_is_not_held() {
     let Some(pool) = seeded_pool().await else {
-        eprintln!("skipping: MESSAGES_TEST_DATABASE_URL not set");
         return;
     };
     let page = archive::messages_page(&pool, Origin::Telegram, "4242", None, 50, PageDir::Older)
@@ -2241,7 +2260,7 @@ async fn the_other_origins_report_no_read_state() {
     let Some(pool) = seeded_pool().await else {
         return;
     };
-    for (origin, id) in [(Origin::Gchat, "gc1")] {
+    for (origin, id) in [(Origin::Gchat, "gc1"), (Origin::Irc, "1")] {
         let page = archive::messages_page(&pool, origin, id, None, 100, PageDir::Older)
             .await
             .unwrap();
@@ -2583,8 +2602,8 @@ async fn telegram_formatting_is_attached_and_a_retracted_run_is_not() {
         "a textUrl carries where it points; the text alone does not say"
     );
 
-    // No other origin records formatting.
-    for (origin, id) in [(Origin::Signal, "dm:alice"), (Origin::Gchat, "gc1")] {
+    // Google Chat and IRC record no formatting; Signal's styles are tested below.
+    for (origin, id) in [(Origin::Gchat, "gc1"), (Origin::Irc, "1")] {
         let p = archive::messages_page(&pool, origin, id, None, 100, PageDir::Older)
             .await
             .unwrap();

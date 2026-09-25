@@ -17,7 +17,8 @@ use crate::state::AppState;
 
 type HmacSha256 = Hmac<Sha256>;
 
-const SESSION_TTL_DAYS: i64 = 7;
+/// How long a login lasts: the session row and its cookie both.
+pub const SESSION_TTL_DAYS: i64 = 7;
 pub const COOKIE_NAME: &str = "session";
 
 #[derive(Clone, Debug)]

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { chatLogHtml, formatChatLog } from './copy-log';
 import { Attachment, Message } from './models';
+import { testMessage } from './test-message';
 
 /** Local time, as the screen shows. */
 function at(y: number, mo: number, d: number, h: number, mi: number): number {
@@ -9,17 +10,7 @@ function at(y: number, mo: number, d: number, h: number, mi: number): number {
 }
 
 function msg(over: Partial<Message> & Pick<Message, 'ts' | 'sender'>): Message {
-  return {
-    id: String(over.ts),
-    is_outgoing: false,
-    kind: 'message',
-    body: null,
-    deleted: false,
-    edited: false,
-    reactions: [],
-    attachments: [], link_images: [], link_offers: [], edits: [], reply_to: null, delivery: null, entities: [], album: null, previews: [],
-    ...over,
-  };
+  return testMessage({ id: String(over.ts), body: null, ...over });
 }
 
 function file(over: Partial<Attachment>): Attachment {

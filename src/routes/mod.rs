@@ -88,7 +88,7 @@ pub fn router(state: AppState) -> Router {
 
     let app = Router::new()
         // Liveness target; must not check dependencies, or a database blip
-        // becomes a crashloop. `/api/health` asks whether the archive is readable.
+        // becomes a crashloop. `/healthz/deep` asks whether the archive is readable.
         .route("/healthz", get(|| async { "ok" }))
         .route("/healthz/deep", get(health::deep))
         .route("/login", get(auth::login))

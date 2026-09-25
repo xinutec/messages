@@ -5,10 +5,12 @@
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use messages::config::Config;
 use messages::state::AppState;
 use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
 use tower::ServiceExt;
+
+#[path = "support/config.rs"]
+mod support;
 
 /// A pool that will never connect: lazy, so building it cannot fail, and
 /// pointed at a port nothing listens on.
@@ -26,29 +28,10 @@ fn unreachable_archive() -> sqlx::MySqlPool {
         )
 }
 
-fn cfg() -> Config {
-    Config {
-        db_options: MySqlConnectOptions::new(),
-        session_secret: "test".to_string(),
-        bind_addr: String::new(),
-        nc_base_url: "https://nc.invalid".to_string(),
-        nc_client_id: String::new(),
-        nc_client_secret: String::new(),
-        nc_redirect_uri: String::new(),
-        allowed_users: vec!["pippijn".to_string()],
-        static_dir: None,
-        attachments_dir: "/nonexistent".to_string(),
-        link_images_dir: "/link-images".into(),
-        telegram_media_dir: "/telegram-media".into(),
-        link_fetcher_url: "http://link-fetch.invalid".into(),
-        irc_send: None,
-    }
-}
-
 async fn get(uri: &str) -> StatusCode {
     let app = messages::routes::router(AppState::new(
         unreachable_archive(),
-        cfg(),
+        support::config(),
         reqwest::Client::new(),
         None,
     ));

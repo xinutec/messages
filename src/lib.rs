@@ -1,11 +1,9 @@
-//! messages — viewer backend for the multi-origin message archive (Signal,
-//! Google Chat and IRC) stored in the `signal` MariaDB. The binary
-//! (`src/main.rs`) is a thin wrapper; logic lives here.
+//! messages — the viewer's backend, over the Signal, Google Chat, IRC and
+//! Telegram archive in the `signal` MariaDB. The binary (`src/main.rs`) is a thin
+//! wrapper; logic lives here.
 //!
-//! ⚠ It was read-only by construction until IRC gained a send path, and that is
-//! worth stating rather than quietly dropping from this sentence: the app can
-//! now act as Pippijn on networks other people are on. [`irc_send`] carries the
-//! reasoning about what bounds that.
+//! ⚠ It can send on IRC, as Pippijn, on networks other people are on;
+//! [`irc_send`] says what bounds that.
 
 pub mod archive;
 pub mod config;
