@@ -10,6 +10,7 @@ frontend/playwright-report/
 
 # Not part of any image.
 android/
+archiver/tools/
 .git/
 result
 result-*

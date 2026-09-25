@@ -1246,8 +1246,8 @@ pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
         });
     }
 
-    // IRC reads `irc_conversation_stats`, maintained by triggers (signal's
-    // migrations v11-v14). Aggregating `irc_messages` here instead is too slow
+    // IRC reads `irc_conversation_stats`, maintained by triggers (the
+    // archiver's migrations v11-v14). Aggregating `irc_messages` here instead is too slow
     // to serve the landing page: the `kind` filter defeats the loose index scan.
     //
     // `TIMESTAMPDIFF` from the epoch, not `UNIX_TIMESTAMP`, which would apply the

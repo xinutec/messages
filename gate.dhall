@@ -21,7 +21,14 @@ in  { name = "messages"
         , name = "clippy"
         , argv =
             G.inDevShell
-              [ "cargo", "clippy", "--all-targets", "--", "-D", "warnings" ]
+              [ "cargo"
+              , "clippy"
+              , "--workspace"
+              , "--all-targets"
+              , "--"
+              , "-D"
+              , "warnings"
+              ]
         , env =
             G.clippyTarget
         , timeout_s = 1800
@@ -55,6 +62,32 @@ in  { name = "messages"
               , "--"
               , "cargo"
               , "test"
+              ]
+        , timeout_s = 1800
+        }
+      , {-  The archiver's suite, in its own database: it applies the real
+            migrations, which the viewer's fixture would collide with.
+        -}
+        G.Check::{
+        , name = "archiver tests (against a real MariaDB)"
+        , argv =
+            G.withTestDb
+              "../"
+              [ "--database"
+              , "signal_test"
+              , "--user"
+              , "signal"
+              , "--password"
+              , "signal"
+              , "--port"
+              , "3322"
+              , "--url-env"
+              , "SIGNAL_TEST_DATABASE_URL"
+              , "--"
+              , "cargo"
+              , "test"
+              , "-p"
+              , "signal-archiver"
               ]
         , timeout_s = 1800
         }

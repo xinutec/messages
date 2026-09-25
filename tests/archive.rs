@@ -247,9 +247,9 @@ async fn seed(pool: &MySqlPool) {
         "CREATE TABLE irc_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id INT NOT NULL, source_tag VARCHAR(64) NOT NULL, file_date DATE NOT NULL, line_no INT NOT NULL, sent_at DATETIME NOT NULL, nick VARCHAR(255) NULL, is_self TINYINT(1) NOT NULL DEFAULT 0, kind ENUM('message','action','event','notice') NOT NULL, text TEXT NULL, UNIQUE KEY uniq_irc_line (conversation_id, source_tag, file_date, line_no), created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
         // No trigger: `seed` computes this from the rows.
         "CREATE TABLE irc_conversation_stats (conversation_id INT NOT NULL PRIMARY KEY, cnt BIGINT NOT NULL DEFAULT 0, last_sent_at DATETIME NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
-        // A copy of the `signal` repo's tables, and dev-lint reads these
+        // A copy of the archiver's tables, and dev-lint reads these
         // CREATE TABLEs to know which tables `src/` may name, so keep them in
-        // step with signal's migrations.
+        // step with archiver/src/db.rs.
         "CREATE TABLE telegram_conversations (id BIGINT PRIMARY KEY, kind ENUM('dm','group','channel') NOT NULL, name VARCHAR(255) NULL, username VARCHAR(255) NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, sent_at BIGINT NOT NULL, sender_id BIGINT NULL, sender_name VARCHAR(255) NULL, is_outgoing TINYINT(1) NOT NULL DEFAULT 0, kind ENUM('message','service') NOT NULL DEFAULT 'message', text TEXT NULL, media_kind VARCHAR(32) NULL, media_size BIGINT NULL, media_mime VARCHAR(128) NULL, edited_at BIGINT NULL, reply_to_msg_id INT NULL, fwd_from_name VARCHAR(255) NULL, edit_hidden TINYINT(1) NULL, deleted TINYINT(1) NOT NULL DEFAULT 0, deleted_at TIMESTAMP NULL, UNIQUE KEY uniq_tg_msg (conversation_id, msg_id), created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, fwd_channel_post INT NULL, fwd_date BIGINT NULL, fwd_from_id BIGINT NULL, grouped_id BIGINT NULL, reply_quote TEXT NULL, reply_to_peer_id BIGINT NULL, service_action VARCHAR(64) NULL, ttl_period INT NULL, via_bot_id BIGINT NULL) DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE telegram_message_edits (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, was_edited_at BIGINT NULL, text TEXT NULL, UNIQUE KEY uniq_tg_edit (conversation_id, msg_id, was_edited_at), recorded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
@@ -473,7 +473,7 @@ async fn seed(pool: &MySqlPool) {
     .bind(status).bind(status)
     .execute(pool).await.unwrap();
 
-    // Computed from the rows with signal's backfill statement, never written by
+    // Computed from the rows with the archiver's backfill statement, never written by
     // hand, so the list is checked against the aggregate.
     sqlx::query(
         "INSERT INTO irc_conversation_stats (conversation_id, cnt, last_sent_at)
@@ -1119,7 +1119,7 @@ async fn a_sent_message_and_its_later_import_are_one_row() {
         .unwrap();
     assert!(wrote, "the echo is written so it can be shown at once");
 
-    // The importer's write: signal's `insert_irc_line`, INSERT IGNORE on
+    // The importer's write: the archiver's `insert_irc_line`, INSERT IGNORE on
     // (conversation, source_tag, file_date, line_no).
     let importer = sqlx::query(
         "INSERT IGNORE INTO irc_messages

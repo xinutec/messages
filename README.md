@@ -1,8 +1,8 @@
-# messages — Signal, Google Chat, IRC and Telegram archive viewer
+# messages — Signal, Google Chat, IRC and Telegram archive
 
-A web UI for the message archive in the **`signal` MariaDB** on the isis k3s
-cluster ([signal](../signal) writes it). It reads all four origins and can reply
-on IRC through the irssi that holds the connections.
+[`archiver/`](archiver/README.md) writes all four origins into the **`signal`
+MariaDB** on the isis k3s cluster. The viewer (this crate and `frontend/`) reads
+them, and can reply on IRC through the irssi that holds the connections.
 
 ```
  Browser ──VPN/login──▶ messages.xinutec.org (isis, ns: signal)
@@ -29,7 +29,9 @@ An ingress `whitelist-source-range` would make the second layer real, if client
 source IPs survive k3s servicelb; check before relying on it.
 
 ## Components
-- `src/` — the backend. `nextcloud/identity.rs` and `session.rs` are the login;
+- `archiver/` — the ingesters and importers, and the schema's migrations. Its
+  README covers them.
+- `src/` — the viewer's backend. `nextcloud/identity.rs` and `session.rs` are the login;
   `routes/auth.rs` adds the allow-list; `archive.rs` is the origin-normalising
   query layer; `irc_send.rs` sends; `config.rs` builds the database connection
   from `DB_*`, so the app reuses `signal-secret`. The app owns only `sessions`
@@ -39,10 +41,12 @@ source IPs survive k3s servicelb; check before relying on it.
 - `frontend/` — Angular: conversation list with origin filter, thread view, and
   an IRC composer. `src/app/thread-window.ts` keeps a window of a long thread in
   the DOM; `src/app/copy-log.ts` copies a selection as an irssi log (the inverse
-  of `signal/src/irclog.rs`); `src/app/attachment.ts` names attachments for both
+  of `archiver/src/irclog.rs`); `src/app/attachment.ts` names attachments for both
   screen and clipboard. `src/app/generated/` is written by ts-rs
   (`scripts/gen-types.sh`) and imported through `src/app/models.ts`.
-- `Dockerfile` — one image, `xinutec/messages:latest`, with both binaries.
+- `Dockerfile` — `xinutec/messages:latest`, with both viewer binaries;
+  `archiver/Dockerfile` is `xinutec/signal-archiver:latest`. Both build from the
+  repository root, since the Cargo workspace spans the two crates.
 
 ## API (all require a session)
 - `GET /api/me` — current user.
@@ -68,7 +72,7 @@ source IPs survive k3s servicelb; check before relying on it.
 
 `{origin}` is `signal`, `gchat`, `irc` or `telegram`. `{id}` is the Signal
 `thread_id`, the Google Chat `group_id`, the `irc_conversations.id`, or
-Telegram's folded peer id (see the signal repo's v15 migration).
+Telegram's folded peer id (see v15 in `archiver/src/db.rs`).
 
 ## Local dev
 ```
@@ -84,8 +88,9 @@ cd frontend && pnpm install && pnpm start  # http://localhost:4200
 
 ## Deploy (isis, namespace `signal`)
 Manifests are in the home monorepo (`xinutec/pippijn`, `code/kubes/messages/k8s/`).
-Push to main, wait for CI to build `xinutec/messages:latest`, then run
-`code/kubes/deploy.sh messages` from that checkout. It refuses unless the
+Push to main, wait for CI to build both images, then run
+`code/kubes/deploy.sh messages` (the viewer) or `code/kubes/deploy.sh signal`
+(the archiver) from that checkout. It refuses unless the
 manifests are committed and pushed and isis's checkout matches, and restarts a
 `:latest` workload only when the registry has a newer image.
 
@@ -120,6 +125,9 @@ diffs it.
   `pnpm run ui-check` runs the Playwright suite against the production build:
   phone-width layout, copy, scrolling, routing, the Android keyboard and a real
   IME composition. Treat vitest as no evidence about the composer.
+- `archiver/tests/` — the archiver's suite, in its own database
+  (`SIGNAL_TEST_DATABASE_URL`, its own gate row): it applies the real
+  migrations, which the fixture above would collide with.
 
 ## One concept, several readers
 Each field below is interpreted in more than one place; add a row when a field

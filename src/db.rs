@@ -1,5 +1,5 @@
 //! MariaDB pool. This app reads the shared `signal` database, whose tables the
-//! signal repo's migrations and import_gchat.py own. It creates only its own
+//! archiver's migrations and import_gchat.py own. It creates only its own
 //! `sessions` and `link_images`, here on boot.
 
 use anyhow::{Context, Result};

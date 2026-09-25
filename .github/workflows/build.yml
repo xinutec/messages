@@ -1,6 +1,9 @@
 ---
 name: build
 
+# Two images from one workspace: xinutec/messages (the viewer) and
+# xinutec/signal-archiver (archiver/). Manifests live in pippijn/code/kubes.
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -27,13 +30,24 @@ jobs:
         options: >-
           --health-cmd="healthcheck.sh --connect --innodb_initialized"
           --health-interval=5s --health-timeout=5s --health-retries=10
+      # The archiver's own: its migrations and the viewer's fixture would collide.
+      signal-db:
+        image: mariadb:11.8
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: signal_test
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=10
     env:
       MESSAGES_TEST_DATABASE_URL: mysql://root:root@mariadb:3306/messages_test
+      SIGNAL_TEST_DATABASE_URL: mysql://root:root@signal-db:3306/signal_test
     steps:
       - uses: actions/checkout@v6
-      - run: rustup component add clippy
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      - run: rustup component add clippy rustfmt
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
       - run: rm -rf frontend/src/app/generated
       - run: cargo test --features ts export_bindings
       - name: generated types match the Rust types
@@ -92,3 +106,11 @@ jobs:
             GIT_SHA=${{ github.sha }}
           cache-from: type=registry,ref=xinutec/messages:cache
           cache-to: type=registry,ref=xinutec/messages:cache
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: archiver/Dockerfile
+          push: true
+          tags: xinutec/signal-archiver:latest
+          cache-from: type=registry,ref=xinutec/signal-archiver:cache
+          cache-to: type=registry,ref=xinutec/signal-archiver:cache

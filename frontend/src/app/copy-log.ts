@@ -1,7 +1,7 @@
 // Turning selected messages into a chat log for the clipboard. Pure: the DOM
 // says which messages are selected (thread.ts); the text comes from the model.
 //
-// The format is irssi's, the inverse of `signal/src/irclog.rs`, so a copied log
+// The format is irssi's, the inverse of `archiver/src/irclog.rs`, so a copied log
 // reads like one that went in:
 //
 //     --- Day changed Thu Aug 13 2026

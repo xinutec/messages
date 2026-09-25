@@ -1,0 +1,25 @@
+# Things the archive must be able to answer, checked against the live database.
+#
+# Each row is something Pippijn knows independently of the archive (his memory,
+# his phone, the Chat UI), so a query that stops returning it means the pipeline
+# lost something. Never derive a row from the database: that only tests that the
+# archive agrees with itself. A row must be true now, not expected to become
+# true, or it fails without any loss.
+#
+# Run:  tools/check_known_truths.py
+# Format: name <TAB> expected <TAB> sql
+#
+name	expect	sql
+gchat: "Me too." answers the message about ***REMOVED***	1	SELECT COUNT(*) FROM gchat_messages r JOIN gchat_messages t ON t.group_id=r.group_id AND t.msg_id=r.reply_to_msg_id WHERE r.msg_id='***REMOVED***' AND t.text LIKE '***REMOVED***'
+gchat: ***REMOVED*** sent pictures too, not only Pippijn	2	SELECT COUNT(*) FROM gchat_attachments a JOIN gchat_messages g ON g.id=a.message_id WHERE g.group_id='***REMOVED***' AND g.sender_name='***REMOVED***'
+gchat: that DM carries videos, not only stills	7	SELECT COUNT(*) FROM gchat_attachments a JOIN gchat_messages g ON g.id=a.message_id WHERE g.group_id='***REMOVED***' AND a.mime='video/mp4'
+gchat: reactions name who reacted	115	SELECT COUNT(*) FROM gchat_reaction_authors
+telegram: calls keep how they ended, not just that they happened	65	SELECT COUNT(*) FROM telegram_calls WHERE reason IS NOT NULL
+telegram: the longest call is most of an hour, not a flag	1	SELECT COUNT(*) FROM telegram_calls WHERE duration_s > 3000
+telegram: reactions name a person	21697	SELECT COUNT(*) FROM telegram_reaction_authors WHERE removed_at IS NULL
+telegram: a forward remembers when the original was written	32	SELECT COUNT(*) FROM telegram_messages WHERE fwd_date IS NOT NULL
+telegram: albums are reconstructable	765	SELECT COUNT(DISTINCT grouped_id) FROM telegram_messages WHERE grouped_id IS NOT NULL
+telegram: Dana's Thursday messages have a sender	0	SELECT COUNT(*) FROM telegram_messages WHERE conversation_id=***REMOVED*** AND sender_name IS NULL AND sent_at > UNIX_TIMESTAMP('2026-09-16')
+signal: a read receipt records WHEN, not just that it happened	1	SELECT COUNT(*) FROM signal_receipts WHERE kind='read' AND when_ts > 0
+signal: a reaction knows who made it	1382	SELECT COUNT(*) FROM reactions WHERE author_uuid IS NOT NULL AND author_uuid <> ''
+irc: the archive goes back to 2013	1	SELECT COUNT(*) FROM irc_messages WHERE sent_at < '2014-01-01' LIMIT 1

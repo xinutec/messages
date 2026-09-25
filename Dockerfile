@@ -23,10 +23,13 @@ RUN pnpm exec ng build --configuration production
 FROM rust:1-bookworm AS backend
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo 'fn main() {}' > src/main.rs && echo '' > src/lib.rs \
-    && cargo build --release && rm -rf src
+# The archiver is a workspace member: its manifest is needed, its code is not.
+COPY archiver/Cargo.toml archiver/
+RUN mkdir -p src archiver/src && echo 'fn main() {}' > src/main.rs && echo '' > src/lib.rs \
+    && echo 'fn main() {}' > archiver/src/main.rs && touch archiver/src/lib.rs \
+    && cargo build --release --locked -p messages && rm -rf src
 COPY src/ src/
-RUN touch src/main.rs src/lib.rs && cargo build --release
+RUN touch src/main.rs src/lib.rs && cargo build --release --locked -p messages
 
 # --- runtime ---
 FROM debian:bookworm-slim

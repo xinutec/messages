@@ -3,3 +3,7 @@
 # nix-direnv, the cache `use flake` writes. Holds a GC root into the store,
 # so it is not just a cache: deleting it lets the dev shell be collected.
 .direnv/
+
+# Local env for the import tools.
+.env
+secret.env

@@ -6,6 +6,10 @@ edition = "2024"
 # Viewer for the message archive in the `signal` MariaDB on isis. Nextcloud
 # OAuth2 login, restricted to an allow-list. See README.md.
 
+[workspace]
+# The archiver writes the database this crate reads, and owns its schema.
+members = ["archiver"]
+
 [features]
 # ts-rs, which exports the wire types as TypeScript (scripts/gen-types.sh). Off
 # in normal builds.
@@ -55,7 +59,7 @@ dbg_macro = "deny"
 todo = "deny"
 unimplemented = "deny"
 
-# These tables are `signal`'s; tests/archive.rs carries a copy as its fixture,
-# which dev-lint checks against the owner's DDL (DL-SQLX-FIXTURE-DRIFT).
+# These tables are the archiver's; tests/archive.rs carries a copy as its
+# fixture, which dev-lint checks against the owner's DDL (DL-SQLX-FIXTURE-DRIFT).
 [package.metadata.dev-lint]
-schema_owner = "../signal"
+schema_owner = "archiver"
