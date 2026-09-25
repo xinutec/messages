@@ -383,10 +383,9 @@ async fn reactions(pool: &MySqlPool, conversation: i64, msg_id: i32) -> Vec<(Str
 
 #[tokio::test]
 async fn the_backfill_frontier_only_moves_older() {
-    let Some((db, pool)) = connect().await else {
+    let Some((db, _pool)) = connect().await else {
         return;
     };
-    let _ = &pool;
     let id = ids(5);
 
     db.record_telegram_backfill(id.conversation, Some(500), false, 10)
@@ -741,7 +740,7 @@ async fn a_sampled_list_of_reactors_retracts_nobody() {
     let Some((db, pool)) = connect().await else {
         return;
     };
-    let id = ids(11);
+    let id = ids(16);
     let msg = id.msg_base + 1;
 
     db.record_telegram_reaction_authors(
@@ -801,7 +800,7 @@ async fn re_reading_a_reaction_keeps_the_moment_it_happened() {
     let Some((db, pool)) = connect().await else {
         return;
     };
-    let id = ids(12);
+    let id = ids(17);
     let msg = id.msg_base + 1;
 
     let first = Reactions {

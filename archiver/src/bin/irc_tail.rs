@@ -20,15 +20,14 @@
 //! `DB_USER`, `DB_PASSWORD`, and the required `IRC_SELF_NICK` (+
 //! `IRC_SELF_NICK_ALT`), which decide whose lines are Pippijn's own.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
-use signal_archiver::db::{Db, IrcLine};
-use signal_archiver::irclog::{Date, parse_log};
+use signal_archiver::db::{Db, IrcConversations, IrcLine};
+use signal_archiver::irclog::{Date, parse_log, stored_network};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
@@ -198,7 +197,7 @@ async fn poll(args: &Args, key: &Path, after: u64) -> Result<Reply> {
 async fn store(
     db: &Db,
     args: &Args,
-    conversations: &mut BTreeMap<(String, String), u64>,
+    conversations: &mut IrcConversations,
     ev: &Event,
 ) -> Result<bool> {
     // Without a place in the log there is no dedupe key.
@@ -218,42 +217,18 @@ async fn store(
         return Ok(false);
     };
 
-    let stored_network = args
-        .map
-        .iter()
-        .find(|(from, _)| *from == ev.tag)
-        .map_or(ev.tag.as_str(), |(_, to)| to.as_str());
     let is_status = args.self_nicks.contains(&ev.target);
+    let conversation_id = conversations
+        .id(
+            db,
+            stored_network(&args.map, &ev.tag),
+            &ev.target,
+            is_status,
+        )
+        .await?;
 
-    let key = (stored_network.to_string(), ev.target.clone());
-    let conversation_id = match conversations.get(&key) {
-        Some(id) => *id,
-        None => {
-            let id = db
-                .upsert_irc_conversation(
-                    stored_network,
-                    &ev.target,
-                    ev.target.starts_with(['#', '&']),
-                    is_status,
-                )
-                .await?;
-            conversations.insert(key, id);
-            id
-        }
-    };
-
-    let irc_line = IrcLine {
-        // The plugin's line number; `parse_log` saw only this one line.
-        line_no,
-        sent_at: entry.at.to_string(),
-        nick: entry.nick.clone(),
-        is_self: entry
-            .nick
-            .as_ref()
-            .is_some_and(|n| args.self_nicks.contains(n)),
-        kind: entry.kind.as_str(),
-        text: entry.text.clone(),
-    };
+    // The plugin's line number; `parse_log` saw only this one line.
+    let irc_line = IrcLine::from_entry(&entry, line_no, &args.self_nicks);
 
     // The raw tag, before `--map`, as in the dedupe key (migration v8).
     let written = db
@@ -305,7 +280,7 @@ async fn main() -> Result<()> {
     std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o400);
     std::fs::set_permissions(&key, perms)?;
 
-    let mut conversations: BTreeMap<(String, String), u64> = BTreeMap::new();
+    let mut conversations = IrcConversations::default();
     // From 0: the first poll replays the plugin's whole ring, which the dedupe
     // key makes harmless.
     let mut after: u64 = 0;

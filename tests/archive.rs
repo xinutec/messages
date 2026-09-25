@@ -18,7 +18,7 @@ fn us_to_ms_truncates_to_millis() {
     assert_eq!(us_to_ms(1_584_389_732_190_514), 1_584_389_732_190);
 }
 
-/// An `Action` renders as `* Dana <body>`, so the body is a verb phrase. An
+/// An `Action` renders as `* nick <body>`, so the body is a verb phrase. An
 /// unanswered call has no duration.
 #[test]
 fn a_call_reads_as_something_its_sender_did() {

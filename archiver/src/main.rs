@@ -20,14 +20,17 @@ use tokio::time::timeout;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
+use signal_archiver::attach;
+use signal_archiver::db::Db;
+use signal_archiver::parse::{Action, display_name_of, parse_frame};
+
 /// A window with no frame at all sends a probe ping; `MAX_IDLE_PROBES` silent
 /// windows in a row mean a dead socket, and force a reconnect.
 const READ_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_IDLE_PROBES: u32 = 3;
 
-use signal_archiver::attach;
-use signal_archiver::db::Db;
-use signal_archiver::parse::{Action, display_name_of, parse_frame};
+/// The pause before reconnecting the receive websocket.
+const RECONNECT: Duration = Duration::from_secs(7);
 
 /// Shared state for the per-frame dispatcher.
 #[derive(Clone)]
@@ -77,10 +80,10 @@ async fn main() -> Result<()> {
 
     loop {
         match run_ws(&ws_url, &ctx).await {
-            Ok(()) => tracing::warn!("receive stream ended; reconnecting in 7s"),
-            Err(e) => tracing::error!("websocket error: {e:#}; reconnecting in 10s"),
+            Ok(()) => tracing::warn!("receive stream ended; reconnecting in {RECONNECT:?}"),
+            Err(e) => tracing::error!("websocket error: {e:#}; reconnecting in {RECONNECT:?}"),
         }
-        tokio::time::sleep(Duration::from_secs(7)).await;
+        tokio::time::sleep(RECONNECT).await;
     }
 }
 
@@ -264,13 +267,19 @@ async fn dispatch(ctx: &Ctx, frame: &Value) -> Result<()> {
 /// Best-effort: stream the attachment blob from the rest-api to disk.
 async fn download_attachment(ctx: &Ctx, id: &str) -> Option<String> {
     let url = format!("{}/v1/attachments/{}", ctx.http_base, id);
-    let resp = ctx
+    let resp = match ctx
         .http
         .get(&url)
         .timeout(Duration::from_secs(30))
         .send()
         .await
-        .ok()?;
+    {
+        Ok(resp) => resp,
+        Err(e) => {
+            tracing::warn!("attachment {id} fetch failed: {e}");
+            return None;
+        }
+    };
     if !resp.status().is_success() {
         tracing::warn!("attachment {id} fetch returned {}", resp.status());
         return None;
@@ -289,46 +298,60 @@ async fn download_attachment(ctx: &Ctx, id: &str) -> Option<String> {
     }
 }
 
+/// A rest-api endpoint that answers with a JSON array.
+async fn fetch_array(ctx: &Ctx, url: &str, timeout: Duration) -> Result<Vec<Value>> {
+    let bytes = ctx
+        .http
+        .get(url)
+        .timeout(timeout)
+        .send()
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await?;
+    match serde_json::from_slice(&bytes)? {
+        Value::Array(items) => Ok(items),
+        _ => anyhow::bail!("not a JSON array"),
+    }
+}
+
 /// Keep contact names in step with what Signal shows, from `/v1/contacts`,
 /// which has the nickname `envelope.sourceName` lacks on 0.14.5.
 async fn refresh_contact_names(ctx: Ctx) {
     let url = format!("{}/v1/contacts/{}", ctx.http_base, ctx.number);
     loop {
         // This endpoint resolves profiles and is slow.
-        if let Ok(resp) = ctx
-            .http
-            .get(&url)
-            .timeout(Duration::from_secs(120))
-            .send()
-            .await
-            && let Ok(bytes) = resp.bytes().await
-            && let Ok(Value::Array(contacts)) = serde_json::from_slice::<Value>(&bytes)
-        {
-            let (mut named, mut skipped) = (0usize, 0usize);
-            for c in &contacts {
-                let Some(uuid) = c
-                    .get("uuid")
-                    .and_then(Value::as_str)
-                    .filter(|s| !s.is_empty())
-                else {
-                    skipped += 1;
-                    continue;
-                };
-                let Some(name) = display_name_of(c) else {
-                    skipped += 1;
-                    continue;
-                };
-                let phone = c
-                    .get("number")
-                    .and_then(Value::as_str)
-                    .filter(|s| !s.is_empty());
-                if let Err(e) = ctx.db.upsert_contact(uuid, phone, Some(&name)).await {
-                    tracing::warn!("failed to store contact name for {uuid}: {e}");
-                } else {
-                    named += 1;
+        match fetch_array(&ctx, &url, Duration::from_secs(120)).await {
+            Ok(contacts) => {
+                let (mut named, mut skipped) = (0usize, 0usize);
+                for c in &contacts {
+                    let Some(uuid) = c
+                        .get("uuid")
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty())
+                    else {
+                        skipped += 1;
+                        continue;
+                    };
+                    let Some(name) = display_name_of(c) else {
+                        skipped += 1;
+                        continue;
+                    };
+                    let phone = c
+                        .get("number")
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty());
+                    if let Err(e) = ctx.db.upsert_contact(uuid, phone, Some(&name)).await {
+                        tracing::warn!("failed to store contact name for {uuid}: {e}");
+                    } else {
+                        named += 1;
+                    }
                 }
+                tracing::debug!(
+                    "refreshed {named} contact name(s), {skipped} with no name to take"
+                );
             }
-            tracing::debug!("refreshed {named} contact name(s), {skipped} with no name to take");
+            Err(e) => tracing::warn!("could not fetch contact names: {e:#}"),
         }
         tokio::time::sleep(Duration::from_secs(3600)).await;
     }
@@ -338,31 +361,26 @@ async fn refresh_contact_names(ctx: Ctx) {
 async fn refresh_group_names(ctx: Ctx) {
     let url = format!("{}/v1/groups/{}", ctx.http_base, ctx.number);
     loop {
-        if let Ok(resp) = ctx
-            .http
-            .get(&url)
-            .timeout(Duration::from_secs(20))
-            .send()
-            .await
-            && let Ok(bytes) = resp.bytes().await
-            && let Ok(Value::Array(groups)) = serde_json::from_slice::<Value>(&bytes)
-        {
-            for g in &groups {
-                let (Some(iid), Some(name)) = (
-                    g.get("internal_id").and_then(Value::as_str),
-                    g.get("name").and_then(Value::as_str),
-                ) else {
-                    continue;
-                };
-                if let Err(e) = ctx
-                    .db
-                    .set_conversation_name(&format!("group:{iid}"), name)
-                    .await
-                {
-                    tracing::warn!("failed to store group name for {iid}: {e}");
+        match fetch_array(&ctx, &url, Duration::from_secs(20)).await {
+            Ok(groups) => {
+                for g in &groups {
+                    let (Some(iid), Some(name)) = (
+                        g.get("internal_id").and_then(Value::as_str),
+                        g.get("name").and_then(Value::as_str),
+                    ) else {
+                        continue;
+                    };
+                    if let Err(e) = ctx
+                        .db
+                        .set_conversation_name(&format!("group:{iid}"), name)
+                        .await
+                    {
+                        tracing::warn!("failed to store group name for {iid}: {e}");
+                    }
                 }
+                tracing::debug!("refreshed {} group name(s)", groups.len());
             }
-            tracing::debug!("refreshed {} group name(s)", groups.len());
+            Err(e) => tracing::warn!("could not fetch group names: {e:#}"),
         }
         tokio::time::sleep(Duration::from_secs(600)).await;
     }

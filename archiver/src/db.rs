@@ -8,6 +8,7 @@ use sqlx::AssertSqlSafe;
 use sqlx::Row;
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
 
+use crate::irclog::{Entry, Kind};
 use crate::parse::ThreadId;
 
 /// The MariaDB DSN, from the `DB_*` environment every binary shares.
@@ -21,6 +22,24 @@ pub fn url_from_env() -> Result<String> {
     let pass = std::env::var("DB_PASSWORD").context("DB_PASSWORD not set")?;
     Ok(format!("mysql://{user}:{pass}@{host}:{port}/{name}"))
 }
+
+/// Migration v48: backfills v47 from `signal_frames`, so it reaches only as far
+/// back as the frames. `JSON_VALUE` because MariaDB rejects `->>`. It matches on
+/// the timestamp alone, unlike v52–v54, which also match the sender.
+///
+/// Public so tests run the statement the migration runs.
+pub const BACKFILL_SERVER_TIMES: &str = r"UPDATE messages m
+        JOIN signal_frames f ON f.envelope_ts = m.server_ts
+         SET m.server_received_ts = COALESCE(
+                 m.server_received_ts,
+                 JSON_VALUE(f.frame, '$.envelope.serverReceivedTimestamp')),
+             m.server_delivered_ts = COALESCE(
+                 m.server_delivered_ts,
+                 JSON_VALUE(f.frame, '$.envelope.serverDeliveredTimestamp')),
+             m.expires_in_seconds = COALESCE(
+                 m.expires_in_seconds,
+                 JSON_VALUE(f.frame, '$.envelope.dataMessage.expiresInSeconds'),
+                 JSON_VALUE(f.frame, '$.envelope.syncMessage.sentMessage.expiresInSeconds'))";
 
 /// Migration v52; public so tests run the statement the migration runs.
 pub const BACKFILL_QUOTES: &str = r"UPDATE messages m
@@ -170,7 +189,7 @@ const MIGRATIONS: &[&str] = &[
     // v9: answers the conversation list's per-conversation COUNT/MAX over
     // `kind IN ('message','action')` from the index alone. The optimizer picks it
     // only when `irc_messages` is aggregated in a derived table and then joined, and
-    // `messages`' `archive.rs` keeps that shape.
+    // the viewer's `src/archive.rs` keeps that shape.
     //
     // `IF NOT EXISTS`: the live database had this index before this entry did.
     "ALTER TABLE irc_messages
@@ -199,7 +218,7 @@ const MIGRATIONS: &[&str] = &[
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )",
     // v12: a trigger rather than application code, so every writer maintains the
-    // stats: the importer, `irc_tail`, and the send echo in the `messages` repo.
+    // stats: the importer, `irc_tail`, and the viewer's IRC send echo.
     //
     // An ignored `INSERT IGNORE` fires no trigger, so replay cannot inflate a count.
     // Lines arrive out of timestamp order, hence `GREATEST`.
@@ -573,20 +592,7 @@ const MIGRATIONS: &[&str] = &[
         ADD COLUMN server_received_ts BIGINT NULL,
         ADD COLUMN server_delivered_ts BIGINT NULL,
         ADD COLUMN expires_in_seconds INT NULL",
-    // v48: backfills v47 from `signal_frames`, so it reaches only as far back as the
-    // frames. `JSON_VALUE` because MariaDB rejects `->>`.
-    r"UPDATE messages m
-        JOIN signal_frames f ON f.envelope_ts = m.server_ts
-         SET m.server_received_ts = COALESCE(
-                 m.server_received_ts,
-                 JSON_VALUE(f.frame, '$.envelope.serverReceivedTimestamp')),
-             m.server_delivered_ts = COALESCE(
-                 m.server_delivered_ts,
-                 JSON_VALUE(f.frame, '$.envelope.serverDeliveredTimestamp')),
-             m.expires_in_seconds = COALESCE(
-                 m.expires_in_seconds,
-                 JSON_VALUE(f.frame, '$.envelope.dataMessage.expiresInSeconds'),
-                 JSON_VALUE(f.frame, '$.envelope.syncMessage.sentMessage.expiresInSeconds'))",
+    BACKFILL_SERVER_TIMES,
     // v49: what a quote says about its target, for a target the archive does
     // not hold.
     r"ALTER TABLE messages
@@ -634,16 +640,28 @@ impl Db {
         Ok(db)
     }
 
+    /// Apply outstanding migrations, one process at a time: every binary runs
+    /// this at startup, and a deploy starts them together.
+    ///
+    /// The advisory lock belongs to a connection, so the lock, the migrations
+    /// and the release all run on one.
     async fn migrate(&self) -> Result<()> {
+        let mut conn = self.pool.acquire().await?;
         sqlx::query("CREATE TABLE IF NOT EXISTS schema_version (version INT PRIMARY KEY)")
-            .execute(&self.pool)
+            .execute(&mut *conn)
             .await?;
-        // Serialise migrations across restarts/replicas with an advisory lock.
-        sqlx::query("SELECT GET_LOCK('signal_migrate', 30)")
-            .execute(&self.pool)
-            .await?;
+        // Waits until it holds the lock; 1 is granted, 0 a timeout.
+        loop {
+            let granted: Option<i64> = sqlx::query_scalar("SELECT GET_LOCK('signal_migrate', 30)")
+                .fetch_one(&mut *conn)
+                .await?;
+            if granted == Some(1) {
+                break;
+            }
+            tracing::info!("waiting for another process to finish migrating");
+        }
         let applied: Vec<i32> = sqlx::query_scalar("SELECT version FROM schema_version")
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *conn)
             .await?;
         for (i, sql) in MIGRATIONS.iter().enumerate() {
             let v = i as i32;
@@ -651,15 +669,15 @@ impl Db {
                 tracing::info!("applying migration v{v}");
                 // dev-lint replays each literal as DDL but cannot follow this loop.
                 // dev-lint: allow-sqlx migration runner over const literals
-                sqlx::query(*sql).execute(&self.pool).await?;
+                sqlx::query(*sql).execute(&mut *conn).await?;
                 sqlx::query("INSERT INTO schema_version (version) VALUES (?)")
                     .bind(v)
-                    .execute(&self.pool)
+                    .execute(&mut *conn)
                     .await?;
             }
         }
         sqlx::query("SELECT RELEASE_LOCK('signal_migrate')")
-            .execute(&self.pool)
+            .execute(&mut *conn)
             .await?;
         Ok(())
     }
@@ -1022,7 +1040,7 @@ impl Db {
                     .push_bind(&line.sent_at)
                     .push_bind(&line.nick)
                     .push_bind(line.is_self)
-                    .push_bind(line.kind)
+                    .push_bind(line.kind.as_str())
                     .push_bind(&line.text);
             });
             written += qb.build().execute(&self.pool).await?.rows_affected();
@@ -1327,11 +1345,7 @@ impl Db {
         // is never true.
         let keep = reactions
             .iter()
-            .map(|r| match (&r.emoji, r.custom_emoji_id) {
-                (Some(e), _) => e.clone(),
-                (None, Some(id)) => format!("custom:{id}"),
-                (None, None) => String::new(),
-            })
+            .map(|r| reaction_key(r.emoji.as_deref(), r.custom_emoji_id))
             .collect::<Vec<_>>();
         let placeholders = vec!["?"; keep.len()].join(",");
         let sql = format!(
@@ -1391,12 +1405,10 @@ impl Db {
                 .authors
                 .iter()
                 .map(|a| {
-                    let key = match (&a.emoji, a.custom_emoji_id) {
-                        (Some(e), _) => e.clone(),
-                        (None, Some(id)) => format!("custom:{id}"),
-                        (None, None) => String::new(),
-                    };
-                    (a.peer_id, key)
+                    (
+                        a.peer_id,
+                        reaction_key(a.emoji.as_deref(), a.custom_emoji_id),
+                    )
                 })
                 .collect::<Vec<_>>();
             let placeholders = vec!["(?,?)"; keep.len()].join(",");
@@ -1834,6 +1846,15 @@ impl Db {
     }
 }
 
+/// A reaction's `reaction_key`, as the generated column computes it (v17).
+fn reaction_key(emoji: Option<&str>, custom_emoji_id: Option<i64>) -> String {
+    match (emoji, custom_emoji_id) {
+        (Some(e), _) => e.to_string(),
+        (None, Some(id)) => format!("custom:{id}"),
+        (None, None) => String::new(),
+    }
+}
+
 /// Rows per statement, well inside MySQL's 65,535-placeholder cap.
 const INSERT_CHUNK: usize = 1_000;
 
@@ -1919,6 +1940,52 @@ pub struct IrcLine {
     pub sent_at: String,
     pub nick: Option<String>,
     pub is_self: bool,
-    pub kind: &'static str,
+    pub kind: Kind,
     pub text: String,
+}
+
+impl IrcLine {
+    /// The row for a parsed line. The importer and `irc_tail` both build rows
+    /// here, so each writes the row the other would.
+    pub fn from_entry(entry: &Entry, line_no: u32, self_nicks: &[String]) -> Self {
+        IrcLine {
+            line_no,
+            sent_at: entry.at.to_string(),
+            nick: entry.nick.clone(),
+            is_self: entry.nick.as_ref().is_some_and(|n| self_nicks.contains(n)),
+            kind: entry.kind,
+            text: entry.text.clone(),
+        }
+    }
+}
+
+/// `irc_conversations` ids already looked up, so a run upserts each once.
+#[derive(Default)]
+pub struct IrcConversations(std::collections::BTreeMap<(String, String), u64>);
+
+impl IrcConversations {
+    /// The conversation's id, creating it on first sight. `is_status` marks
+    /// irssi's server-notice window; see migration v7.
+    pub async fn id(
+        &mut self,
+        db: &Db,
+        network: &str,
+        target: &str,
+        is_status: bool,
+    ) -> Result<u64> {
+        let key = (network.to_string(), target.to_string());
+        if let Some(id) = self.0.get(&key) {
+            return Ok(*id);
+        }
+        let id = db
+            .upsert_irc_conversation(
+                network,
+                target,
+                crate::irclog::is_channel(target),
+                is_status,
+            )
+            .await?;
+        self.0.insert(key, id);
+        Ok(id)
+    }
 }

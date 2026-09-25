@@ -447,7 +447,7 @@ fn an_edit_telegram_asks_us_to_hide_is_recorded_but_marked_hidden() {
 }
 
 /// The date every [`fwd`] header carries, distinct from the forwarder's clock.
-const FWD_DATE: i64 = 1_699_000_000;
+const FWD_DATE: i32 = 1_699_000_000;
 
 /// A service message carrying one action.
 fn service(action: tl::enums::MessageAction) -> tl::enums::Message {
@@ -482,7 +482,7 @@ fn fwd(
         saved_out: false,
         from_id,
         from_name,
-        date: 1_699_000_000,
+        date: FWD_DATE,
         channel_post: None,
         post_author,
         saved_from_peer: None,
@@ -701,7 +701,7 @@ fn a_forward_remembers_when_the_original_was_written() {
     assert_eq!(row.sent_at, 1_700_000_000);
     assert_eq!(
         row.fwd_date,
-        Some(FWD_DATE),
+        Some(i64::from(FWD_DATE)),
         "the forward's own clock, not the forwarder's"
     );
     assert_ne!(row.sent_at, row.fwd_date.unwrap());

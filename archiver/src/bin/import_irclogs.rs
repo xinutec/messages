@@ -27,8 +27,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use signal_archiver::db::{Db, IrcLine};
-use signal_archiver::irclog::{Kind, parse_log, parse_path};
+use signal_archiver::db::{Db, IrcConversations, IrcLine};
+use signal_archiver::irclog::{Kind, parse_log, parse_path, stored_network};
 
 struct Args {
     root: PathBuf,
@@ -157,7 +157,7 @@ async fn main() -> Result<()> {
 
     let logs = collect_logs(&args.root)?;
     let mut report = Report::default();
-    let mut conversations: BTreeMap<(String, String), u64> = BTreeMap::new();
+    let mut conversations = IrcConversations::default();
 
     // Empty under `--all`, and on a dry run, which has no database connection.
     let already_read = match (&db, args.all) {
@@ -175,11 +175,7 @@ async fn main() -> Result<()> {
         if !args.networks.is_empty() && !args.networks.contains(&path.network) {
             continue;
         }
-        let stored_network = args
-            .map
-            .iter()
-            .find(|(from, _)| *from == path.network)
-            .map_or(path.network.as_str(), |(_, to)| to.as_str());
+        let stored_network = stored_network(&args.map, &path.network);
 
         let full = args.root.join(rel);
         let state = file_state(&full)
@@ -221,37 +217,14 @@ async fn main() -> Result<()> {
         let Some(db) = &db else { continue };
 
         if !parsed.entries.is_empty() {
-            let key = (stored_network.to_string(), path.target.clone());
-            let conversation_id = match conversations.get(&key) {
-                Some(id) => *id,
-                None => {
-                    let id = db
-                        .upsert_irc_conversation(
-                            stored_network,
-                            &path.target,
-                            path.is_channel(),
-                            is_status,
-                        )
-                        .await?;
-                    conversations.insert(key, id);
-                    id
-                }
-            };
+            let conversation_id = conversations
+                .id(db, stored_network, &path.target, is_status)
+                .await?;
 
             let lines: Vec<IrcLine> = parsed
                 .entries
                 .iter()
-                .map(|entry| IrcLine {
-                    line_no: entry.line_no,
-                    sent_at: entry.at.to_string(),
-                    nick: entry.nick.clone(),
-                    is_self: entry
-                        .nick
-                        .as_ref()
-                        .is_some_and(|n| args.self_nicks.contains(n)),
-                    kind: entry.kind.as_str(),
-                    text: entry.text.clone(),
-                })
+                .map(|entry| IrcLine::from_entry(entry, entry.line_no, &args.self_nicks))
                 .collect();
 
             // The source tag, not the mapped network; see migration v8.

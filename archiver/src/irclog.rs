@@ -14,7 +14,7 @@
 //! | class | form |
 //! |---|---|
 //! | message | `HH:MM <nick> text` |
-//! | notice, server | `HH:MM !server [* ]text` |
+//! | notice, server | `HH:MM !server [*** ]text` |
 //! | notice, user | `HH:MM -nick(user@host)- text` |
 //! | event | `HH:MM -!- text` |
 //! | event, OTR | `HH:MM OTR: text` |
@@ -105,10 +105,23 @@ pub struct LogPath {
 }
 
 impl LogPath {
-    /// Channels start with `#`; a nick cannot.
     pub fn is_channel(&self) -> bool {
-        self.target.starts_with('#')
+        is_channel(&self.target)
     }
+}
+
+/// Whether a target is a channel rather than a nick: channels start with `#`
+/// or `&`, which a nick cannot.
+pub fn is_channel(target: &str) -> bool {
+    target.starts_with(['#', '&'])
+}
+
+/// The network a source tag is stored under: `map` merges the tag irssi invents
+/// for a second connection (`net2`) into the first.
+pub fn stored_network<'a>(map: &'a [(String, String)], tag: &'a str) -> &'a str {
+    map.iter()
+        .find(|(from, _)| from == tag)
+        .map_or(tag, |(_, to)| to.as_str())
 }
 
 /// Split a path relative to the irclogs root into network, target and date.

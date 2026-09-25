@@ -9,6 +9,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use signal_archiver::db::{Db, IrcLine};
+use signal_archiver::irclog::Kind;
 use sqlx::mysql::MySqlPoolOptions;
 use sqlx::{MySqlPool, Row};
 
@@ -24,7 +25,7 @@ async fn stats(pool: &MySqlPool, conversation_id: u64) -> Option<(i64, String)> 
     Some((row.get("cnt"), row.get("last")))
 }
 
-fn line(line_no: u32, sent_at: &str, kind: &'static str) -> IrcLine {
+fn line(line_no: u32, sent_at: &str, kind: Kind) -> IrcLine {
     IrcLine {
         line_no,
         sent_at: sent_at.to_string(),
@@ -80,10 +81,10 @@ async fn triggers_maintain_the_conversation_stats() {
             &network,
             "2026-01-01",
             &[
-                line(1, "2026-01-01 10:00:00", "message"),
-                line(2, "2026-01-01 11:00:00", "action"),
-                line(3, "2026-01-01 12:00:00", "event"),
-                line(4, "2026-01-01 13:00:00", "notice"),
+                line(1, "2026-01-01 10:00:00", Kind::Message),
+                line(2, "2026-01-01 11:00:00", Kind::Action),
+                line(3, "2026-01-01 12:00:00", Kind::Event),
+                line(4, "2026-01-01 13:00:00", Kind::Notice),
             ],
         )
         .await
@@ -104,8 +105,8 @@ async fn triggers_maintain_the_conversation_stats() {
             &network,
             "2026-01-01",
             &[
-                line(1, "2026-01-01 10:00:00", "message"),
-                line(2, "2026-01-01 11:00:00", "action"),
+                line(1, "2026-01-01 10:00:00", Kind::Message),
+                line(2, "2026-01-01 11:00:00", Kind::Action),
             ],
         )
         .await
@@ -122,7 +123,7 @@ async fn triggers_maintain_the_conversation_stats() {
         chan,
         &network,
         "2025-12-31",
-        &[line(1, "2025-12-31 09:00:00", "message")],
+        &[line(1, "2025-12-31 09:00:00", Kind::Message)],
     )
     .await
     .expect("older file");
@@ -141,7 +142,7 @@ async fn triggers_maintain_the_conversation_stats() {
         dm,
         &network,
         "2026-01-02",
-        &[line(1, "2026-01-02 08:00:00", "message")],
+        &[line(1, "2026-01-02 08:00:00", Kind::Message)],
     )
     .await
     .expect("dm line");

@@ -4,7 +4,7 @@
 //!
 //! Skips when `SIGNAL_TEST_DATABASE_URL` is unset, and refuses to skip in CI.
 
-use signal_archiver::db::Db;
+use signal_archiver::db::{BACKFILL_SERVER_TIMES, Db};
 use sqlx::AssertSqlSafe;
 use sqlx::Row as _;
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
@@ -336,25 +336,11 @@ async fn a_message_learns_its_server_times_from_its_kept_frame() {
     .await
     .unwrap();
 
-    // The v48 statement verbatim: a migration runs once per database.
     // dev-lint: allow-sqlx — the v48 migration's own statement, under test.
-    sqlx::query(
-        "UPDATE messages m
-          JOIN signal_frames f ON f.envelope_ts = m.server_ts
-           SET m.server_received_ts = COALESCE(
-                   m.server_received_ts,
-                   JSON_VALUE(f.frame, '$.envelope.serverReceivedTimestamp')),
-               m.server_delivered_ts = COALESCE(
-                   m.server_delivered_ts,
-                   JSON_VALUE(f.frame, '$.envelope.serverDeliveredTimestamp')),
-               m.expires_in_seconds = COALESCE(
-                   m.expires_in_seconds,
-                   JSON_VALUE(f.frame, '$.envelope.dataMessage.expiresInSeconds'),
-                   JSON_VALUE(f.frame, '$.envelope.syncMessage.sentMessage.expiresInSeconds'))",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query(BACKFILL_SERVER_TIMES)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     let got: (Option<i64>, Option<i64>, Option<i32>) = sqlx::query_as(
         "SELECT server_received_ts, server_delivered_ts, expires_in_seconds
@@ -395,16 +381,10 @@ async fn a_message_with_no_frame_keeps_null_rather_than_guessing() {
     .unwrap();
 
     // dev-lint: allow-sqlx — the v48 migration's own statement, under test.
-    sqlx::query(
-        "UPDATE messages m
-          JOIN signal_frames f ON f.envelope_ts = m.server_ts
-           SET m.server_received_ts = COALESCE(
-                   m.server_received_ts,
-                   JSON_VALUE(f.frame, '$.envelope.serverReceivedTimestamp'))",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query(BACKFILL_SERVER_TIMES)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     let got: (Option<i64>, Option<i64>, Option<i32>) = sqlx::query_as(
         "SELECT server_received_ts, server_delivered_ts, expires_in_seconds

@@ -36,6 +36,12 @@ async fn recaching_a_known_peer_changes_nothing() {
         session.take_dirty(),
         "a peer the session had never seen is a change"
     );
+
+    session.cache_peer(&a_user(777, true)).await.unwrap();
+    assert!(
+        !session.is_dirty(),
+        "the same peer again is not a change, or every response would write"
+    );
 }
 
 /// A peer that adds to the cached copy is a change.

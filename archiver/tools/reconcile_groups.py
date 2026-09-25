@@ -18,8 +18,8 @@ Get the groups JSON as in the README's history import:
     curl -s localhost:8080/v1/groups/$NUM > groups.json
 
 Usage (env: DB_HOST DB_PORT DB_USER DB_PASSWORD DB_NAME):
-    ./reconcile_groups.py groups.json [--dry-run]
-Defaults to --dry-run; pass --apply to write.
+    ./reconcile_groups.py groups.json [--apply]
+Dry-run by default; pass --apply to write.
 """
 import json
 import os

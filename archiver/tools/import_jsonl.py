@@ -20,7 +20,8 @@ otherwise groups fall back to masterKey and `tools/reconcile_groups.py` must run
 afterwards to unify them.
 
 Usage (env: DB_HOST DB_PORT DB_USER DB_PASSWORD DB_NAME, SELF_UUID SELF_PHONE):
-    ./import_jsonl.py main.jsonl [--groups-json=groups.json] [--dry-run] [--limit=N]
+    ./import_jsonl.py main.jsonl [--groups-json=groups.json] [--apply] [--limit=N]
+Dry-run by default; pass --apply to write.
 """
 import base64
 import json
@@ -48,21 +49,23 @@ def norm_phone(e164):
 
 
 def contact_name(c):
-    for a, b in (("systemGivenName", "systemFamilyName"),
-                 ("profileGivenName", "profileFamilyName")):
-        nm = " ".join(x for x in (c.get(a), c.get(b)) if x).strip()
+    """Signal's own order, as the live ingester's `display_name_of`: nickname,
+    then system contact name, then profile name."""
+    nick = c.get("nickname") or {}
+    for given, family in ((nick.get("given"), nick.get("family")),
+                          (c.get("systemGivenName"), c.get("systemFamilyName")),
+                          (c.get("profileGivenName"), c.get("profileFamilyName"))):
+        nm = " ".join(x for x in (given, family) if x).strip()
         if nm:
             return nm
-    nick = c.get("nickname") or {}
-    nm = " ".join(x for x in (nick.get("given"), nick.get("family")) if x).strip()
-    return nm or None
+    return None
 
 
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     opts = [a for a in sys.argv[1:] if a.startswith("--")]
     path = args[0]
-    dry = "--dry-run" in opts
+    dry = "--apply" not in opts  # dry-run unless explicitly applied
     limit = next((int(o.split("=")[1]) for o in opts if o.startswith("--limit=")), None)
     self_uuid = os.environ["SELF_UUID"]
     # Caller-supplied, since this repo is public. A blank one would erase the

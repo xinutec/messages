@@ -618,7 +618,11 @@ fn probe_one(
         }
         M::Service(m) => {
             note(tally, "messageService", true);
-            note(tally, &format!("  action {}", action_name(&m.action)), true);
+            note(
+                tally,
+                &format!("  action {}", map::action_name(&m.action)),
+                true,
+            );
             if let grammers_tl_types::enums::MessageAction::PhoneCall(c) = &m.action {
                 note(tally, "    call duration", c.duration.is_some());
                 note(tally, "    call reason", c.reason.is_some());
@@ -662,23 +666,6 @@ fn probe_reactions(
             "    recent_reactions names every reactor",
             i32::try_from(recent.len()).is_ok_and(|n| n >= counted),
         );
-    }
-}
-
-fn action_name(action: &grammers_tl_types::enums::MessageAction) -> &'static str {
-    use grammers_tl_types::enums::MessageAction as A;
-    match action {
-        A::ChatCreate(_) => "chatCreate",
-        A::ChatEditTitle(_) => "chatEditTitle",
-        A::ChatEditPhoto(_) => "chatEditPhoto",
-        A::ChatAddUser(_) => "chatAddUser",
-        A::ChatDeleteUser(_) => "chatDeleteUser",
-        A::PhoneCall(_) => "phoneCall",
-        A::ContactSignUp => "contactSignUp",
-        A::SetMessagesTtl(_) => "setMessagesTtl",
-        A::GroupCall(_) => "groupCall",
-        A::PinMessage => "pinMessage",
-        _ => "other",
     }
 }
 
@@ -737,12 +724,7 @@ async fn apply(
         Update::MessageDeleted(d) => {
             // See `Db::mark_telegram_deleted` for the scope.
             let scope = match d.channel_id() {
-                Some(channel_id) => TelegramDeleteScope::Channel(
-                    map::normalise_peer(&grammers_tl_types::enums::Peer::Channel(
-                        grammers_tl_types::types::PeerChannel { channel_id },
-                    ))
-                    .0,
-                ),
+                Some(channel_id) => TelegramDeleteScope::Channel(channel_peer(channel_id)),
                 None => TelegramDeleteScope::SharedSequence,
             };
             let n = db.mark_telegram_deleted(d.messages(), scope).await?;
@@ -861,9 +843,7 @@ async fn fetch_media(
         return Ok(());
     }
 
-    // `msg_id` is unique only within a conversation.
-    let stored_name = format!("{conversation_id}_{msg_id}");
-    let path = std::path::Path::new(&cfg.media_dir).join(&stored_name);
+    let (stored_name, path) = media_file(cfg, conversation_id, msg_id);
     // `Ok(false)` means there was nothing to download.
     match message.download_media(&path).await {
         Ok(true) => {
@@ -901,6 +881,14 @@ async fn fetch_media(
         }
     }
     Ok(())
+}
+
+/// Where a message's media is stored: its `stored_name`, and the path under
+/// `TELEGRAM_MEDIA_DIR`. `msg_id` is unique only within a conversation.
+fn media_file(cfg: &Cfg, conversation_id: i64, msg_id: i32) -> (String, std::path::PathBuf) {
+    let name = format!("{conversation_id}_{msg_id}");
+    let path = std::path::Path::new(&cfg.media_dir).join(&name);
+    (name, path)
 }
 
 /// What to serve the bytes as. Telegram photos are always JPEG; documents carry
@@ -990,8 +978,7 @@ async fn serve_one(
         anyhow::bail!("message {msg_id} no longer carries media");
     };
 
-    let stored_name = format!("{conversation_id}_{msg_id}");
-    let path = std::path::Path::new(&cfg.media_dir).join(&stored_name);
+    let (stored_name, path) = media_file(cfg, conversation_id, msg_id);
     match message.download_media(&path).await {
         Ok(true) => {
             db.record_telegram_media_stored(

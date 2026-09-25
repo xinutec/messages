@@ -3,7 +3,9 @@
 //! Fixtures are synthetic: the real logs are private and this repository is
 //! public. They reproduce the shapes of the live tree, not its content.
 
-use signal_archiver::irclog::{Date, Entry, Kind, parse_log, parse_path};
+use signal_archiver::irclog::{
+    Date, Entry, Kind, is_channel, parse_log, parse_path, stored_network,
+};
 
 fn d(year: i32, month: u32, day: u32) -> Date {
     Date { year, month, day }
@@ -53,6 +55,29 @@ fn a_channel_target_is_marked_by_its_own_name() {
             .expect("parses")
             .is_channel()
     );
+}
+
+/// `&` marks a server-local channel. The importer and `irc_tail` share this
+/// rule, since whichever creates a conversation first sets its flag.
+#[test]
+fn a_local_channel_is_a_channel_too() {
+    assert!(is_channel("#chan"));
+    assert!(is_channel("&local"));
+    assert!(!is_channel("somebody"));
+    assert!(
+        parse_path("xinutec/2026/08/14/&local.log")
+            .expect("parses")
+            .is_channel()
+    );
+}
+
+/// irssi tags a second connection `net2`; `--map` files it under the first.
+#[test]
+fn a_mapped_tag_is_stored_under_its_network() {
+    let map = [("xinutec2".to_string(), "xinutec".to_string())];
+    assert_eq!(stored_network(&map, "xinutec2"), "xinutec");
+    assert_eq!(stored_network(&map, "xinutec"), "xinutec");
+    assert_eq!(stored_network(&map, "other"), "other");
 }
 
 /// Old files have no network component. `None` lets the caller count them.

@@ -14,9 +14,16 @@ use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// `mysql://user:pass@host:port/name` split into the binary's five variables,
-/// or `None` to skip.
+/// or `None` to skip. A skip passes, so CI must not skip.
 fn db_env() -> Option<Vec<(&'static str, String)>> {
-    let url = std::env::var("SIGNAL_TEST_DATABASE_URL").ok()?;
+    let Ok(url) = std::env::var("SIGNAL_TEST_DATABASE_URL") else {
+        assert!(
+            std::env::var("CI").is_err(),
+            "SIGNAL_TEST_DATABASE_URL is unset in CI: the importer's incremental \
+             reads would ship unverified"
+        );
+        return None;
+    };
     let rest = url.strip_prefix("mysql://")?;
     let (creds, hostpath) = rest.split_once('@')?;
     let (user, pass) = creds.split_once(':')?;
@@ -91,7 +98,6 @@ const DAY_ONE: &str = "10:00 < alice> first\n10:01 < alice> second\n";
 #[test]
 fn a_second_run_reads_nothing_and_writes_nothing() {
     if db_env().is_none() {
-        eprintln!("skipping: SIGNAL_TEST_DATABASE_URL not set");
         return;
     }
     let tag = &tag("tnetsecond");
@@ -187,7 +193,6 @@ async fn stored_text(tag: &str) -> Vec<String> {
 #[tokio::test]
 async fn a_half_written_last_line_is_left_until_it_is_finished() {
     if db_env().is_none() {
-        eprintln!("skipping: SIGNAL_TEST_DATABASE_URL not set");
         return;
     }
     let tag = &tag("tnetpartial");

@@ -41,8 +41,8 @@ are in `kubes/dhall/apps/signal.dhall` in the `pippijn/code` repo.
 `tests/telegram_session.rs` and `tests/attach.rs` need nothing.
 
 `tests/contacts.rs`, `tests/telegram_store.rs`, `tests/irc_stats.rs`,
-`tests/frame_fields.rs` and `tests/import_irclogs.rs` need a MariaDB at
-`SIGNAL_TEST_DATABASE_URL` and skip without one; all but the last fail instead
+`tests/frame_fields.rs`, `tests/migrate.rs` and `tests/import_irclogs.rs` need a
+MariaDB at `SIGNAL_TEST_DATABASE_URL`. They skip without one, and fail instead
 when `CI` is set. The gate's archiver row starts one via dev-lint's
 `with-test-db`, and CI supplies a `mariadb:11.8` service. Each test's rows are
 unique per run, so the suite can run repeatedly against one database.
@@ -90,7 +90,7 @@ Then, with the database port-forwarded:
 ```
 DB_HOST=… DB_PORT=… DB_USER=… DB_PASSWORD=… DB_NAME=signal \
   SELF_UUID=<your ACI> SELF_PHONE=<your E.164 number> \
-  ./tools/import_jsonl.py main.jsonl --groups-json=groups.json [--dry-run] [--limit=N]
+  ./tools/import_jsonl.py main.jsonl --groups-json=groups.json [--limit=N] [--apply]   # dry-run by default
 ```
 It dedupes on `(sender_uuid, server_ts)`, so it is safe beside the live feed and
 to re-run. Attachment bytes are not imported, only metadata.

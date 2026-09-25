@@ -44,16 +44,11 @@ pub enum MediaKind {
     Sticker,
     Video,
     Audio,
-    Voice,
     GeoPoint,
     Contact,
     Poll,
     Dice,
-    Game,
-    Invoice,
     WebPage,
-    Story,
-    Giveaway,
     /// A media variant this build does not name.
     Other,
 }
@@ -67,16 +62,11 @@ impl MediaKind {
             MediaKind::Sticker => "sticker",
             MediaKind::Video => "video",
             MediaKind::Audio => "audio",
-            MediaKind::Voice => "voice",
             MediaKind::GeoPoint => "geo",
             MediaKind::Contact => "contact",
             MediaKind::Poll => "poll",
             MediaKind::Dice => "dice",
-            MediaKind::Game => "game",
-            MediaKind::Invoice => "invoice",
             MediaKind::WebPage => "webpage",
-            MediaKind::Story => "story",
-            MediaKind::Giveaway => "giveaway",
             MediaKind::Other => "other",
         }
     }
@@ -418,7 +408,7 @@ fn entities(list: &[tl::enums::MessageEntity]) -> Vec<Entity> {
 
 /// The TL constructor's name for a service action; [`describe_action`] renders
 /// it for a reader.
-fn action_name(action: &tl::enums::MessageAction) -> &'static str {
+pub fn action_name(action: &tl::enums::MessageAction) -> &'static str {
     use tl::enums::MessageAction as A;
     match action {
         A::Empty => "empty",

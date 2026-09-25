@@ -1358,7 +1358,7 @@ async fn telegram_reactors(
 }
 
 /// A call in words, as a verb phrase about the caller: an `Action` renders as
-/// `* Dana <body>`. No duration means the call was not answered, not that it
+/// `* nick <body>`. No duration means the call was not answered, not that it
 /// took no time. `None` when this is not a call.
 pub fn call_text(duration_s: Option<i32>, reason: Option<&str>, video: bool) -> Option<String> {
     // A call row exists only for a call, so either column marks one.

@@ -172,8 +172,10 @@ pub struct Reaction {
 pub struct Edit {
     pub thread_id: ThreadId,
     pub sender: String,
-    pub edit_ts: i64,   // when the edit was made (this version's timestamp)
-    pub target_ts: i64, // server_ts of the original message being edited
+    /// When the edit was made: this version's timestamp.
+    pub edit_ts: i64,
+    /// The edited original's `server_ts`.
+    pub target_ts: i64,
     pub body: Option<String>,
     pub is_outgoing: bool,
     pub styles: Vec<TextStyle>,
@@ -263,7 +265,8 @@ impl CallEventKind {
 pub struct Parsed {
     pub action: Action,
     pub contact: Option<Contact>,
-    pub dm_name: Option<(String, String)>, // (thread_id, name)
+    /// `(thread_id, name)`.
+    pub dm_name: Option<(String, String)>,
 }
 
 impl Parsed {
@@ -282,6 +285,29 @@ pub fn id_of(uuid: Option<&Value>, fallback: Option<&Value>) -> String {
         .or_else(|| fallback.and_then(Value::as_str))
         .unwrap_or("unknown")
         .to_string()
+}
+
+/// The sender of an incoming envelope, as a contact to upsert, and the name to
+/// give their DM when `payload` is not a group message.
+fn sender_contact(
+    env: &Value,
+    sender: &str,
+    payload: &Value,
+) -> (Contact, Option<(String, String)>) {
+    let name = env.get("sourceName").and_then(Value::as_str);
+    let contact = Contact {
+        uuid: sender.to_string(),
+        phone: env
+            .get("sourceNumber")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        name: name.map(str::to_string),
+    };
+    let dm_name = match (payload.get("groupInfo"), name) {
+        (None, Some(n)) => Some((ThreadId::Dm(sender.to_string()).to_string(), n.to_string())),
+        _ => None,
+    };
+    (contact, dm_name)
 }
 
 /// A message belongs to its `groupInfo.groupId` group if present, else the DM
@@ -483,23 +509,10 @@ pub fn parse_frame(frame: &Value) -> Parsed {
         let Some(target) = edit.get("targetSentTimestamp").and_then(Value::as_i64) else {
             return Parsed::skip();
         };
-        let name = env.get("sourceName").and_then(Value::as_str);
-        let contact = Some(Contact {
-            uuid: sender.clone(),
-            phone: env
-                .get("sourceNumber")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            name: name.map(str::to_string),
-        });
-        let action = edit_action(inner, &sender, edit_ts, target, false, &sender);
-        let dm_name = match (inner.get("groupInfo").is_none(), name) {
-            (true, Some(n)) => Some((ThreadId::Dm(sender.clone()).to_string(), n.to_string())),
-            _ => None,
-        };
+        let (contact, dm_name) = sender_contact(env, &sender, inner);
         return Parsed {
-            action,
-            contact,
+            action: edit_action(inner, &sender, edit_ts, target, false, &sender),
+            contact: Some(contact),
             dm_name,
         };
     }
@@ -547,26 +560,14 @@ pub fn parse_frame(frame: &Value) -> Parsed {
         else {
             return Parsed::skip();
         };
-        let name = env.get("sourceName").and_then(Value::as_str);
-        let contact = Some(Contact {
-            uuid: sender.clone(),
-            phone: env
-                .get("sourceNumber")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            name: name.map(str::to_string),
-        });
+        let (contact, dm_name) = sender_contact(env, &sender, dm);
         let action = payload_action(dm, &sender, ts, false, &sender, ServerTimes::of(env));
-        // Name a DM thread after the other party (not for groups/deletes).
-        let dm_name = match (&action, dm.get("groupInfo").is_none(), name) {
-            (Action::Message(_) | Action::Reaction(_), true, Some(n)) => {
-                Some((ThreadId::Dm(sender.clone()).to_string(), n.to_string()))
-            }
-            _ => None,
-        };
+        // A delete names no thread.
+        let dm_name =
+            dm_name.filter(|_| matches!(action, Action::Message(_) | Action::Reaction(_)));
         return Parsed {
             action,
-            contact,
+            contact: Some(contact),
             dm_name,
         };
     }
