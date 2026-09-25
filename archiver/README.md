@@ -52,9 +52,9 @@ Signal: `contacts` (+ `contact_names`, names over time), `conversations`
 (`dm:<uuid>` / `group:<id>`), `messages` (unique `(sender_uuid, server_ts)`),
 `attachments`, `reactions`, `signal_receipts`, `signal_call_events`,
 `signal_text_styles`, `signal_link_previews`, and `signal_frames`, every raw
-frame as it arrived, from which later columns are backfilled. Identities are ACI UUIDs, E.164
-as fallback. Deletes flag the row and edits are separate rows linked by
-`edit_of_ts`; nothing is overwritten.
+frame as it arrived, from which later columns are backfilled. Identities are ACI
+UUIDs, E.164 as fallback. Deletes flag the row and edits are separate rows
+linked by `edit_of_ts`; nothing is overwritten.
 
 Group threads are keyed by signal-cli's group id (base64 `groupInfo.groupId`).
 The Android export carries each group's master key instead, so the importer maps

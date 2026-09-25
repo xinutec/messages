@@ -31,11 +31,11 @@ source IPs survive k3s servicelb; check before relying on it.
 ## Components
 - `archiver/` — the ingesters and importers, and the schema's migrations. Its
   README covers them.
-- `src/` — the viewer's backend. `nextcloud/identity.rs` and `session.rs` are the login;
-  `routes/auth.rs` adds the allow-list; `archive.rs` is the origin-normalising
-  query layer; `irc_send.rs` sends; `config.rs` builds the database connection
-  from `DB_*`, so the app reuses `signal-secret`. The app owns only `sessions`
-  and `link_images` (`src/db.rs`).
+- `src/` — the viewer's backend. `nextcloud/identity.rs` and `session.rs` are
+  the login; `routes/auth.rs` adds the allow-list; `archive.rs` is the
+  origin-normalising query layer; `irc_send.rs` sends; `config.rs` builds the
+  database connection from `DB_*`, so the app reuses `signal-secret`. The app
+  owns only `sessions` and `link_images` (`src/db.rs`).
 - `src/bin/link-fetch.rs` — the link-picture fetch service, the only part that
   reaches the internet. It holds no credentials, database or disk.
 - `frontend/` — Angular: conversation list with origin filter, thread view, and
@@ -87,7 +87,8 @@ cd frontend && pnpm install && pnpm start  # http://localhost:4200
 ```
 
 ## Deploy (isis, namespace `signal`)
-Manifests are in the home monorepo (`xinutec/pippijn`, `code/kubes/messages/k8s/`).
+Manifests are in the home monorepo (`xinutec/pippijn`): `code/kubes/messages/k8s/`
+for the viewer, `code/kubes/signal/k8s/` for the archiver.
 Push to main, wait for CI to build both images, then run
 `code/kubes/deploy.sh messages` (the viewer) or `code/kubes/deploy.sh signal`
 (the archiver) from that checkout. It refuses unless the

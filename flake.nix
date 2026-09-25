@@ -1,7 +1,7 @@
-# Dev shell for the messages backend. Enter with: nix develop
+# Dev shell for the viewer and the archiver. Enter with: nix develop
 # rustls, so no openssl or pkg-config.
 {
-  description = "messages — Signal + Google Chat archive viewer backend";
+  description = "messages — Signal, Google Chat, IRC and Telegram archive";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
