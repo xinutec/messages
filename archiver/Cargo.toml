@@ -38,11 +38,5 @@ grammers-mtsender = "0.10.0"
 grammers-tl-types = "0.10.0"
 sha2 = "0.11"
 
-# The fleet's `[lints]` baseline (dev-lint docs/standards.md §7).
-[lints.rust]
-unsafe_code = "forbid"
-
-[lints.clippy]
-dbg_macro = "deny"
-todo = "deny"
-unimplemented = "deny"
+[lints]
+workspace = true

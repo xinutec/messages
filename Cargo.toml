@@ -50,14 +50,18 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# The fleet's `[lints]` baseline (dev-lint docs/standards.md §7).
-[lints.rust]
+# The fleet's `[lints]` baseline (dev-lint docs/standards.md §7), for both
+# crates.
+[workspace.lints.rust]
 unsafe_code = "forbid"
 
-[lints.clippy]
+[workspace.lints.clippy]
 dbg_macro = "deny"
 todo = "deny"
 unimplemented = "deny"
+
+[lints]
+workspace = true
 
 # These tables are the archiver's; tests/archive.rs carries a copy as its
 # fixture, which dev-lint checks against the owner's DDL (DL-SQLX-FIXTURE-DRIFT).
