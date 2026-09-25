@@ -11,12 +11,15 @@ only `INTERNET` (the VPN is set up at the OS/network level, not by this app).
 
 ## What it does
 
-- Loads `https://messages.xinutec.org/`, hardcoded (`MainActivity.MESSAGES_URL`).
-- JavaScript + DOM storage on (Angular), all navigation kept in-app, Back walks the
-  SPA history; reopens on the last in-app page.
-- Insets the WebView from the system bars by padding a wrapper, and paints the
-  strips behind the bars with the page's own surface colour (read on load, so it
-  tracks the Material light/dark theme).
+The WebView itself (in-app navigation, Back through the SPA history, reopening
+on the last page, insets and system-bar colour from the page's theme) is the
+fleet's shared `WebShellActivity`, in `ui-harness/android`, which must be checked
+out beside this repo. `MainActivity` adds what is this app's own:
+
+- the URL, `https://messages.xinutec.org/` (`MainActivity.MESSAGES_URL`), and the
+  Nextcloud host the login passes through; other links open in the browser;
+- a way up out of a conversation reached by a cold launch, which has no in-app
+  history for Back to walk.
 
 Runs on any Android 8+ (minSdk 26) device. Must be on the VPN to reach the host.
 
@@ -49,7 +52,7 @@ android/
 │   ├── build.gradle.kts                          # android app module, no Compose/AppCompat
 │   └── src/main/
 │       ├── AndroidManifest.xml                   # INTERNET; single launcher activity
-│       ├── kotlin/org/xinutec/messages/MainActivity.kt  # the WebView (+ inset padding)
+│       ├── kotlin/org/xinutec/messages/MainActivity.kt  # URL, allowed hosts, up out of a thread
 │       └── res/                                  # launcher icon (blue chat bubble), theme, strings
 ├── build.gradle.kts · settings.gradle.kts · gradle/   # project scaffolding
 └── gradlew                                       # borrows ~/Code/recall#android for the SDK
