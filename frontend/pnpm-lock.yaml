@@ -39,9 +39,15 @@ importers:
       '@angular/service-worker':
         specifier: ^22.1.7
         version: 22.1.7(@angular/core@22.1.7(@angular/compiler@22.1.7)(rxjs@7.8.2))(rxjs@7.8.2)
+      '@fontsource/roboto':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@xinutec/ui-harness':
         specifier: github:xinutec/ui-harness#cc25bcabc48294be62927c6c0e1993dc632420bb
         version: https://codeload.github.com/xinutec/ui-harness/tar.gz/cc25bcabc48294be62927c6c0e1993dc632420bb(@playwright/test@1.63.0)
+      material-icons:
+        specifier: ^1.13.14
+        version: 1.13.14
       rxjs:
         specifier: ~7.8.2
         version: 7.8.2
@@ -661,6 +667,9 @@ packages:
     peerDependenciesMeta:
       '@noble/hashes':
         optional: true
+
+  '@fontsource/roboto@5.3.0':
+    resolution: {integrity: sha512-BapRJOWYP+LZ21zp+wBQjfpPYKRoxc4LspJ/RLuI+HSMBD5u/X4O+ESDrSvEqDSy0rAl7GwBJ+09mdc16cVQ1Q==}
 
   '@harperfast/extended-iterable@1.0.3':
     resolution: {integrity: sha512-sSAYhQca3rDWtQUHSAPeO7axFIUJOI6hn1gjRC5APVE1a90tuyT8f5WIgRsFhhWA7htNkju2veB9eWL6YHi/Lw==}
@@ -2538,6 +2547,9 @@ packages:
   magic-string@1.0.0:
     resolution: {integrity: sha512-CGvjzMN08iv6w1mm4/x3Gh1hLb4VnyRUA15FFpl6CsCIGGoe36k7kY5KNz9QDbSBN5I/fWHM6ZlIkUTa5xdUEA==}
 
+  material-icons@1.13.14:
+    resolution: {integrity: sha512-kZOfc7xCC0rAT8Q3DQixYAeT+tBqZnxkseQtp2bxBxz7q5pMAC+wmit7vJn1g/l7wRU+HEPq23gER4iPjGs5Cg==}
+
   math-intrinsics@1.1.0:
     resolution: {integrity: sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==}
     engines: {node: '>= 0.4'}
@@ -3803,6 +3815,8 @@ snapshots:
       levn: 0.4.1
 
   '@exodus/bytes@1.15.1': {}
+
+  '@fontsource/roboto@5.3.0': {}
 
   '@harperfast/extended-iterable@1.0.3':
     optional: true
@@ -5452,6 +5466,8 @@ snapshots:
   magic-string@1.0.0:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  material-icons@1.13.14: {}
 
   math-intrinsics@1.1.0: {}
 
