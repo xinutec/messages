@@ -12,6 +12,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY archiver/Cargo.toml archiver/
 COPY archiver/src archiver/src
+COPY irclog/ irclog/
 RUN mkdir src && echo 'fn main() {}' > src/main.rs && touch src/lib.rs \
     && cargo build --release --locked -p signal-archiver \
     && cp target/release/signal-archiver /signal-archiver \

@@ -23,9 +23,9 @@ servers), so the ingester is a websocket-to-database client with no libsignal.
   names.
 - `src/telegram/` + `src/bin/telegram.rs` — the Telegram feed. `map.rs` is the
   pure wire → row mapping; `session.rs` keeps the MTProto session in MariaDB.
-- `src/irclog.rs`, `src/bin/import_irclogs.rs`, `src/bin/irc_tail.rs` — irssi
-  autolog parsing, the periodic importer, and the live tail. Both write the same
-  rows on the same dedupe key.
+- `src/bin/import_irclogs.rs`, `src/bin/irc_tail.rs` — the periodic importer and
+  the live tail. Both parse with the workspace's `irclog` crate and write the same
+  rows on the same dedupe key, as the viewer's send echo does.
 - `tools/import_jsonl.py` — the Signal history import.
 - `tools/reconcile_groups.py` — rekeys master-key group threads to live group ids.
 - `tools/import_gchat.py` — the Google Chat import.
@@ -38,7 +38,7 @@ It builds as `xinutec/signal-archiver` from the repository root
 are in `kubes/dhall/apps/signal.dhall` in the `pippijn/code` repo.
 
 ## Tests
-`tests/parse.rs`, `tests/telegram_map.rs`, `tests/irclog.rs`,
+`tests/parse.rs`, `tests/telegram_map.rs`,
 `tests/telegram_session.rs` and `tests/attach.rs` need nothing.
 
 `tests/contacts.rs`, `tests/telegram_store.rs`, `tests/irc_stats.rs`,

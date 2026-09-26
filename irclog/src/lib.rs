@@ -1,6 +1,9 @@
-//! Pure parsing of irssi autolog files into archive entries.
+//! irssi autologs: parsing a log file into entries, and the archive row each
+//! entry becomes.
 //!
-//! No I/O: a log file's path and text go in, classified entries come out.
+//! No I/O: a log file's path and text go in, rows come out. Every writer of
+//! `irc_messages` builds its rows here (the importer, `irc_tail` and the
+//! viewer's send echo), so each writes the row the others would.
 //!
 //! The layout is irssi's own setting:
 //!
@@ -32,6 +35,25 @@ pub struct Date {
     pub year: i32,
     pub month: u32,
     pub day: u32,
+}
+
+impl Date {
+    /// A `YYYY-MM-DD` date, as a log's path and `irc_messages.file_date` spell it.
+    pub fn parse_iso(s: &str) -> Option<Self> {
+        let mut parts = s.split('-');
+        let year = parts.next()?.parse().ok()?;
+        let month = parts
+            .next()?
+            .parse()
+            .ok()
+            .filter(|m| (1..=12).contains(m))?;
+        let day = parts
+            .next()?
+            .parse()
+            .ok()
+            .filter(|d| (1..=31).contains(d))?;
+        parts.next().is_none().then_some(Date { year, month, day })
+    }
 }
 
 /// When a line was logged, to the minute irssi recorded.
@@ -279,4 +301,30 @@ fn split_time(line: &str) -> Option<(u32, u32, &str)> {
     let hour = hour.parse().ok().filter(|h| *h < 24u32)?;
     let minute = minute.parse().ok().filter(|m| *m < 60u32)?;
     Some((hour, minute, rest))
+}
+
+/// One logged line as an `irc_messages` row.
+pub struct IrcLine {
+    pub line_no: u32,
+    /// A MariaDB `DATETIME` literal.
+    pub sent_at: String,
+    pub nick: Option<String>,
+    pub is_self: bool,
+    pub kind: Kind,
+    pub text: String,
+}
+
+impl IrcLine {
+    /// The row for a parsed line. `line_no` is the line's place in its file,
+    /// part of the dedupe key; `self_nicks` decide `is_self`.
+    pub fn from_entry(entry: &Entry, line_no: u32, self_nicks: &[String]) -> Self {
+        IrcLine {
+            line_no,
+            sent_at: entry.at.to_string(),
+            nick: entry.nick.clone(),
+            is_self: entry.nick.as_ref().is_some_and(|n| self_nicks.contains(n)),
+            kind: entry.kind,
+            text: entry.text.clone(),
+        }
+    }
 }

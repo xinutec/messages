@@ -1,0 +1,8 @@
+[package]
+name = "irclog"
+version = "0.1.0"
+edition = "2024"
+description = "irssi autologs: parsing a log, and the archive row each line becomes"
+
+[lints]
+workspace = true

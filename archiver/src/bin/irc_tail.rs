@@ -25,9 +25,9 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use irclog::{Date, IrcLine, parse_log, stored_network};
 use serde::Deserialize;
-use signal_archiver::db::{Db, IrcConversations, IrcLine};
-use signal_archiver::irclog::{Date, parse_log, stored_network};
+use signal_archiver::db::{Db, IrcConversations};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
@@ -210,7 +210,8 @@ async fn store(
         return Ok(false);
     };
 
-    let date = parse_file_date(file_date)?;
+    let date = Date::parse_iso(file_date)
+        .with_context(|| format!("the plugin's file_date is not a date: {file_date}"))?;
     // The importer's parser, so this row is the one the import would write.
     let parsed = parse_log(date, &format!("{line}\n"));
     let Some(entry) = parsed.entries.into_iter().next() else {
@@ -235,21 +236,6 @@ async fn store(
         .insert_irc_lines(conversation_id, &ev.tag, file_date, &[irc_line])
         .await?;
     Ok(written > 0)
-}
-
-fn parse_file_date(s: &str) -> Result<Date> {
-    let mut parts = s.split('-');
-    let mut next = |what: &str| -> Result<u32> {
-        parts
-            .next()
-            .with_context(|| format!("file_date has no {what}: {s}"))?
-            .parse()
-            .with_context(|| format!("file_date {what} is not a number: {s}"))
-    };
-    let year = next("year")? as i32;
-    let month = next("month")?;
-    let day = next("day")?;
-    Ok(Date { year, month, day })
 }
 
 /// Touch the file the liveness probe reads.

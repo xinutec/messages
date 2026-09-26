@@ -8,8 +8,8 @@ use sqlx::AssertSqlSafe;
 use sqlx::Row;
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
 
-use crate::irclog::{Entry, Kind};
 use crate::parse::ThreadId;
+use irclog::IrcLine;
 
 /// The MariaDB DSN, from the `DB_*` environment every binary shares.
 ///
@@ -1934,31 +1934,6 @@ pub enum TelegramDeleteScope {
     SharedSequence,
 }
 
-/// One logged line, ready to write.
-pub struct IrcLine {
-    pub line_no: u32,
-    pub sent_at: String,
-    pub nick: Option<String>,
-    pub is_self: bool,
-    pub kind: Kind,
-    pub text: String,
-}
-
-impl IrcLine {
-    /// The row for a parsed line. The importer and `irc_tail` both build rows
-    /// here, so each writes the row the other would.
-    pub fn from_entry(entry: &Entry, line_no: u32, self_nicks: &[String]) -> Self {
-        IrcLine {
-            line_no,
-            sent_at: entry.at.to_string(),
-            nick: entry.nick.clone(),
-            is_self: entry.nick.as_ref().is_some_and(|n| self_nicks.contains(n)),
-            kind: entry.kind,
-            text: entry.text.clone(),
-        }
-    }
-}
-
 /// `irc_conversations` ids already looked up, so a run upserts each once.
 #[derive(Default)]
 pub struct IrcConversations(std::collections::BTreeMap<(String, String), u64>);
@@ -1978,12 +1953,7 @@ impl IrcConversations {
             return Ok(*id);
         }
         let id = db
-            .upsert_irc_conversation(
-                network,
-                target,
-                crate::irclog::is_channel(target),
-                is_status,
-            )
+            .upsert_irc_conversation(network, target, irclog::is_channel(target), is_status)
             .await?;
         self.0.insert(key, id);
         Ok(id)

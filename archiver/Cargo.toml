@@ -37,6 +37,8 @@ grammers-mtsender = "0.10.0"
 # The raw TL types `map.rs` maps.
 grammers-tl-types = "0.10.0"
 sha2 = "0.11"
+# irssi autologs, shared with the viewer's send echo.
+irclog = { path = "../irclog" }
 
 [lints]
 workspace = true

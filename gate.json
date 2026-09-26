@@ -127,7 +127,9 @@
         "cargo",
         "test",
         "-p",
-        "signal-archiver"
+        "signal-archiver",
+        "-p",
+        "irclog"
       ],
       "artifacts": [],
       "cwd": ".",

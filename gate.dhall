@@ -66,7 +66,8 @@ in  { name = "messages"
         , timeout_s = 1800
         }
       , {-  The archiver's suite, in its own database: it applies the real
-            migrations, which the viewer's fixture would collide with.
+            migrations, which the viewer's fixture would collide with. `irclog`'s
+            tests need no database and run here too.
         -}
         G.Check::{
         , name = "archiver tests (against a real MariaDB)"
@@ -88,6 +89,8 @@ in  { name = "messages"
               , "test"
               , "-p"
               , "signal-archiver"
+              , "-p"
+              , "irclog"
               ]
         , timeout_s = 1800
         }

@@ -3,9 +3,7 @@
 //! Fixtures are synthetic: the real logs are private and this repository is
 //! public. They reproduce the shapes of the live tree, not its content.
 
-use signal_archiver::irclog::{
-    Date, Entry, Kind, is_channel, parse_log, parse_path, stored_network,
-};
+use irclog::{Date, Entry, Kind, is_channel, parse_log, parse_path, stored_network};
 
 fn d(year: i32, month: u32, day: u32) -> Date {
     Date { year, month, day }
@@ -388,5 +386,21 @@ fn a_line_parsed_alone_matches_the_same_line_parsed_in_its_file() {
         assert_eq!(solo.text, entry.text, "text differs for {raw:?}");
         // Alone, every line is line 1; the plugin reports the real one.
         assert_eq!(solo.line_no, 1, "a line read alone is always line 1");
+    }
+}
+
+/// `irc_messages.file_date` and the plugin's `file_date` are `YYYY-MM-DD`.
+#[test]
+fn a_file_date_is_read_and_a_malformed_one_refused() {
+    assert_eq!(Date::parse_iso("2026-08-14"), Some(d(2026, 8, 14)));
+    for bad in [
+        "2026-13-01",
+        "2026-08-32",
+        "2026-08",
+        "2026-08-14-1",
+        "yesterday",
+        "",
+    ] {
+        assert_eq!(Date::parse_iso(bad), None, "{bad:?} was accepted");
     }
 }

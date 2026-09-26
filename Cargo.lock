@@ -1329,6 +1329,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "791930b43c0d5973160d90a8f3894509f2b273430f5c5c73b668636d0287c5c0"
 
 [[package]]
+name = "irclog"
+version = "0.1.0"
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1563,6 +1567,7 @@ dependencies = [
  "chrono",
  "hex",
  "hmac",
+ "irclog",
  "rand 0.10.3",
  "reqwest",
  "serde",
@@ -2546,6 +2551,7 @@ dependencies = [
  "grammers-mtsender",
  "grammers-session",
  "grammers-tl-types",
+ "irclog",
  "reqwest",
  "serde",
  "serde_json",

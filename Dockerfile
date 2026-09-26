@@ -24,7 +24,9 @@ FROM rust:1-bookworm AS backend
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 # The archiver is a workspace member: its manifest is needed, its code is not.
+# `irclog` is a dependency, so all of it.
 COPY archiver/Cargo.toml archiver/
+COPY irclog/ irclog/
 RUN mkdir -p src archiver/src && echo 'fn main() {}' > src/main.rs && touch src/lib.rs \
     && echo 'fn main() {}' > archiver/src/main.rs && touch archiver/src/lib.rs \
     && cargo build --release --locked -p messages && rm -rf src

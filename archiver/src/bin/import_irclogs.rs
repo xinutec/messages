@@ -27,8 +27,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use signal_archiver::db::{Db, IrcConversations, IrcLine};
-use signal_archiver::irclog::{Kind, parse_log, parse_path, stored_network};
+use irclog::{IrcLine, Kind, parse_log, parse_path, stored_network};
+use signal_archiver::db::{Db, IrcConversations};
 
 struct Args {
     root: PathBuf,

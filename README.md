@@ -31,6 +31,9 @@ source IPs survive k3s servicelb; check before relying on it.
 ## Components
 - `archiver/` — the ingesters and importers, and the schema's migrations. Its
   README covers them.
+- `irclog/` — irssi autolog parsing and the `irc_messages` row each line
+  becomes, used by the importer, the live tail and the viewer's send echo, so all
+  three write the same row.
 - `src/` — the viewer's backend. `nextcloud/identity.rs` and `session.rs` are
   the login; `routes/auth.rs` adds the allow-list; `archive.rs` is the
   origin-normalising query layer; `irc_send.rs` sends; `config.rs` builds the
@@ -41,12 +44,12 @@ source IPs survive k3s servicelb; check before relying on it.
 - `frontend/` — Angular: conversation list with origin filter, thread view, and
   an IRC composer. `src/app/thread-window.ts` keeps a window of a long thread in
   the DOM; `src/app/copy-log.ts` copies a selection as an irssi log (the inverse
-  of `archiver/src/irclog.rs`); `src/app/attachment.ts` names attachments for both
+  of `irclog/`); `src/app/attachment.ts` names attachments for both
   screen and clipboard. `src/app/generated/` is written by ts-rs
   (`scripts/gen-types.sh`) and imported through `src/app/models.ts`.
 - `Dockerfile` — `xinutec/messages:latest`, with both viewer binaries;
   `archiver/Dockerfile` is `xinutec/signal-archiver:latest`. Both build from the
-  repository root, since the Cargo workspace spans the two crates.
+  repository root, since the Cargo workspace spans the crates.
 
 ## API (all require a session)
 - `GET /api/me` — current user.

@@ -8,8 +8,8 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use signal_archiver::db::{Db, IrcLine};
-use signal_archiver::irclog::Kind;
+use irclog::{IrcLine, Kind};
+use signal_archiver::db::Db;
 use sqlx::mysql::MySqlPoolOptions;
 use sqlx::{MySqlPool, Row};
 

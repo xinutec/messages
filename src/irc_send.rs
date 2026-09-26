@@ -9,8 +9,9 @@
 //!
 //! The echo is written at once, so the phone shows it without waiting for the
 //! hourly import: the plugin reports what irssi logged (line, number, tag,
-//! nick), and the row goes on the importer's dedupe key, `(conversation,
-//! source_tag, file_date, line_no)`, which the import then finds present.
+//! nick), and the line is parsed into a row by the importer's own `irclog`, on
+//! its dedupe key `(conversation, source_tag, file_date, line_no)`, which the
+//! import then finds present.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -74,9 +75,6 @@ pub struct Sent {
     pub tag: String,
     /// The server's current nick, which can differ from the configured one.
     pub nick: String,
-    pub text: String,
-    /// Sent as an action (`/me`), which the archive stores as a different `kind`.
-    pub is_action: bool,
     /// `None` when the send worked but the echo was not found in the log; the
     /// import will pick it up.
     pub logged: Option<Logged>,
@@ -90,14 +88,13 @@ pub struct Logged {
     pub line: String,
 }
 
-/// The plugin's wire format. Mirrors `archive-send.pl`.
+/// The plugin's wire format, the fields this reads; see `archive-send.pl`.
 #[derive(Deserialize)]
 struct Reply {
     ok: bool,
     error: Option<String>,
     tag: Option<String>,
     nick: Option<String>,
-    text: Option<String>,
     logged: Option<bool>,
     file_date: Option<String>,
     line_no: Option<u32>,
@@ -252,8 +249,6 @@ impl IrcSender {
         Ok(Outcome::Sent(Sent {
             tag: reply.tag.context("irssi did not report its server tag")?,
             nick: reply.nick.context("irssi did not report its nick")?,
-            text: reply.text.unwrap_or_else(|| text.to_string()),
-            is_action,
             logged,
         }))
     }
@@ -267,20 +262,6 @@ async fn set_owner_only(path: &Path) -> Result<()> {
         .with_context(|| format!("tightening {} to 0400", path.display()))
 }
 
-/// `sent_at` from the log line (`%H:%M`, seconds zero) and the path's date, as
-/// the importer reads it.
-fn sent_at(file_date: &str, line: &str) -> Option<String> {
-    let (hh, rest) = line.split_once(':')?;
-    let mm = rest.get(..2)?;
-    if hh.len() != 2 || !hh.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    if !mm.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    Some(format!("{file_date} {hh}:{mm}:00"))
-}
-
 /// Write the sent message into the archive so it can be shown at once.
 ///
 /// `INSERT IGNORE` on the importer's exact key, so the import's later write of
@@ -289,29 +270,35 @@ pub async fn record_echo(pool: &MySqlPool, conversation_id: &str, sent: &Sent) -
     let Some(logged) = &sent.logged else {
         return Ok(false);
     };
-    let Some(sent_at) = sent_at(&logged.file_date, &logged.line) else {
-        // Not a log line: leave it to the import rather than guess a time.
+    // The importer's parser and row, so the two writes are one row.
+    let entry = irclog::Date::parse_iso(&logged.file_date)
+        .map(|date| irclog::parse_log(date, &format!("{}\n", logged.line)))
+        .and_then(|parsed| parsed.entries.into_iter().next());
+    let Some(entry) = entry else {
+        // Not a log line: leave it to the import rather than guess.
         tracing::warn!(
-            "irssi's echo did not start with a timestamp, leaving it to the importer: {}",
+            "irssi's echo is not a log line, leaving it to the importer: {} {}",
+            logged.file_date,
             logged.line
         );
         return Ok(false);
     };
+    let row = irclog::IrcLine::from_entry(&entry, logged.line_no, std::slice::from_ref(&sent.nick));
 
     let res = sqlx::query(
         r"INSERT IGNORE INTO irc_messages
             (conversation_id, source_tag, file_date, line_no, sent_at, nick, is_self, kind, text)
-          VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(conversation_id)
     .bind(&sent.tag)
     .bind(&logged.file_date)
-    .bind(logged.line_no)
-    .bind(&sent_at)
-    .bind(&sent.nick)
-    // The kind the importer would give this line.
-    .bind(if sent.is_action { "action" } else { "message" })
-    .bind(&sent.text)
+    .bind(row.line_no)
+    .bind(&row.sent_at)
+    .bind(&row.nick)
+    .bind(row.is_self)
+    .bind(row.kind.as_str())
+    .bind(&row.text)
     .execute(pool)
     .await?;
 

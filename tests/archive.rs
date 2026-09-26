@@ -1154,8 +1154,6 @@ async fn a_sent_message_and_its_later_import_are_one_row() {
         // The tag irssi reported, as the importer takes it from the path.
         tag: "net".to_string(),
         nick: "me".to_string(),
-        text: "sent from the phone".to_string(),
-        is_action: false,
         logged: Some(messages::irc_send::Logged {
             file_date: "2020-01-02".to_string(),
             line_no: 7,
@@ -1168,14 +1166,28 @@ async fn a_sent_message_and_its_later_import_are_one_row() {
         .unwrap();
     assert!(wrote, "the echo is written so it can be shown at once");
 
-    // The importer's write: the archiver's `insert_irc_line`, INSERT IGNORE on
-    // (conversation, source_tag, file_date, line_no).
+    // The importer's row for the same logged line, from the importer's own
+    // parser and builder; inserted on its key, it must find the echo present.
+    let line = sent.logged.as_ref().unwrap();
+    let date = irclog::Date::parse_iso(&line.file_date).unwrap();
+    let entry = irclog::parse_log(date, &format!("{}\n", line.line))
+        .entries
+        .remove(0);
+    let row = irclog::IrcLine::from_entry(&entry, line.line_no, &["me".to_string()]);
     let importer = sqlx::query(
         "INSERT IGNORE INTO irc_messages
            (conversation_id, source_tag, file_date, line_no, sent_at, nick, is_self, kind, text)
-         VALUES (?, 'net', '2020-01-02', 7, '2020-01-02 00:04:00', 'me', 1, 'message', 'sent from the phone')",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
+    .bind(&sent.tag)
+    .bind(&line.file_date)
+    .bind(row.line_no)
+    .bind(&row.sent_at)
+    .bind(&row.nick)
+    .bind(row.is_self)
+    .bind(row.kind.as_str())
+    .bind(&row.text)
     .execute(&pool)
     .await
     .unwrap();
@@ -1194,16 +1206,29 @@ async fn a_sent_message_and_its_later_import_are_one_row() {
     .unwrap();
     assert_eq!(n, 1, "one message, however many times it is written");
 
-    // The timestamp comes from the log line, not the clock.
-    let at: String = sqlx::query_scalar(
-        "SELECT DATE_FORMAT(sent_at, '%Y-%m-%d %H:%i:%s') FROM irc_messages
-         WHERE conversation_id = ? AND file_date = '2020-01-02'",
+    // And the echo IS the importer's row, column for column.
+    let stored: (String, Option<String>, i8, String, Option<String>) = sqlx::query_as(
+        "SELECT DATE_FORMAT(sent_at, '%Y-%m-%d %H:%i:%s'), nick, is_self, kind, text
+           FROM irc_messages WHERE conversation_id = ? AND file_date = '2020-01-02'",
     )
     .bind(&id)
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(at, "2020-01-02 00:04:00");
+    assert_eq!(
+        stored,
+        (
+            row.sent_at.clone(),
+            row.nick.clone(),
+            i8::from(row.is_self),
+            row.kind.as_str().to_string(),
+            Some(row.text.clone())
+        )
+    );
+    assert_eq!(
+        stored.0, "2020-01-02 00:04:00",
+        "the time is the log line's"
+    );
 
     sqlx::query("DELETE FROM irc_messages WHERE conversation_id = ? AND file_date = '2020-01-02'")
         .bind(&id)
@@ -1227,8 +1252,6 @@ async fn an_unlogged_send_records_nothing_and_is_not_an_error() {
     let sent = messages::irc_send::Sent {
         tag: "net".to_string(),
         nick: "me".to_string(),
-        text: "gone, but not seen".to_string(),
-        is_action: false,
         logged: None,
     };
     assert!(
@@ -1255,8 +1278,6 @@ async fn the_echo_takes_its_timestamp_from_the_log_line() {
     let sent = messages::irc_send::Sent {
         tag: "net".to_string(),
         nick: "me".to_string(),
-        text: "from a channel".to_string(),
-        is_action: false,
         logged: Some(messages::irc_send::Logged {
             file_date: "2020-01-03".to_string(),
             line_no: 2,
@@ -1283,8 +1304,6 @@ async fn the_echo_takes_its_timestamp_from_the_log_line() {
         let odd = messages::irc_send::Sent {
             tag: "net".to_string(),
             nick: "me".to_string(),
-            text: "unplaceable".to_string(),
-            is_action: false,
             logged: Some(messages::irc_send::Logged {
                 file_date: "2020-01-04".to_string(),
                 line_no: 1,

@@ -7,8 +7,9 @@ edition = "2024"
 # OAuth2 login, restricted to an allow-list. See README.md.
 
 [workspace]
-# The archiver writes the database this crate reads, and owns its schema.
-members = ["archiver"]
+# The archiver writes the database this crate reads, and owns its schema;
+# `irclog` is the IRC log parsing both use.
+members = ["archiver", "irclog"]
 
 [features]
 # ts-rs, which exports the wire types as TypeScript (scripts/gen-types.sh). Off
@@ -42,6 +43,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 hmac = "0.13"
 sha2 = "0.11"
 hex = "0.4"
+# irssi autologs: the send echo writes the row the importer would.
+irclog = { path = "irclog" }
 rand = "0.10"
 url = "2"
 time = "0.3"
