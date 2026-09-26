@@ -2,9 +2,13 @@
 #!nix-shell -i python3 -p "python3.withPackages(ps: [ps.pymysql])"
 """Check the archive still answers the things Pippijn knows to be true.
 
-Each row of `known_truths.tsv` is known independently of the archive, so a
-query that stops returning it means the pipeline lost something. `expect` is a
-floor, since the counts only grow.
+Each row of `known_truths.tsv` and `known_truths.private.tsv` is known
+independently of the archive, so a query that stops returning it means the
+pipeline lost something. `expect` is a floor, since the counts only grow; a
+query about an absence counts it as `= 0`, so it too answers 1 when true.
+
+The private file is git-crypt'd. In a clone without the key it is ciphertext,
+and only the public rows are checked, which the output says.
 
 Usage (env: DB_HOST DB_PORT DB_USER DB_PASSWORD DB_NAME):
 
@@ -16,11 +20,29 @@ import os
 import sys
 import pathlib
 
-TRUTHS = pathlib.Path(__file__).resolve().parent / "known_truths.tsv"
+HERE = pathlib.Path(__file__).resolve().parent
+TRUTHS = [HERE / "known_truths.tsv", HERE / "known_truths.private.tsv"]
+
+
+def readable(path):
+    """The file's text, or None while git-crypt still has it encrypted."""
+    data = path.read_bytes()
+    if data.startswith(b"\x00GITCRYPT"):
+        print(f"{path.name} is encrypted (no git-crypt key here); its rows are not checked",
+              file=sys.stderr)
+        return None
+    return data.decode()
 
 
 def rows():
-    for line in TRUTHS.read_text().splitlines():
+    for path in TRUTHS:
+        text = readable(path)
+        if text is not None:
+            yield from rows_of(text)
+
+
+def rows_of(text):
+    for line in text.splitlines():
         if not line.strip() or line.startswith("#") or line.startswith("name\t"):
             continue
         parts = line.split("\t")

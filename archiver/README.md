@@ -30,7 +30,8 @@ servers), so the ingester is a websocket-to-database client with no libsignal.
 - `tools/reconcile_groups.py` — rekeys master-key group threads to live group ids.
 - `tools/import_gchat.py` — the Google Chat import.
 - `tools/check_known_truths.py` — checks the live database still answers the
-  facts in `tools/known_truths.tsv`.
+  facts in `tools/known_truths.tsv`, and in `tools/known_truths.private.tsv`, the
+  rows that identify somebody, which git-crypt encrypts.
 
 It builds as `xinutec/signal-archiver` from the repository root
 (`archiver/Dockerfile`); the gate, CI and flake are the repository's. Manifests
