@@ -1520,7 +1520,6 @@ async fn signal_messages(
         }
     };
     // `ORDER BY` takes no bound parameter, hence one literal per direction.
-    // dev-lint: allow-sqlx — `sql` is one of the three literals directly above.
     let rows = sqlx::query(sql)
         .bind(thread_id)
         .bind(cur_ts)
@@ -1788,7 +1787,6 @@ async fn gchat_messages(
         }
     };
     // `ORDER BY` takes no bound parameter, hence one literal per direction.
-    // dev-lint: allow-sqlx — `sql` is one of the three literals directly above.
     let rows = sqlx::query(sql)
         .bind(group_id)
         .bind(cur_ts)
@@ -1942,7 +1940,6 @@ async fn irc_messages(
         }
     };
     // `ORDER BY` takes no bound parameter, hence one literal per direction.
-    // dev-lint: allow-sqlx — `sql` is one of the three literals directly above.
     let rows = sqlx::query(sql)
         .bind(conversation_id)
         .bind(cur_ts)
@@ -2080,7 +2077,6 @@ async fn telegram_messages(
               LIMIT ?"
         }
     };
-    // dev-lint: allow-sqlx — `sql` is one of the three literals directly above.
     let rows = sqlx::query(sql)
         .bind(conversation_id)
         .bind(cur_ts)
@@ -2436,7 +2432,6 @@ pub async fn search(
           ORDER BY m.server_ts DESC LIMIT ?"
     };
     let srows = if scope.covers(Origin::Signal) {
-        // dev-lint: allow-sqlx — `sql` is one of the two literals directly above.
         let mut q = sqlx::query(sql).bind(&like);
         if let Some(id) = scope.id_for(Origin::Signal) {
             q = q.bind(id);
@@ -2482,7 +2477,6 @@ pub async fn search(
           ORDER BY m.ts_us DESC LIMIT ?"
     };
     let grows = if scope.covers(Origin::Gchat) {
-        // dev-lint: allow-sqlx — `sql` is one of the two literals directly above.
         let mut q = sqlx::query(sql).bind(&like);
         if let Some(id) = scope.id_for(Origin::Gchat) {
             q = q.bind(id);
@@ -2528,7 +2522,6 @@ pub async fn search(
           ORDER BY m.sent_at DESC LIMIT ?"
     };
     let trows = if scope.covers(Origin::Telegram) {
-        // dev-lint: allow-sqlx — `sql` is one of the two literals directly above.
         let mut q = sqlx::query(sql).bind(&like);
         // Bound as a string against a BIGINT: a malformed id matches nothing
         // rather than failing.
@@ -2603,7 +2596,6 @@ pub async fn search(
     };
     // The scoped literal binds the id first, in the order of its `?`.
     let irows = if scope.covers(Origin::Irc) {
-        // dev-lint: allow-sqlx — `sql` is one of the two literals directly above.
         let mut q = sqlx::query(sql);
         if let Some(id) = scope.id_for(Origin::Irc) {
             q = q.bind(id);

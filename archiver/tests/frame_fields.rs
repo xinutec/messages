@@ -206,7 +206,6 @@ async fn the_backfill_reads_them_from_the_kept_frames() {
             BACKFILL_TEXT_STYLES,
             BACKFILL_LINK_PREVIEWS,
         ] {
-            // dev-lint: allow-sqlx — the migrations' own statements, under test.
             sqlx::query(stmt).execute(&pool).await.unwrap();
         }
     }

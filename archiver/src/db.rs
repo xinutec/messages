@@ -667,8 +667,6 @@ impl Db {
             let v = i as i32;
             if !applied.contains(&v) {
                 tracing::info!("applying migration v{v}");
-                // dev-lint replays each literal as DDL but cannot follow this loop.
-                // dev-lint: allow-sqlx migration runner over const literals
                 sqlx::query(*sql).execute(&mut *conn).await?;
                 sqlx::query("INSERT INTO schema_version (version) VALUES (?)")
                     .bind(v)

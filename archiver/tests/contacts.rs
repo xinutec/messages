@@ -336,7 +336,6 @@ async fn a_message_learns_its_server_times_from_its_kept_frame() {
     .await
     .unwrap();
 
-    // dev-lint: allow-sqlx — the v48 migration's own statement, under test.
     sqlx::query(BACKFILL_SERVER_TIMES)
         .execute(&pool)
         .await
@@ -380,7 +379,6 @@ async fn a_message_with_no_frame_keeps_null_rather_than_guessing() {
     .await
     .unwrap();
 
-    // dev-lint: allow-sqlx — the v48 migration's own statement, under test.
     sqlx::query(BACKFILL_SERVER_TIMES)
         .execute(&pool)
         .await
