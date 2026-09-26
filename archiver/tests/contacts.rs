@@ -178,7 +178,6 @@ async fn the_superseded_column_is_gone() {
 
     // Asks the server's catalogue: selecting a dropped column would error like
     // any other failure.
-    // dev-lint: allow-sqlx — the server's own catalogue, by design.
     let still_there: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM information_schema.columns
           WHERE table_schema = DATABASE() AND table_name = 'contacts'
