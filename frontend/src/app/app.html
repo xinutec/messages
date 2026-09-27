@@ -1,12 +1,17 @@
 @if (loading()) {
   <mat-progress-bar mode="indeterminate" />
 } @else if (me(); as user) {
-  <mat-toolbar class="bar">
-    <span class="brand">messages</span>
-    <span class="spacer"></span>
-    <span class="user">{{ user.display_name }}</span>
-    <button mat-button (click)="signOut()">Sign out</button>
-  </mat-toolbar>
+  <!-- The bar every app draws (`@xinutec/ui-scaffold`): the menu and the app's name on
+       the list, an arrow up and the conversation's name in a thread. -->
+  <ui-scaffold title="messages" [menu]="account" />
+  <mat-menu #account="matMenu">
+    <!-- Who is signed in, as the menu's heading rather than a control. -->
+    <div mat-menu-item disabled>{{ user.display_name }}</div>
+    <button mat-menu-item (click)="signOut()">
+      <mat-icon>logout</mat-icon>
+      <span>Sign out</span>
+    </button>
+  </mat-menu>
 
   <div class="shell" [class.has-selection]="active()">
     <aside class="list">
@@ -58,12 +63,13 @@
           }
         </mat-action-list>
       } @else {
-        <div class="filters">
-          <button mat-button [class.active]="originFilter() === 'all'" (click)="setFilter('all')">All</button>
+        <mat-button-toggle-group class="filters" hideSingleSelectionIndicator aria-label="Origin"
+                                 [value]="originFilter()" (change)="setFilter($event.value)">
+          <mat-button-toggle value="all">All</mat-button-toggle>
           @for (o of origins; track o) {
-            <button mat-button [class.active]="originFilter() === o" (click)="setFilter(o)">{{ originLabels[o] }}</button>
+            <mat-button-toggle [value]="o">{{ originLabels[o] }}</mat-button-toggle>
           }
-        </div>
+        </mat-button-toggle-group>
         <mat-action-list>
           @for (c of visibleConversations(); track c.origin + c.id) {
             <button mat-list-item [class.active]="isActive(c)" (click)="open(c)">

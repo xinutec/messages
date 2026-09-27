@@ -32,7 +32,7 @@ test("origin filter is reflected in the URL", async ({ page }) => {
   await mockApi(page);
   await page.goto("/");
   // exact: a gchat row's subtitle also contains "Google Chat".
-  await page.getByRole("button", { name: "Google Chat", exact: true }).click();
+  await page.getByRole("radio", { name: "Google Chat", exact: true }).click();
   await expect(page).toHaveURL(/[?&]origin=gchat\b/);
 });
 
@@ -173,6 +173,14 @@ test("Back returns from a conversation to the list", async ({ page }) => {
   await expect(page).toHaveURL(/\/conversation\/signal\/dm:a/);
   await page.goBack();
   await expect(page).not.toHaveURL(/\/conversation\//);
+  await page.getByPlaceholder("Search messages").waitFor();
+});
+
+test("the bar's arrow goes up to the list, keeping the origin filter", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/conversation/signal/dm:a?origin=signal&from=1000");
+  await page.getByRole("button", { name: "Back to conversations" }).click();
+  await expect(page).toHaveURL(/\/\?origin=signal$/);
   await page.getByPlaceholder("Search messages").waitFor();
 });
 

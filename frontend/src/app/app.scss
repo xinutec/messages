@@ -4,31 +4,17 @@
   height: 100%;
 }
 
-.bar {
+ui-scaffold {
   flex: 0 0 auto;
-  .brand {
-    font-weight: 500;
-  }
-  .spacer {
-    flex: 1 1 auto;
-  }
-  .user {
-    margin-right: 0.5rem;
-    opacity: 0.85;
-    max-width: 40vw;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
 }
 
 // Two-pane on desktop; the list and the routed thread pane fill the space under
-// the toolbar.
+// the bar. The list is as wide as a phone, which the origin toggles need.
 .shell {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 360px 1fr;
 }
 
 .list {
@@ -45,13 +31,7 @@
 
   .filters {
     display: flex;
-    gap: 0.25rem;
-    padding: 0.5rem;
-    flex-wrap: wrap;
-    button.active {
-      font-weight: 600;
-      text-decoration: underline;
-    }
+    margin: 0.5rem;
   }
   .active {
     background: color-mix(in srgb, var(--mat-sys-on-surface) 6%, transparent);

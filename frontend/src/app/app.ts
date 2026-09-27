@@ -9,7 +9,9 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatListModule } from '@angular/material/list';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
-import { MatToolbarModule } from '@angular/material/toolbar';
+import { MatButtonToggleModule } from '@angular/material/button-toggle';
+import { MatMenuModule } from '@angular/material/menu';
+import { Scaffold } from '@xinutec/ui-scaffold';
 
 import { Subject, catchError, filter, fromEvent, of, switchMap } from 'rxjs';
 
@@ -28,10 +30,12 @@ import { Conversation, Origin, SearchHit } from './models';
     RouterOutlet,
     DatePipe,
     FormsModule,
-    MatToolbarModule,
+    Scaffold,
     MatButtonModule,
+    MatButtonToggleModule,
     MatIconModule,
     MatListModule,
+    MatMenuModule,
     MatFormFieldModule,
     MatInputModule,
     MatProgressBarModule,

@@ -3,7 +3,9 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import { BehaviorSubject, Observable, Subject, of } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
+import { declaredUp, resolveUp } from '@xinutec/ui-scaffold';
 
+import { routes } from './app.routes';
 import { Thread } from './thread';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
@@ -137,12 +139,12 @@ describe('Thread', () => {
     expect(thread.bottomSpacer()).toBe(0);
   });
 
-  it('back returns to the list route, dropping the paged depth', () => {
-    const { thread, router } = setup();
-    const nav = vi.spyOn(router, 'navigate').mockResolvedValue(true);
-    thread.back();
-    // Origin filter kept; `from` cleared.
-    expect(nav).toHaveBeenCalledWith(['/'], expect.objectContaining({ queryParams: { from: null }, queryParamsHandling: 'merge' }));
+  it('up from a conversation is the list, keeping the origin filter and dropping the paged depth', () => {
+    const route = routes.find((r) => r.path === 'conversation/:origin/:id');
+    const declared = declaredUp(route?.data ?? {});
+    if (declared === undefined) throw new Error('the conversation route declares no up');
+    const up = resolveUp(declared, { origin: 'irc', id: '#c' }, { origin: 'irc', from: '42' });
+    expect(up).toEqual(expect.objectContaining({ path: '/', query: { origin: 'irc' } }));
   });
   it('offers a composer for IRC only — the other origins have no live client', () => {
     const { thread, ref, fixture } = setup();

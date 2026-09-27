@@ -1,5 +1,4 @@
-// The Thread host is the right-hand pane and the scroll container. Vertical
-// padding is on the head and messages, so the sticky head pins flush to the top.
+// The Thread host is the right-hand pane and the scroll container.
 :host {
   // A column, so the composer's `margin-top: auto` puts it at the foot of a
   // short conversation; sticky alone would float it under the last message.
@@ -18,63 +17,32 @@
   }
 }
 
-// Pinned, so the title stays visible; opaque and above the day headers.
-.thread-head {
-  position: sticky;
-  top: 0;
-  z-index: 3;
-  display: flex;
+// The date control in the bar, before the search button. Kept narrow: at its
+// intrinsic width it leaves a long title no room on a phone.
+.go-to-date {
+  flex: 0 0 auto;
+  display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
-  // A fixed height, so the day headers can sit just below it without overlap.
-  height: 3rem;
-  box-sizing: border-box;
-  // The theme's surface token, which adapts to dark mode.
-  background: var(--mat-sys-surface);
-  .back {
-    display: none; // desktop: two-pane, no back needed
-  }
-  h2 {
-    margin: 0;
-    font: var(--mat-sys-title-medium);
-    // The title yields, so a long name cannot push the buttons off a phone.
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .find {
-    flex: 0 0 auto;
-  }
-  // The date control, before the search button. Kept narrow: at its intrinsic
-  // width it leaves a long title no room on a phone.
-  .go-to-date {
-    flex: 0 0 auto;
-    margin-left: auto;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.15rem;
+  gap: 0.15rem;
+  cursor: pointer;
+  input[type='date'] {
+    width: 1.6rem;
+    border: 0;
+    background: none;
+    color: transparent;
+    font: inherit;
     cursor: pointer;
-    input[type='date'] {
+    // Hide the text and keep Chromium's picker indicator, making the control
+    // icon-sized; Firefox and Safari draw their own.
+    &::-webkit-datetime-edit,
+    &::-webkit-inner-spin-button,
+    &::-webkit-clear-button {
+      display: none;
+    }
+    &::-webkit-calendar-picker-indicator {
+      opacity: 0;
       width: 1.6rem;
-      border: 0;
-      background: none;
-      color: transparent;
-      font: inherit;
       cursor: pointer;
-      // Hide the text and keep Chromium's picker indicator, making the control
-      // icon-sized; Firefox and Safari draw their own.
-      &::-webkit-datetime-edit,
-      &::-webkit-inner-spin-button,
-      &::-webkit-clear-button {
-        display: none;
-      }
-      &::-webkit-calendar-picker-indicator {
-        opacity: 0;
-        width: 1.6rem;
-        cursor: pointer;
-      }
     }
   }
 }
@@ -115,11 +83,10 @@
   white-space: nowrap;
 }
 
-// In-thread search, between the sticky head and the messages; the thread stays
-// in place behind it.
+// In-thread search, pinned above the messages; the thread stays in place behind it.
 .thread-search {
   position: sticky;
-  top: 3rem; // exactly the head's height, so the two never overlap
+  top: 0;
   z-index: 3; // above the day headers, which pin behind it
   background: var(--mat-sys-surface);
   padding: 0.5rem 0.5rem 0;
@@ -156,10 +123,10 @@
 }
 
 // Each day is a section, so its sticky header pins only within that day and
-// is replaced by the next. Offset below the pinned head.
+// is replaced by the next.
 .day {
   position: sticky;
-  top: 3.25rem;
+  top: 0.25rem;
   z-index: 2;
   text-align: center;
   margin: 0.5rem 0;
@@ -430,21 +397,17 @@
   }
 }
 
-// Phone: full-width pane with a working back button and roomier bubbles.
+// Phone: full-width pane with roomier bubbles.
 @media (max-width: 767px) {
   :host {
     padding: 0 0.9rem;
-  }
-  .thread-head .back {
-    display: inline-flex;
   }
   .msg {
     max-width: 85%;
   }
 }
 
-// The composer stays at the foot of the scroll container, mirroring
-// `.thread-head`. Sticky, not fixed: fixed would float it over the list on
+// The composer stays at the foot of the scroll container. Sticky, not fixed: fixed would float it over the list on
 // desktop.
 .composer {
   position: sticky;

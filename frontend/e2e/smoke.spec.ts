@@ -144,12 +144,12 @@ test("the current day's date stays pinned at the top while scrolling", async ({ 
   await page.getByText("msg 0-0", { exact: true }).waitFor();
   await scrollThread(page, 400);
   await page.waitForTimeout(150);
-  // Day 1's header is pinned just below the conversation head.
+  // Day 1's header is pinned at the top of the thread, under the bar.
   const threadTop = await page.locator(".thread").evaluate((e) => e.getBoundingClientRect().top);
   // en-GB `fullDate`, from LOCALE_ID in app.config.ts; Angular defaults to en-US.
   const box = await page.getByText("Thursday, 1 January 2026", { exact: true }).boundingBox();
   expect(box).not.toBeNull();
   const offset = (box?.y ?? -999) - threadTop;
-  expect(offset).toBeGreaterThanOrEqual(40); // pinned below the sticky head, not scrolled off
-  expect(offset).toBeLessThan(90); // pinned, not at its in-flow position far down
+  expect(offset).toBeGreaterThanOrEqual(0); // pinned, not scrolled off
+  expect(offset).toBeLessThan(40); // pinned, not at its in-flow position far down
 });

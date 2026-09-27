@@ -268,11 +268,10 @@ export class ThreadWindow {
   scrollToTs(ts: number): void {
     // Landing mid-history is not following, whether or not `ts` is rendered.
     this.following = false;
-    const head = this.host.querySelector<HTMLElement>('.thread-head')?.offsetHeight ?? 0;
     const hostTop = this.host.getBoundingClientRect().top;
     const target = this.msgEls().find((e) => Number(e.dataset['ts']) >= ts) ?? this.msgEls()[0];
     if (!target) return;
-    this.host.scrollTop += target.getBoundingClientRect().top - hostTop - head;
+    this.host.scrollTop += target.getBoundingClientRect().top - hostTop;
   }
 
   /** Keep the conversation's end visible when the scroll container resizes, as

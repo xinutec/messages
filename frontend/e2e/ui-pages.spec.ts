@@ -5,6 +5,7 @@ import {
   expectNoHorizontalOverflow,
   expectViewportIsPhone,
   expectIconFontLoaded,
+  expectUpInTheBar,
 } from "@xinutec/ui-harness";
 
 import { testMessage } from "../src/app/test-message";
@@ -150,7 +151,7 @@ test("conversation list — filter row + rows: lays out cleanly @ phone width", 
   await mockApi(page);
   await page.goto("/");
   await page.getByPlaceholder("Search messages").waitFor();
-  await page.getByRole("button", { name: "Google Chat", exact: true }).waitFor(); // widest filter button
+  await page.getByRole("radio", { name: "Google Chat", exact: true }).waitFor(); // widest filter toggle
   await page.getByText("Alice Andersson").waitFor();
   // Two rows titled `s_20`; only the network separates them.
   await page.getByText(/IRC xinutec · 14446 msgs/).waitFor();
@@ -168,6 +169,9 @@ test("open thread — meta + reactions + attachment: lays out cleanly @ phone wi
   await page.locator(".msg .body").first().waitFor();
   await page.getByText("👍 3").waitFor();
   await page.getByText("referral-scan-2026-final-v2.pdf", { exact: false }).waitFor();
+  // The bar leads with up, named for the conversation (`@xinutec/ui-scaffold`).
+  await expectUpInTheBar(page);
+  await expect(page.locator("ui-scaffold h1")).toHaveText("Alice Andersson");
   await expectNoTextOverlaps(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
 });
@@ -305,7 +309,7 @@ test("picking a date asks the server for that day @ phone width", async ({ page 
   await page.goto("/conversation/signal/dm:a");
   await page.locator(".msg .body").first().waitFor();
 
-  await page.locator('.thread-head input[type="date"]').fill("2025-03-04");
+  await page.locator('ui-scaffold input[type="date"]').fill("2025-03-04");
   await page.waitForFunction(() => location.search.includes("on="));
 
   const expected = String(new Date(2025, 2, 4).getTime());

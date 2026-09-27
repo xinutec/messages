@@ -9,6 +9,7 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatListModule } from '@angular/material/list';
 import { FormsModule } from '@angular/forms';
+import { ScaffoldActions, scaffoldTitle } from '@xinutec/ui-scaffold';
 
 import { Subject, catchError, firstValueFrom, of, switchMap } from 'rxjs';
 
@@ -45,6 +46,7 @@ const MEDIA_WATCH_LIMIT_MS = 15 * 60 * 1000;
     MatInputModule,
     MatListModule,
     MatProgressBarModule,
+    ScaffoldActions,
   ],
 })
 export class Thread {
@@ -115,10 +117,11 @@ export class Thread {
     return o != null && i != null ? this.store.find(o, i) : null;
   });
 
-  // A deep link can render before the list arrives.
-  readonly headTitle = computed(() => {
+  // The bar's name for the conversation; a deep link can render before the list arrives.
+  private readonly barTitle = computed(() => {
+    if (!this.routed()) return undefined;
     const c = this.conversation();
-    return c ? this.store.title(c) : 'Conversation';
+    return c ? this.store.title(c) : { text: 'Conversation', provisional: true };
   });
 
   /** Search within this conversation. On a phone the shell's search box is
@@ -191,6 +194,7 @@ export class Thread {
   });
 
   constructor() {
+    scaffoldTitle(this.barTitle);
     // `switchMap`, so a slow answer cannot land after a newer one.
     this.threadSearch$
       .pipe(
@@ -700,12 +704,6 @@ export class Thread {
       e.preventDefault();
       void this.send();
     }
-  }
-
-  /** In-app back (the mobile single-pane control) = return to the list route,
-   *  keeping the origin filter and dropping the paged depth. */
-  back(): void {
-    void this.router.navigate(['/'], { queryParams: { from: null }, queryParamsHandling: 'merge' });
   }
 
   // ---- pictures behind links -----------------------------------------------

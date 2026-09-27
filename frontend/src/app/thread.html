@@ -1,11 +1,7 @@
 @if (routed()) {
-  <div class="thread-head">
-    <button mat-icon-button class="back" (click)="back()" aria-label="Back">
-      <mat-icon>arrow_back</mat-icon>
-    </button>
-    <h2>{{ headTitle() }}</h2>
-    <!-- Its own search, since the shell's box is hidden at phone width while a
-         conversation is open (app.scss). -->
+  <!-- In the bar, beside the conversation's name. Its own search, since the shell's
+       box is hidden at phone width while a conversation is open (app.scss). -->
+  <ng-template scaffoldActions>
     <!-- A native date input: no adapter, and the phone's own picker. Labelled, since an
          empty `type=date` shows only `dd/mm/yyyy`. -->
     <label class="go-to-date">
@@ -14,11 +10,11 @@
       <input type="date" aria-label="Jump to a date"
              (change)="jumpToDate($any($event.target).value)" />
     </label>
-    <button mat-icon-button class="find" (click)="toggleSearch()"
+    <button matIconButton (click)="toggleSearch()"
             [attr.aria-label]="searchOpen() ? 'Close search' : 'Search this conversation'">
       <mat-icon>{{ searchOpen() ? 'close' : 'search' }}</mat-icon>
     </button>
-  </div>
+  </ng-template>
 
   @if (searchOpen()) {
     <div class="thread-search">

@@ -43,8 +43,11 @@ importers:
         specifier: ^5.3.0
         version: 5.3.0
       '@xinutec/ui-harness':
-        specifier: github:xinutec/ui-harness#cc25bcabc48294be62927c6c0e1993dc632420bb
-        version: https://codeload.github.com/xinutec/ui-harness/tar.gz/cc25bcabc48294be62927c6c0e1993dc632420bb(@playwright/test@1.63.0)
+        specifier: github:xinutec/ui-harness#c13ba83a6a1d67ca5c75f4bbff572cee5573ce2d
+        version: https://codeload.github.com/xinutec/ui-harness/tar.gz/c13ba83a6a1d67ca5c75f4bbff572cee5573ce2d(@playwright/test@1.63.0)
+      '@xinutec/ui-scaffold':
+        specifier: github:xinutec/ui-harness#c13ba83a6a1d67ca5c75f4bbff572cee5573ce2d&path:/scaffold
+        version: https://codeload.github.com/xinutec/ui-harness/tar.gz/c13ba83a6a1d67ca5c75f4bbff572cee5573ce2d#path:/scaffold(6ce7364639554e0024b74f69fbe5c661)
       material-icons:
         specifier: ^1.13.14
         version: 1.13.14
@@ -1684,6 +1687,9 @@ packages:
   '@types/node@24.13.3':
     resolution: {integrity: sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q==}
 
+  '@types/node@24.19.0':
+    resolution: {integrity: sha512-zY+5tKxXdhGh1PYI0ac+7juvEu4OI6vWtVVoj5i2m42jxAY1U+zHGt6QCyOFwykdP62sM3MJ9stoYYUw5aCWew==}
+
   '@typescript-eslint/eslint-plugin@8.70.1':
     resolution: {integrity: sha512-nDNrUQ/4ruSNYbu749TRY7cfrzPtoLHEXSNBI8aaNY32LlZCajixqRf3FqcKC4p5Cam4VOHYx/t+i5+nKXvrqA==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
@@ -1815,14 +1821,25 @@ packages:
   '@vitest/utils@4.1.11':
     resolution: {integrity: sha512-zTCVGpyFsGWBhllOyKlTw/vnr6D9qxsfSDyfbyZmTyjHw5N/VuvzHpHoQjm2ZJzn4RJgx5w4r7V0er69CmLgPQ==}
 
-  '@xinutec/ui-harness@https://codeload.github.com/xinutec/ui-harness/tar.gz/cc25bcabc48294be62927c6c0e1993dc632420bb':
-    resolution: {gitHosted: true, integrity: sha512-/0ZYVeSwmuv9dUDrcHJhx611KfLDGH5Z/XlBjrvm/KCdiBmkfi4FkR/PT6FwypqvJeKa+phBN3rrVP2FgoIDNQ==, tarball: https://codeload.github.com/xinutec/ui-harness/tar.gz/cc25bcabc48294be62927c6c0e1993dc632420bb}
+  '@xinutec/ui-harness@https://codeload.github.com/xinutec/ui-harness/tar.gz/c13ba83a6a1d67ca5c75f4bbff572cee5573ce2d':
+    resolution: {gitHosted: true, integrity: sha512-VHA8M6u3PNZIvQq3iMsBqYeeCzWsgF8X/1wEG5EshLUWi3mGYzvdydR9dMBpEFduAGp1uWejjkpbbnPX/kCEFw==, tarball: https://codeload.github.com/xinutec/ui-harness/tar.gz/c13ba83a6a1d67ca5c75f4bbff572cee5573ce2d}
     version: 0.1.0
     peerDependencies:
       '@playwright/test': '>=1.61.0'
     peerDependenciesMeta:
       '@playwright/test':
         optional: true
+
+  '@xinutec/ui-scaffold@https://codeload.github.com/xinutec/ui-harness/tar.gz/c13ba83a6a1d67ca5c75f4bbff572cee5573ce2d#path:/scaffold':
+    resolution: {gitHosted: true, integrity: sha512-VHA8M6u3PNZIvQq3iMsBqYeeCzWsgF8X/1wEG5EshLUWi3mGYzvdydR9dMBpEFduAGp1uWejjkpbbnPX/kCEFw==, path: /scaffold, tarball: https://codeload.github.com/xinutec/ui-harness/tar.gz/c13ba83a6a1d67ca5c75f4bbff572cee5573ce2d}
+    version: 0.1.0
+    peerDependencies:
+      '@angular/cdk': ^22.1.7
+      '@angular/common': ^22.1.7
+      '@angular/core': ^22.1.7
+      '@angular/material': ^22.1.7
+      '@angular/router': ^22.1.7
+      rxjs: ~7.8.2
 
   accepts@2.0.0:
     resolution: {integrity: sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==}
@@ -3015,6 +3032,9 @@ packages:
 
   undici-types@7.18.2:
     resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
+
+  undici-types@7.24.6:
+    resolution: {integrity: sha512-WRNW+sJgj5OBN4/0JpHFqtqzhpbnV0GuB+OozA9gCL7a993SmU+1JBZCzLNxYsbMfIeDL+lTsphD5jN5N+n0zg==}
 
   undici@8.10.2:
     resolution: {integrity: sha512-/y4/bH9YNU5hi9NIrpOuvGXFcxrj3CMrV+/AYpowAYTpHn8gX/XPFjNy766FPoYY0miQhdW977JFWKGNhBdwyQ==}
@@ -4511,6 +4531,11 @@ snapshots:
   '@types/node@24.13.3':
     dependencies:
       undici-types: 7.18.2
+    optional: true
+
+  '@types/node@24.19.0':
+    dependencies:
+      undici-types: 7.24.6
 
   '@typescript-eslint/eslint-plugin@8.70.1(@typescript-eslint/parser@8.70.1(eslint@10.11.0)(typescript@6.0.3))(eslint@10.11.0)(typescript@6.0.3)':
     dependencies:
@@ -4699,11 +4724,21 @@ snapshots:
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.0
 
-  '@xinutec/ui-harness@https://codeload.github.com/xinutec/ui-harness/tar.gz/cc25bcabc48294be62927c6c0e1993dc632420bb(@playwright/test@1.63.0)':
+  '@xinutec/ui-harness@https://codeload.github.com/xinutec/ui-harness/tar.gz/c13ba83a6a1d67ca5c75f4bbff572cee5573ce2d(@playwright/test@1.63.0)':
     dependencies:
-      '@types/node': 24.13.3
+      '@types/node': 24.19.0
     optionalDependencies:
       '@playwright/test': 1.63.0
+
+  '@xinutec/ui-scaffold@https://codeload.github.com/xinutec/ui-harness/tar.gz/c13ba83a6a1d67ca5c75f4bbff572cee5573ce2d#path:/scaffold(6ce7364639554e0024b74f69fbe5c661)':
+    dependencies:
+      '@angular/cdk': 22.1.7(@angular/common@22.1.7(@angular/core@22.1.7(@angular/compiler@22.1.7)(rxjs@7.8.2))(rxjs@7.8.2))(@angular/core@22.1.7(@angular/compiler@22.1.7)(rxjs@7.8.2))(@angular/forms@22.1.7(@angular/common@22.1.7(@angular/core@22.1.7(@angular/compiler@22.1.7)(rxjs@7.8.2))(rxjs@7.8.2))(@angular/core@22.1.7(@angular/compiler@22.1.7)(rxjs@7.8.2))(@angular/platform-browser@22.1.7(@angular/common@22.1.7(@angular/core@22.1.7(@angular/compiler@22.1.7)(rxjs@7.8.2))(rxjs@7.8.2))(@angular/core@22.1.7(@angular/compiler@22.1.7)(rxjs@7.8.2)))(rxjs@7.8.2))(@angular/platform-browser@22.1.7(@angular/common@22.1.7(@angular/core@22.1.7(@angular/compiler@22.1.7)(rxjs@7.8.2))(rxjs@7.8.2))(@angular/core@22.1.7(@angular/compiler@22.1.7)(rxjs@7.8.2)))(rxjs@7.8.2)
+      '@angular/common': 22.1.7(@angular/core@22.1.7(@angular/compiler@22.1.7)(rxjs@7.8.2))(rxjs@7.8.2)
+      '@angular/core': 22.1.7(@angular/compiler@22.1.7)(rxjs@7.8.2)
+      '@angular/material': 22.1.7(98d61717a67593c786c69e18d869e5f4)
+      '@angular/router': 22.1.7(@angular/common@22.1.7(@angular/core@22.1.7(@angular/compiler@22.1.7)(rxjs@7.8.2))(rxjs@7.8.2))(@angular/core@22.1.7(@angular/compiler@22.1.7)(rxjs@7.8.2))(@angular/platform-browser@22.1.7(@angular/common@22.1.7(@angular/core@22.1.7(@angular/compiler@22.1.7)(rxjs@7.8.2))(rxjs@7.8.2))(@angular/core@22.1.7(@angular/compiler@22.1.7)(rxjs@7.8.2)))(rxjs@7.8.2)
+      rxjs: 7.8.2
+      tslib: 2.8.1
 
   accepts@2.0.0:
     dependencies:
@@ -5998,7 +6033,10 @@ snapshots:
 
   typescript@6.0.3: {}
 
-  undici-types@7.18.2: {}
+  undici-types@7.18.2:
+    optional: true
+
+  undici-types@7.24.6: {}
 
   undici@8.10.2: {}
 
