@@ -1,5 +1,5 @@
-// Albums and link previews, apart from thread.scss to keep each stylesheet in
-// budget.
+// Pictures and files: albums, attachments, link previews and the pictures held
+// for links, apart from thread.scss to keep each stylesheet in budget.
 
 // An album is one bubble: its members' pictures tile a two-column grid under
 // one meta line, and the captioned member comes last at full width.
@@ -97,5 +97,78 @@
 @media (max-width: 767px) {
   .run.album {
     max-width: min(85%, 40rem);
+  }
+}
+
+// Attachments, and pictures fetched or offered for links.
+.msg {
+  // An unfetched attachment offered for the asking, styled like the link offer:
+  // both ask "this exists; shall I get it?".
+  .fetch-offer {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    background: none;
+    border: 0;
+    padding: 0;
+    color: var(--mat-sys-primary);
+    font: inherit;
+    cursor: pointer;
+    text-decoration: underline dotted;
+    text-underline-offset: 0.2em;
+  }
+
+  // Offers to fetch a link's picture; quiet, since most links are not pictures.
+  .link-offer {
+    margin-top: 0.3rem;
+    font: var(--mat-sys-label-medium);
+
+    button {
+      background: none;
+      border: 0;
+      padding: 0;
+      color: var(--mat-sys-primary);
+      font: inherit;
+      cursor: pointer;
+      text-decoration: underline dotted;
+      text-underline-offset: 0.2em;
+    }
+
+    .waiting {
+      opacity: 0.7;
+      font-style: italic;
+    }
+  }
+
+  // A picture held for a link, drawn as a quotation; the anchor goes to the
+  // original.
+  .attach.link-image img {
+    outline: 1px solid var(--mat-sys-outline-variant);
+    outline-offset: 2px;
+  }
+
+  .attach {
+    margin-top: 0.3rem;
+    img {
+      max-width: min(320px, 100%);
+      max-height: 320px;
+      border-radius: 0.4rem;
+      display: block;
+    }
+    a,
+    .unavailable {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.2rem;
+      font: var(--mat-sys-body-medium);
+    }
+    .unavailable {
+      opacity: 0.6;
+    }
+    mat-icon {
+      font-size: 1rem;
+      width: 1rem;
+      height: 1rem;
+    }
   }
 }

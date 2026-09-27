@@ -14,27 +14,21 @@ import { ScaffoldActions, scaffoldTitle } from '@xinutec/ui-scaffold';
 import { Subject, catchError, firstValueFrom, of, switchMap } from 'rxjs';
 
 import { attachmentName, attachmentNoun } from './attachment';
+import { FetchRequests } from './fetch-requests';
 import { segments } from './formatting';
 import { LogScope, chatLogHtml, formatChatLog } from './copy-log';
 import { MAX_RESTORE_PAGES, PAGE, ThreadWindow } from './thread-window';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
-import { Conversation, Delivery, LinkOffer, Message, Origin, Attachment, Reaction, ReplyTo, SearchHit } from './models';
+import { Attachment, Conversation, Delivery, Message, Origin, Reaction, ReplyTo, SearchHit } from './models';
 
 /** How often an open, visible thread checks for newer messages. */
 const POLL_MS = 5000;
 
-/** How often a fetch in flight is asked about. */
-const MEDIA_WATCH_INTERVAL_MS = 4000;
-
-/** How long to watch a requested fetch before giving up quietly; reopening the
- *  conversation asks again. */
-const MEDIA_WATCH_LIMIT_MS = 15 * 60 * 1000;
-
 @Component({
   selector: 'app-thread',
   templateUrl: './thread.html',
-  styleUrls: ['./thread.scss', './thread-media.scss'],
+  styleUrls: ['./thread.scss', './thread-media.scss', './thread-message.scss'],
   // The host is the scroll container the sticky headers pin against. `copy`
   // bubbles here from wherever the selection is.
   host: { class: 'thread', '(scroll)': 'onScroll()', '(copy)': 'onCopy($event)' },
@@ -244,9 +238,7 @@ export class Thread {
       landedAt = at;
       landedOn = on;
       if (!movedTo) return;
-      const o = this.origin();
-      const i = this.id();
-      if (o != null && i != null) void this.loadThread(o, i);
+      this.reload();
     });
 
     const poll = setInterval(() => void this.pollNewer(), POLL_MS);
@@ -257,8 +249,7 @@ export class Thread {
       if (this.recheck != null) clearTimeout(this.recheck);
       // The `?from` debounce navigates, so it must not fire after leaving.
       if (this.fromTimer != null) clearTimeout(this.fromTimer);
-      for (const tick of this.watching.values()) clearInterval(tick);
-      this.watching.clear();
+      this.fetches.reset();
     });
 
     // The soft keyboard resizes the scroll container; see
@@ -283,8 +274,7 @@ export class Thread {
     this.win.reset();
     this.revealedIds.set(new Set());
     this.openHistories.set(new Set());
-    for (const id of [...this.watching.keys()]) this.stopWatching(id);
-    this.asking.set(new Set());
+    this.fetches.reset();
     this.loadingOlder.set(false);
     this.loadingNewer.set(false);
     this.hasMore.set(false);
@@ -323,7 +313,7 @@ export class Thread {
     if (lastOld && firstNew && lastOld.ts > firstNew.ts) return false;
 
     this.messages.set([...older.messages, ...newer.messages]);
-    this.watchInFlight([...older.messages, ...newer.messages]);
+    this.fetches.watchInFlight([...older.messages, ...newer.messages]);
     this.hasMore.set(older.has_more);
     this.cursor = older.next_cursor;
     this.newerCursor = newer.prev_cursor;
@@ -492,7 +482,7 @@ export class Thread {
         cursor = older.next_cursor;
       }
       this.messages.set(msgs);
-      this.watchInFlight(msgs);
+      this.fetches.watchInFlight(msgs);
       this.hasMore.set(hasMore);
       this.cursor = cursor;
       this.loadingThread.set(false);
@@ -667,165 +657,15 @@ export class Thread {
     }
   }
 
-  // ---- pictures behind links -----------------------------------------------
+  // ---- what the reader asks to be fetched ----------------------------------
 
-  /** Link requests in flight; each answers on its own request. */
-  private readonly asking = signal<ReadonlySet<string>>(new Set());
-
-  /** Attachment id → interval, for requested fetches being watched. */
-  private readonly watching = new Map<string, number>();
-
-  protected isAsking(id: string): boolean {
-    return this.asking().has(id);
-  }
-
-  /** Ask the feed for an unfetched attachment. The fetch is queued, so the answer
-   *  is watched for rather than awaited. */
-  protected requestMedia(a: Attachment): void {
-    this.setAsking(a.id, true);
-    this.api.requestTelegramMedia(a.id).subscribe({
-      // 204 either way.
-      next: () => this.watchMedia(a.id),
-      error: () => this.setAsking(a.id, false),
-    });
-  }
-
-  /** Poll an asked-for attachment until it arrives or fails, giving up quietly
-   *  after `MEDIA_WATCH_LIMIT_MS`. */
-  private watchMedia(id: string): void {
-    if (this.watching.has(id)) return;
-    const started = Date.now();
-    const tick = window.setInterval(() => {
-      if (Date.now() - started > MEDIA_WATCH_LIMIT_MS) {
-        this.stopWatching(id);
-        this.setAsking(id, false);
-        return;
-      }
-      this.api.telegramMediaState(id).subscribe({
-        next: (state) => {
-          if (state.available) {
-            this.landMedia(id, state.content_type);
-            this.stopWatching(id);
-            this.setAsking(id, false);
-          } else if (state.fetch === 'failed') {
-            // Back to an offer the reader can ask again.
-            this.stopWatching(id);
-            this.setAsking(id, false);
-            this.setFetchState(id, 'failed');
-          }
-        },
-        error: () => {
-          this.stopWatching(id);
-          this.setAsking(id, false);
-        },
-      });
-    }, MEDIA_WATCH_INTERVAL_MS);
-    this.watching.set(id, tick);
-  }
-
-  private stopWatching(id: string): void {
-    const tick = this.watching.get(id);
-    if (tick !== undefined) window.clearInterval(tick);
-    this.watching.delete(id);
-  }
-
-  /** The file arrived: flip the attachment in the model so it draws. */
-  private landMedia(id: string, contentType: string | null): void {
-    this.messages.update((cur) =>
-      cur.map((m) => ({
-        ...m,
-        attachments: m.attachments.map((a) =>
-          a.id === id
-            ? {
-                ...a,
-                available: true,
-                fetch: null,
-                content_type: contentType ?? a.content_type,
-                is_image: (contentType ?? a.content_type ?? '').startsWith('image/'),
-              }
-            : a,
-        ),
-      })),
-    );
-  }
-
-  private setFetchState(id: string, fetch: Attachment['fetch']): void {
-    this.messages.update((cur) =>
-      cur.map((m) => ({
-        ...m,
-        attachments: m.attachments.map((a) => (a.id === id ? { ...a, fetch } : a)),
-      })),
-    );
-  }
+  /** What the reader asked to be fetched; see fetch-requests.ts. */
+  protected readonly fetches = new FetchRequests(this.api, this.messages);
 
   /** A size for something not yet fetched. */
   protected mib(bytes: number): string {
     const mib = bytes / (1024 * 1024);
     return mib >= 10 ? `${Math.round(mib)} MB` : `${mib.toFixed(1)} MB`;
-  }
-
-  /** Watch fetches already in flight when a page arrives, including ones asked
-   *  for earlier or by someone else. */
-  private watchInFlight(msgs: Message[]): void {
-    for (const m of msgs) {
-      for (const a of m.attachments) {
-        if (a.fetch === 'wanted') this.watchMedia(a.id);
-      }
-    }
-  }
-
-  /** A reader asked for a link's picture; the answer comes back on this request. */
-  protected requestLinkImage(offer: LinkOffer): void {
-    this.setAsking(offer.id, true);
-    this.api.requestLinkImage(offer.id).subscribe({
-      next: (state) => {
-        this.setAsking(offer.id, false);
-        if (state.state === 'ok' && state.content_type) {
-          this.landLinkImage(offer.id, state.content_type);
-        } else {
-          // Not a picture, or unreachable: the control goes.
-          this.dropOffer(offer.id);
-        }
-      },
-      error: () => {
-        this.setAsking(offer.id, false);
-        this.dropOffer(offer.id);
-      },
-    });
-  }
-
-  private setAsking(id: string, on: boolean): void {
-    this.asking.update((cur) => {
-      const next = new Set(cur);
-      if (on) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  }
-
-  /** Swap the offer for the picture, in place. */
-  private landLinkImage(id: string, contentType: string): void {
-    this.messages.update((cur) =>
-      cur.map((m) => {
-        const offer = m.link_offers.find((o) => o.id === id);
-        if (!offer) return m;
-        return {
-          ...m,
-          link_offers: m.link_offers.filter((o) => o.id !== id),
-          link_images: [...m.link_images, { url: offer.url, id, content_type: contentType }],
-        };
-      }),
-    );
-  }
-
-  private dropOffer(id: string): void {
-    this.messages.update((cur) =>
-      cur.map((m) =>
-        m.link_offers.some((o) => o.id === id)
-          ? { ...m, link_offers: m.link_offers.filter((o) => o.id !== id) }
-          : m,
-      ),
-    );
   }
 
   // ---- scrolling ----------------------------------------------------------

@@ -1,0 +1,147 @@
+// What a bubble carries besides its words: the message it replied to, its tags
+// and earlier versions, a retraction's reveal, and reactions. Apart from
+// thread.scss to keep each stylesheet in budget.
+.msg {
+  // What a message replied to, as a quiet one-line quote above it. The rule is
+  // on the left in both directions.
+  .reply-quote {
+    display: flex;
+    gap: 0.4rem;
+    align-items: baseline;
+    width: 100%;
+    margin-bottom: 0.25rem;
+    padding: 0.1rem 0 0.1rem 0.4rem;
+    border: 0;
+    border-left: 2px solid color-mix(in srgb, var(--mat-sys-on-surface) 35%, transparent);
+    background: none;
+    color: inherit;
+    font: var(--mat-sys-label-small);
+    text-align: left;
+    opacity: 0.75;
+    overflow: hidden;
+
+    // `min-width: 0`: a flex item's minimum is its min-content width, and the
+    // nowrap children would push the bubble off the screen. The nowrap is on the
+    // children, which opt out of the minimum in turn.
+    min-width: 0;
+
+    // One line, clipped.
+    %clipped-line {
+      min-width: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    // Neither half grows, so a short quote does not spread across the bubble.
+    // The name does not shrink either: it identifies the message, so the excerpt
+    // absorbs the squeeze and `max-width` caps an absurd name.
+    .who {
+      @extend %clipped-line;
+      flex: 0 0 auto;
+      max-width: 40%;
+      font-weight: 600;
+    }
+    .said {
+      @extend %clipped-line;
+      flex: 0 1 auto;
+      &.absent {
+        font-style: italic;
+        opacity: 0.8;
+      }
+    }
+
+    // Clickable only when the archive holds the target.
+    &:not(.missing) {
+      cursor: pointer;
+      &:hover,
+      &:focus-visible {
+        opacity: 1;
+        border-left-color: var(--mat-sys-primary);
+      }
+    }
+  }
+  .tag {
+    font-style: italic;
+  }
+  // How far an outgoing message got; quieter than `edited` and `deleted`.
+  .tag.delivery {
+    font-style: normal;
+    &.unread {
+      opacity: 0.55;
+    }
+  }
+  // `edited` with a history behind it: a tag with a dotted underline, like a
+  // revealed deletion.
+  button.tag.history-toggle {
+    background: none;
+    border: 0;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    font-style: italic;
+    cursor: pointer;
+    text-decoration: underline dotted;
+    text-underline-offset: 0.2em;
+  }
+  // Earlier versions, indented under the meta line and quieter than the text.
+  .edit-history {
+    margin: 0.15rem 0 0.25rem;
+    padding-left: 0.5rem;
+    border-left: 2px solid color-mix(in srgb, var(--mat-sys-on-surface) 15%, transparent);
+    .version {
+      display: flex;
+      gap: 0.4rem;
+      font: var(--mat-sys-body-medium);
+      opacity: 0.6;
+    }
+    .when {
+      font: var(--mat-sys-label-small);
+      opacity: 0.8;
+      white-space: nowrap;
+      padding-top: 0.15rem;
+    }
+    .said {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  }
+  // Real buttons, so revealing a retraction works from the keyboard, placed
+  // where the text would be. The dotted underline is the affordance.
+  .body.reveal {
+    text-decoration: underline dotted;
+    text-underline-offset: 0.2em;
+  }
+  .body.reveal,
+  .rehide {
+    background: none;
+    border: 0;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    text-align: left;
+  }
+  .rehide {
+    font: var(--mat-sys-label-small);
+    font-style: italic;
+    opacity: 0.7;
+    margin-top: 0.3rem;
+  }
+  .reactions {
+    margin-top: 0.25rem;
+    // Furniture; see `.meta`.
+    user-select: none;
+    .chip {
+      font: var(--mat-sys-label-medium);
+      background: color-mix(in srgb, var(--mat-sys-on-surface) 8%, transparent);
+      border-radius: 1rem;
+      padding: 0 0.4rem;
+      margin-right: 0.25rem;
+
+      // A chip with names shows them on hover; the cursor hints at it.
+      &.named {
+        cursor: help;
+      }
+    }
+  }
+}
