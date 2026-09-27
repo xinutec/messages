@@ -1,7 +1,7 @@
 import { Injectable, inject, signal } from '@angular/core';
 
 import { MessagesApi } from './messages-api';
-import { Conversation, ConversationKind, Me } from './models';
+import { Conversation, ConversationKind, Me, Origin } from './models';
 
 // Shell state, the signed-in user and the conversation list, shared by the
 // shell and the Thread, so a deep-linked Thread needs nothing from the router.
@@ -41,7 +41,7 @@ export class MessagesStore {
     });
   }
 
-  find(origin: string, id: string): Conversation | null {
+  find(origin: Origin, id: string): Conversation | null {
     return this.conversations().find((c) => c.origin === origin && c.id === id) ?? null;
   }
 
