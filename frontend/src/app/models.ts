@@ -9,6 +9,7 @@ export * from "./generated/DeliveryState";
 export * from "./generated/Entity";
 export * from "./generated/LinkImage";
 export * from "./generated/LinkImageState";
+export * from "./generated/LinkOutcome";
 export * from "./generated/LinkOffer";
 export * from "./generated/Me";
 export * from "./generated/Message";

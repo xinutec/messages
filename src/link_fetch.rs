@@ -30,7 +30,10 @@ impl Default for Limits {
 }
 
 /// How a link ended up. Every one is stored.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, rename = "LinkOutcome"))]
 pub enum Outcome {
     /// Bytes on the volume, servable.
     Ok,
@@ -56,7 +59,8 @@ pub fn url_hash(url: &Url) -> String {
     hex::encode(Sha256::digest(url.as_str().as_bytes()))
 }
 
-/// Ask the fetch service for a picture, and write down what came back.
+/// Ask the fetch service for a picture, and write down what came back: the
+/// outcome, and the picture's type when there is one.
 ///
 /// The fetch service reaches the internet and holds nothing; this side holds the
 /// credentials and the volume. A compromised fetcher can at worst lie about a
@@ -67,7 +71,7 @@ pub async fn resolve_one(
     service: &str,
     dir: &Path,
     url: &Url,
-) -> Result<Outcome> {
+) -> Result<(Outcome, Option<String>)> {
     match ask_service(client, service, url).await {
         Ok(Some((bytes, content_type))) => {
             let name = store(dir, url, &content_type, &bytes)?;
@@ -81,16 +85,16 @@ pub async fn resolve_one(
                 None,
             )
             .await?;
-            Ok(Outcome::Ok)
+            Ok((Outcome::Ok, Some(content_type)))
         }
         Ok(None) => {
             record(pool, url, Outcome::NotImage, None, None, None, None).await?;
-            Ok(Outcome::NotImage)
+            Ok((Outcome::NotImage, None))
         }
         Err(e) => {
             let note = e.to_string();
             record(pool, url, Outcome::Failed, None, None, None, Some(&note)).await?;
-            Ok(Outcome::Failed)
+            Ok((Outcome::Failed, None))
         }
     }
 }

@@ -3,7 +3,7 @@
 //! No fixture: the join reads links from the bodies it is handed, so the tests
 //! hand it messages directly.
 
-use messages::archive::links::{attach, offered_url, state};
+use messages::archive::links::{attach, offered_url};
 use messages::archive::{Message, MessageKind};
 use messages::link_fetch::url_hash;
 use sqlx::MySqlPool;
@@ -156,11 +156,23 @@ async fn a_decided_link_is_not_offered_again() {
     let Some(pool) = pool().await else { return };
     let hash = url_hash(&Url::parse(REFUSED).unwrap());
     assert!(offered_url(&pool, &hash).await.unwrap().is_none());
-    let (state, _) = state(&pool, &hash).await.unwrap().unwrap();
-    assert_eq!(state, "not_image", "left exactly as it was");
+    assert_eq!(
+        stored_state(&pool, &hash).await,
+        "not_image",
+        "left exactly as it was"
+    );
 }
 
 // ---- offering ------------------------------------------------------------
+
+/// The `link_images.state` a link's row holds.
+async fn stored_state(pool: &MySqlPool, hash: &str) -> String {
+    sqlx::query_scalar("SELECT state FROM link_images WHERE url_hash = ?")
+        .bind(hash)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
 
 const FRESH: &str = "https://cloud.example.org/nc/s/FRESH";
 
@@ -183,8 +195,11 @@ async fn serving_a_message_offers_its_undecided_links() {
     assert_eq!(msgs[0].link_offers.len(), 1, "the reader is offered it");
     assert_eq!(msgs[0].link_offers[0].url, FRESH);
 
-    let (state, _) = state(&pool, &hash).await.unwrap().unwrap();
-    assert_eq!(state, "offered", "registered, not queued");
+    assert_eq!(
+        stored_state(&pool, &hash).await,
+        "offered",
+        "registered, not queued"
+    );
 }
 
 #[tokio::test]
@@ -194,8 +209,7 @@ async fn offering_a_link_twice_leaves_a_decision_alone() {
     let hash = url_hash(&Url::parse(REFUSED).unwrap());
     let mut msgs = [msg(&format!("and {REFUSED} here"))];
     attach(&pool, &mut msgs).await.unwrap();
-    let (state, _) = state(&pool, &hash).await.unwrap().unwrap();
-    assert_eq!(state, "not_image");
+    assert_eq!(stored_state(&pool, &hash).await, "not_image");
     assert!(
         msgs[0].link_offers.is_empty(),
         "a decided link is not offered"

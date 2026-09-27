@@ -48,8 +48,11 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
             size_bytes   BIGINT       NULL,
             stored_name  VARCHAR(80)  NULL,
             note         VARCHAR(255) NULL,
-            wanted_at    DATETIME     NOT NULL,
+            wanted_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
             fetched_at   DATETIME     NULL,
+            -- The reader that decided it; NULL is older than any, so re-offered.
+            -- See `link_image::READER_VERSION`.
+            decided_by   INT          NULL,
             INDEX idx_link_images_queue (state, wanted_at)
         ) DEFAULT CHARSET=utf8mb4",
     )
@@ -57,27 +60,14 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
     .await
     .context("creating link_images table")?;
 
-    // Brings an existing table to the shape above; idempotent.
-    for alter in [
-        "ALTER TABLE link_images MODIFY COLUMN state ENUM('offered','wanted','ok','not_image','failed') NOT NULL",
-        // `wanted` is no longer written; it stays in the enum for old rows.
-        "ALTER TABLE link_images ADD COLUMN IF NOT EXISTS wanted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
-        "ALTER TABLE link_images MODIFY COLUMN fetched_at DATETIME NULL",
-        // NULL predates the column, older than any reader, so re-offered; see
-        // `link_image::READER_VERSION`.
-        "ALTER TABLE link_images ADD COLUMN IF NOT EXISTS decided_by INT NULL",
-    ] {
-        sqlx::query(sqlx::AssertSqlSafe(alter))
-            .execute(pool)
-            .await
-            .with_context(|| format!("bringing link_images up to date: {alter}"))?;
-    }
-
-    // A table the removed link backfill used.
-    sqlx::query("DROP TABLE IF EXISTS link_fetch_progress")
-        .execute(pool)
-        .await
-        .context("dropping link_fetch_progress")?;
+    // The live table's enum still names `wanted`, which is no longer written
+    // and held by no row; this brings it to the shape above, and is then a no-op.
+    sqlx::query(
+        "ALTER TABLE link_images MODIFY COLUMN state ENUM('offered','ok','not_image','failed') NOT NULL",
+    )
+    .execute(pool)
+    .await
+    .context("bringing link_images.state up to date")?;
 
     Ok(())
 }

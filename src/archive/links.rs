@@ -115,16 +115,6 @@ pub async fn offered_url(pool: &MySqlPool, id: &str) -> Result<Option<String>> {
         .map(|(url, _, _)| url))
 }
 
-/// A link's state and, once there is a picture, its type.
-pub async fn state(pool: &MySqlPool, id: &str) -> Result<Option<(String, Option<String>)>> {
-    Ok(
-        sqlx::query_as("SELECT state, content_type FROM link_images WHERE url_hash = ?")
-            .bind(id)
-            .fetch_optional(pool)
-            .await?,
-    )
-}
-
 /// Where a link's stored bytes are, if we hold them.
 pub async fn blob(pool: &MySqlPool, id: &str) -> Result<Option<(String, String)>> {
     let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(

@@ -68,16 +68,15 @@ pub async fn messages(
     // An unknown origin names a conversation that does not exist: 404.
     let origin = archive::Origin::parse(&origin).ok_or(AppError::NotFound)?;
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
-    // A malformed cursor counts as absent.
-    let cursor = q.cursor.as_deref().and_then(archive::parse_cursor);
+    // A day overrides the cursor; a malformed cursor counts as absent.
+    let cursor = match q.on {
+        Some(ms) => archive::parse_cursor(&archive::cursor_for_day(origin, ms)),
+        None => q.cursor.as_deref().and_then(archive::parse_cursor),
+    };
     let dir = match q.dir.as_deref() {
         Some("newer") => archive::PageDir::Newer,
         Some("at") => archive::PageDir::AtAndNewer,
         _ => archive::PageDir::Older,
-    };
-    let cursor = match q.on {
-        Some(ms) => archive::parse_cursor(&archive::cursor_for_day(origin, ms)),
-        None => cursor,
     };
     let page = archive::messages_page(&app.pool, origin, &id, cursor, limit, dir).await?;
     Ok(Json(page))
@@ -92,13 +91,12 @@ pub struct SearchQuery {
     id: Option<String>,
 }
 
-/// What became of a link: `offered`, `wanted`, `ok`, `not_image` or `failed`,
-/// and the type once there is a picture.
+/// What became of a link, and the picture's type when there is one.
 #[derive(serde::Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct LinkImageState {
-    pub state: String,
+    pub state: link_fetch::Outcome,
     pub content_type: Option<String>,
 }
 
@@ -236,7 +234,7 @@ pub async fn request_link_image(
     let url = url::Url::parse(&url).map_err(|_| AppError::NotFound)?;
 
     // Synchronous: the reader is waiting. The fetch runs in the link-fetch pod.
-    let outcome = link_fetch::resolve_one(
+    let (state, content_type) = link_fetch::resolve_one(
         &app.pool,
         &app.http,
         &app.cfg.link_fetcher_url,
@@ -244,14 +242,6 @@ pub async fn request_link_image(
         &url,
     )
     .await?;
-    let (state, content_type) = match outcome {
-        link_fetch::Outcome::Ok => {
-            let held = archive::links::state(&app.pool, &id).await?;
-            ("ok".to_string(), held.and_then(|(_, ct)| ct))
-        }
-        link_fetch::Outcome::NotImage => ("not_image".to_string(), None),
-        link_fetch::Outcome::Failed => ("failed".to_string(), None),
-    };
     Ok(Json(LinkImageState {
         state,
         content_type,
