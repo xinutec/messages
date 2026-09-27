@@ -173,12 +173,13 @@ fn decode_entities(raw: &str) -> String {
     if !raw.contains('&') {
         return raw.to_owned();
     }
-    raw.replace("&amp;", "&")
-        .replace("&quot;", "\"")
+    // `&amp;` last, or `&amp;lt;`, the text `&lt;`, would be decoded twice.
+    raw.replace("&quot;", "\"")
         .replace("&#39;", "'")
         .replace("&apos;", "'")
         .replace("&lt;", "<")
         .replace("&gt;", ">")
+        .replace("&amp;", "&")
 }
 
 /// One attribute's value out of a tag body.

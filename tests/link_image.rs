@@ -146,6 +146,21 @@ fn an_entity_encoded_query_string_is_decoded() {
 }
 
 #[test]
+fn an_escaped_entity_is_decoded_once() {
+    // `&amp;lt;` is the text `&lt;`: decoding `&amp;` first would read it twice.
+    let page = Url::parse(SHARE).unwrap();
+    let html = fixture().replace(
+        r#"content="https://cloud.example.org/nc/s/SHARETOKEN/preview""#,
+        r#"content="https://cloud.example.org/nc/s/SHARETOKEN/preview?q=a&amp;lt;b""#,
+    );
+    let a = read_advert(&page, REAL_COOKIES.into_iter(), &html);
+    assert_eq!(
+        a.image.as_ref().map(Url::as_str),
+        Some("https://cloud.example.org/nc/s/SHARETOKEN/preview?q=a&lt;b")
+    );
+}
+
+#[test]
 fn a_refusal_says_which_signal_was_missing() {
     // A refusal carries its reason.
     let page = Url::parse(SHARE).unwrap();
