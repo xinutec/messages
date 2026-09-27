@@ -30,7 +30,7 @@ jobs:
         options: >-
           --health-cmd="healthcheck.sh --connect --innodb_initialized"
           --health-interval=5s --health-timeout=5s --health-retries=10
-      # The archiver's own: its migrations and the viewer's fixture would collide.
+      # The archiver's own: its rows persist, and the viewer's fixture empties its database.
       signal-db:
         image: mariadb:11.8
         env:

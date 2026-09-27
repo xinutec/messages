@@ -59,7 +59,7 @@ export class App {
   readonly conversations = this.store.conversations;
 
   /** One label per origin. A `Record`, so a new origin is a type error until
-   *  labelled; `origins` gives the button order. */
+   *  labelled; `origins` gives the filter's order. */
   readonly originLabels: Record<Origin, string> = {
     signal: 'Signal',
     gchat: 'Google Chat',

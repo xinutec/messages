@@ -1,8 +1,8 @@
 //! Client activity trace: what the browser sees and the API does not, such as
-//! taps that hit a cache, disabled controls and route changes. Folded into the request log, so a session reads as
-//! one timeline: `client-event kind=nav path=/conversations`, then
-//! `client-event kind=tap label="Signal"`, then the request the tap caused.
-//! Nothing is stored.
+//! taps that hit a cache, disabled controls and route changes. Folded into the
+//! request log, so a session reads as one timeline: `client-event kind=nav
+//! path=/conversation/irc/7`, then `client-event kind=tap label="Signal"`, then
+//! the request the tap caused. Nothing is stored.
 
 use axum::Json;
 use axum::http::StatusCode;

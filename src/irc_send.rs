@@ -8,7 +8,7 @@
 //! over and records the answer, without validating the message itself.
 //!
 //! The echo is written at once, so the phone shows it without waiting for the
-//! hourly import: the plugin reports what irssi logged (line, number, tag,
+//! next import: the plugin reports what irssi logged (line, number, tag,
 //! nick), and the line is parsed into a row by the importer's own `irclog`, on
 //! its dedupe key `(conversation, source_tag, file_date, line_no)`, which the
 //! import then finds present.

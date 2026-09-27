@@ -407,8 +407,8 @@
   }
 }
 
-// The composer stays at the foot of the scroll container. Sticky, not fixed: fixed would float it over the list on
-// desktop.
+// The composer stays at the foot of the scroll container. Sticky, not fixed:
+// fixed would float it over the list on desktop.
 .composer {
   position: sticky;
   bottom: 0;

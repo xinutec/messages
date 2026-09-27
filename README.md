@@ -116,22 +116,23 @@ nix run ../dev-lint#gate -- . gate.json
 diffs it.
 
 - `tests/archive.rs` — pure units, plus end-to-end tests against a fixture in a
-  throwaway MariaDB. Those need `MESSAGES_TEST_DATABASE_URL` and skip without
-  it; the gate's test row starts one via dev-lint's `with-test-db`.
+  throwaway MariaDB, whose schema the archiver's own migrations build. Those
+  need `MESSAGES_TEST_DATABASE_URL` and skip without it; the gate's test row
+  starts one via dev-lint's `with-test-db`.
 - `tests/access.rs`, `tests/session_cookie.rs`, `tests/error_responses.rs` — the
   allow-list fails closed, sessions cannot be forged, and a 500 says nothing
   about itself.
 - `tests/api_routes.rs` — requests through the real router reach the handlers
   behind the auth extractor. It touches no archive table, since
-  `tests/archive.rs` recreates them in the same database.
+  `tests/archive.rs` empties the same database when it seeds.
 - Frontend unit tests (`pnpm test`, vitest) cover logic. jsdom has no layout,
   fonts, or real Selection API, and does not submit forms on Enter, so
   `pnpm run ui-check` runs the Playwright suite against the production build:
   phone-width layout, copy, scrolling, routing, the Android keyboard and a real
   IME composition. Treat vitest as no evidence about the composer.
 - `archiver/tests/` — the archiver's suite, in its own database
-  (`SIGNAL_TEST_DATABASE_URL`, its own gate row): it applies the real
-  migrations, which the fixture above would collide with.
+  (`SIGNAL_TEST_DATABASE_URL`, its own gate row): its rows persist between
+  runs, and the fixture above empties its database.
 
 ## One concept, several readers
 Each field below is interpreted in more than one place; add a row when a field

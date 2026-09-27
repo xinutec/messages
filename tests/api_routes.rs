@@ -3,11 +3,10 @@
 //! That a request reaches the handlers, and that `routes::mod` puts the auth
 //! extractor in front of every route that needs one.
 //!
-//! No archive table is touched: `tests/archive.rs` drops and recreates them in
-//! the same database, in parallel. Every case is decided before the handler
-//! reads the archive; the `is_status` guard is tested in `tests/archive.rs`.
-//! Only `sessions` is used. Skipped without `MESSAGES_TEST_DATABASE_URL`, except
-//! in CI.
+//! Only `sessions` is used, and every case is decided before the handler reads
+//! the archive; the `is_status` guard is tested in `tests/archive.rs`, which
+//! empties this same database when it seeds. Skipped without
+//! `MESSAGES_TEST_DATABASE_URL`, except in CI.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

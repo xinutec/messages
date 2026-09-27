@@ -315,8 +315,8 @@ async fn fetch_array(ctx: &Ctx, url: &str, timeout: Duration) -> Result<Vec<Valu
     }
 }
 
-/// Keep contact names in step with what Signal shows, from `/v1/contacts`,
-/// which has the nickname `envelope.sourceName` lacks on 0.14.5.
+/// Keep contact names in step with what Signal shows, from `/v1/contacts`: a
+/// rename reaches the archive without waiting for that person to write.
 async fn refresh_contact_names(ctx: Ctx) {
     let url = format!("{}/v1/contacts/{}", ctx.http_base, ctx.number);
     loop {

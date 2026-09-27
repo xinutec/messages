@@ -1,5 +1,8 @@
 //! MariaDB archive store. Each migration runs once, tracked by its array index in
 //! `schema_version`: append new entries, never insert or edit one.
+//!
+//! A statement over a list is built with one `?` per value and every value
+//! bound; that fixed shape is what each `AssertSqlSafe` asserts.
 
 use std::collections::HashMap;
 
@@ -1351,7 +1354,6 @@ impl Db {
               WHERE conversation_id = ? AND msg_id = ? AND removed_at IS NULL
                 AND reaction_key NOT IN ({placeholders})",
         );
-        // Fixed template, computed placeholder count, every value bound.
         let mut q = sqlx::query(AssertSqlSafe(sql))
             .bind(conversation_id)
             .bind(msg_id);
@@ -1415,7 +1417,6 @@ impl Db {
                   WHERE conversation_id = ? AND msg_id = ? AND removed_at IS NULL
                     AND (peer_id, reaction_key) NOT IN ({placeholders})",
             );
-            // Fixed template, computed placeholder count, every value bound.
             let mut q = sqlx::query(AssertSqlSafe(sql))
                 .bind(conversation_id)
                 .bind(msg_id);
@@ -1473,7 +1474,6 @@ impl Db {
               WHERE conversation_id = ? AND msg_id = ? AND removed_at IS NULL
                 AND (kind, offset_utf16, length_utf16) NOT IN ({placeholders})",
         );
-        // Fixed template, computed placeholder count, every value bound.
         let mut q = sqlx::query(AssertSqlSafe(sql))
             .bind(conversation_id)
             .bind(msg_id);

@@ -698,9 +698,7 @@ pub fn parse_frame(frame: &Value) -> Parsed {
 /// `getDisplayNickname` and `getName` are each `given + " " + family`, or
 /// whichever half is non-empty.
 ///
-/// The deployed 0.14.5 lacks the nickname branch when filling
-/// `envelope.sourceName`, but `/v1/contacts` serves the nickname, so this
-/// applies the newer precedence to it.
+/// Applied to `/v1/contacts`, which sends the fields rather than the result.
 pub fn display_name_of(c: &Value) -> Option<String> {
     let joined = |obj: Option<&Value>, given: &str, family: &str| -> Option<String> {
         let obj = obj?;

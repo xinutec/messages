@@ -1,6 +1,9 @@
 //! Read-only queries over the message archive, normalising Signal, Google Chat,
 //! IRC and Telegram into one shape for the UI. The only write, the echo of a sent
 //! IRC line, is in [`crate::irc_send`].
+//!
+//! A query over a page's rows is built with one `?` per value and every value
+//! bound; that fixed shape is what each `AssertSqlSafe` asserts.
 
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
@@ -108,7 +111,6 @@ fn us_to_ms(us: i64) -> i64 {
 pub fn cursor_for_day(origin: Origin, day_start_ms: i64) -> String {
     let native = match origin {
         Origin::Signal => day_start_ms,
-        // The only origin that multiplies.
         Origin::Gchat => day_start_ms * 1000,
         Origin::Telegram | Origin::Irc => day_start_ms / 1000,
     };
@@ -124,8 +126,8 @@ fn kind_from_is_dm(is_dm: bool) -> ConversationKind {
     }
 }
 
-/// Escape a user search term for a SQL `LIKE` (so `%` and `_` are literal). The
-/// query still binds the result as a parameter; this only neutralises wildcards.
+/// A search term as a SQL `LIKE` pattern, with `%` and `_` matching literally.
+/// The result is still bound as a parameter.
 pub fn escape_like(q: &str) -> String {
     format!(
         "%{}%",
@@ -407,8 +409,7 @@ pub const EXCERPT_CHARS: usize = 120;
 
 /// A one-line prefix of a quoted message.
 ///
-/// Truncated by characters, since slicing a `String` by bytes panics
-/// mid-codepoint. Newlines are folded into one line.
+/// Cut by characters: a byte slice panics mid-codepoint.
 pub fn excerpt(body: Option<&str>) -> Option<String> {
     let flat = body?.split_whitespace().collect::<Vec<_>>().join(" ");
     if flat.is_empty() {
@@ -456,7 +457,6 @@ async fn attach_signal_replies(
          WHERE m.thread_id = ? AND m.edit_of_ts IS NULL
            AND m.server_ts IN ({placeholders})",
     );
-    // A fixed template with a computed count of `?` and every value bound.
     let mut q = sqlx::query(AssertSqlSafe(sql)).bind(thread_id);
     for ts in &targets {
         q = q.bind(ts);
@@ -519,7 +519,6 @@ async fn attach_gchat_attachments(
            FROM gchat_attachments WHERE message_id IN ({placeholders})
           ORDER BY id",
     );
-    // A fixed template with a computed count of `?` and every value bound.
     let mut q = sqlx::query(AssertSqlSafe(sql));
     for id in ids {
         q = q.bind(id);
@@ -547,9 +546,9 @@ async fn attach_gchat_attachments(
     Ok(())
 }
 
-/// Resolve Google Chat's quote-replies for one page. They name the target's message id within the group.
-/// Not `thread_id`, which is the topic: a DM message is its own topic but can
-/// still quote another.
+/// Resolve Google Chat's quote-replies for one page, by the target's message id
+/// within the group. Not `thread_id`, which is the topic: a DM message is its
+/// own topic but can still quote another.
 async fn attach_gchat_replies(
     pool: &MySqlPool,
     group_id: &str,
@@ -572,7 +571,6 @@ async fn attach_gchat_replies(
            FROM gchat_messages m
           WHERE m.group_id = ? AND m.msg_id IN ({placeholders})",
     );
-    // A fixed template with a computed count of `?` and every value bound.
     let mut q = sqlx::query(AssertSqlSafe(sql)).bind(group_id);
     for t in &targets {
         q = q.bind(t);
@@ -643,7 +641,6 @@ async fn attach_telegram_replies(
          WHERE m.conversation_id = ?
            AND m.msg_id IN ({placeholders})",
     );
-    // A fixed template with a computed count of `?` and every value bound.
     let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
     for id in &targets {
         q = q.bind(id);
@@ -721,7 +718,6 @@ async fn attach_edits(
          WHERE thread_id = ? AND edit_of_ts IN ({placeholders})
          ORDER BY server_ts ASC",
     );
-    // A fixed template with a computed count of `?` and every value bound.
     let mut q = sqlx::query(AssertSqlSafe(sql)).bind(thread_id);
     for ts in &originals {
         q = q.bind(ts);
@@ -829,7 +825,6 @@ async fn attach_signal_styles(
           WHERE message_id IN ({placeholders})
           ORDER BY message_id, start_utf16, length_utf16, style",
     );
-    // A fixed template with a computed count of `?` and every value bound.
     let mut q = sqlx::query(AssertSqlSafe(sql));
     for (_, row) in &rows {
         q = q.bind(row);
@@ -864,7 +859,6 @@ async fn attach_signal_previews(pool: &MySqlPool, msgs: &mut [Message]) -> Resul
           WHERE message_id IN ({placeholders})
           ORDER BY message_id, position",
     );
-    // A fixed template with a computed count of `?` and every value bound.
     let mut q = sqlx::query(AssertSqlSafe(sql));
     for id in &ids {
         q = q.bind(id);
@@ -912,7 +906,6 @@ pub async fn attach_link_images(pool: &MySqlPool, msgs: &mut [Message]) -> Resul
         "SELECT url_hash, state, content_type, decided_by FROM link_images
          WHERE url_hash IN ({placeholders})",
     );
-    // A fixed template with a computed count of `?` and every value bound.
     let mut q = sqlx::query(AssertSqlSafe(sql));
     for h in &hashes {
         q = q.bind(*h);
@@ -982,7 +975,6 @@ async fn offer(pool: &MySqlPool, links: &[(&str, &str)]) -> Result<()> {
     let rows = vec!["(?, ?, 'offered', NOW())"; links.len()].join(",");
     let sql =
         format!("INSERT IGNORE INTO link_images (url_hash, url, state, wanted_at) VALUES {rows}");
-    // A fixed template with a computed count of `?` and every value bound.
     let mut q = sqlx::query(AssertSqlSafe(sql));
     for (hash, url) in links {
         q = q.bind(*hash).bind(*url);
@@ -1245,9 +1237,9 @@ pub async fn list_conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
         });
     }
 
-    // IRC reads `irc_conversation_stats`, maintained by triggers (the
-    // archiver's migrations v11-v14). Aggregating `irc_messages` here instead is too slow
-    // to serve the landing page: the `kind` filter defeats the loose index scan.
+    // IRC reads `irc_conversation_stats`, which the archiver's triggers maintain.
+    // Aggregating `irc_messages` here is too slow for the landing page: the
+    // `kind` filter defeats the loose index scan.
     //
     // `TIMESTAMPDIFF` from the epoch, not `UNIX_TIMESTAMP`, which would apply the
     // connection's time zone to the DATETIME.
@@ -1340,7 +1332,6 @@ async fn telegram_reactors(
             AND a.msg_id IN ({placeholders})
           ORDER BY a.reacted_at, who",
     );
-    // A fixed template with a computed count of `?` and every value bound.
     let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
     for id in msg_ids {
         q = q.bind(id);
@@ -1519,7 +1510,6 @@ async fn signal_messages(
           LIMIT ?"
         }
     };
-    // `ORDER BY` takes no bound parameter, hence one literal per direction.
     let rows = sqlx::query(sql)
         .bind(thread_id)
         .bind(cur_ts)
@@ -1619,7 +1609,6 @@ async fn signal_messages(
                AND r.target_ts IN ({placeholders})
              ORDER BY r.target_ts, r.emoji, who",
         );
-        // A fixed template with a computed count of `?` and every value bound.
         let mut q = sqlx::query(AssertSqlSafe(sql)).bind(thread_id);
         for ts in &ts_list {
             q = q.bind(ts);
@@ -1682,7 +1671,6 @@ async fn attach_signal_read(pool: &MySqlPool, msgs: &mut [Message]) -> Result<()
             .flatten();
 
     let placeholders = vec!["?"; ids.len()].join(",");
-    // A fixed template with a computed count of `?` and every value bound.
     let sql = format!(
         "SELECT m.id AS id, r.kind AS kind, r.when_ts AS when_ts,
                 COALESCE(ct.display_name, r.author_uuid) AS who
@@ -1786,7 +1774,6 @@ async fn gchat_messages(
           LIMIT ?"
         }
     };
-    // `ORDER BY` takes no bound parameter, hence one literal per direction.
     let rows = sqlx::query(sql)
         .bind(group_id)
         .bind(cur_ts)
@@ -1854,7 +1841,6 @@ async fn gchat_messages(
               WHERE r.emoji IS NOT NULL AND r.message_id IN ({placeholders})
               GROUP BY r.message_id, r.emoji, r.cnt",
         );
-        // A fixed template with a computed count of `?` and every value bound.
         let mut q = sqlx::query(AssertSqlSafe(sql));
         for id in &ids {
             q = q.bind(id);
@@ -1939,7 +1925,6 @@ async fn irc_messages(
           LIMIT ?"
         }
     };
-    // `ORDER BY` takes no bound parameter, hence one literal per direction.
     let rows = sqlx::query(sql)
         .bind(conversation_id)
         .bind(cur_ts)
@@ -2160,7 +2145,6 @@ async fn telegram_messages(
                ON m.conversation_id = d.conversation_id AND m.msg_id = d.msg_id
              WHERE d.conversation_id = ? AND d.msg_id IN ({placeholders})",
         );
-        // A fixed template with a computed count of `?` and every value bound.
         let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
         for id in &msg_ids {
             q = q.bind(id);
@@ -2197,7 +2181,6 @@ async fn telegram_messages(
                AND removed_at IS NULL
                AND msg_id IN ({placeholders})",
         );
-        // A fixed template with a computed count of `?` and every value bound.
         let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
         for id in &msg_ids {
             q = q.bind(id);
@@ -2277,7 +2260,6 @@ async fn attach_telegram_entities(
         return Ok(());
     }
     let placeholders = vec!["?"; msg_ids.len()].join(",");
-    // A fixed template with a computed count of `?` and every value bound.
     let sql = format!(
         "SELECT msg_id, kind, offset_utf16, length_utf16, url
            FROM telegram_message_entities
@@ -2335,7 +2317,6 @@ async fn attach_telegram_edits(
          WHERE e.conversation_id = ? AND m.id IN ({placeholders})
          ORDER BY e.was_edited_at IS NOT NULL, e.was_edited_at ASC, e.id ASC",
     );
-    // A fixed template with a computed count of `?` and every value bound.
     let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
     for id in &ids {
         q = q.bind(id);

@@ -377,7 +377,7 @@ pub async fn send(
                 if archived {
                     "echo archived, visible now"
                 } else {
-                    "echo not archived, waits for the hourly import"
+                    "echo not archived, waits for the next import"
                 }
             );
             Ok(Json(SendResult {

@@ -4,7 +4,8 @@ import { testMessage } from "../src/app/test-message";
 
 /**
  * Navigation state lives in the URL: `/conversation/:origin/:id`, with
- * `?origin` and `?from` as query params, so it survives refresh and Back works.
+ * `?origin`, `?from`, `?at` and `?on` as query params, so it survives refresh
+ * and Back works.
  */
 
 const ME = { user_id: "u1", display_name: "Test User" };

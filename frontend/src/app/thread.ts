@@ -118,7 +118,8 @@ export class Thread {
     return o != null && i != null ? this.store.find(o, i) : null;
   });
 
-  // The bar's name for the conversation; a deep link can render before the list arrives.
+  // The bar's name for the conversation. A deep link can render before the list
+  // arrives, so it starts as a stand-in.
   private readonly barTitle = computed(() => {
     if (!this.routed()) return undefined;
     const c = this.conversation();
@@ -158,7 +159,7 @@ export class Thread {
   readonly loadingNewer = signal(false);
   readonly hasMore = signal(false);
   readonly threadError = signal(false);
-  /** Where to continue BACKWARDS — the oldest loaded row. */
+  /** Where to continue backwards: the oldest loaded row. */
   private cursor: string | null = null;
   /** Where to continue forwards: the newest loaded row, while `floating`. */
   private newerCursor: string | null = null;
@@ -573,9 +574,8 @@ export class Thread {
     const o = this.origin();
     const i = this.id();
     if (o == null || i == null) return;
-    // Not during a load, nor while hidden.
+    // Not during a load or a send, while floating (see `floating`), or while hidden.
     if (this.polling || this.loadingThread() || this.loadingOlder() || this.sending()) return;
-    // Not while floating; see `floating`.
     if (this.floating()) return;
     if (document.visibilityState !== 'visible') return;
     if (this.messages().length === 0) return;

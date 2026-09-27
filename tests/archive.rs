@@ -1,9 +1,10 @@
 //! Tests for the archive query/normalisation layer.
 //!
 //! Pure units always run. The database tests seed a fixture into
-//! `MESSAGES_TEST_DATABASE_URL`, which must be a throwaway database: the archive
-//! tables are dropped and recreated. Skipped when it is unset, except in CI; CI
-//! and the gate supply one. Never point it at the real signal database.
+//! `MESSAGES_TEST_DATABASE_URL`, which must be a throwaway database: every table
+//! in it is dropped, and the archiver's migrations rebuild it. Skipped when it is
+//! unset, except in CI; CI and the gate supply one. Never point it at the real
+//! signal database.
 
 use messages::archive::{
     self, ConversationKind, DeliveryState, EXCERPT_CHARS, MessageKind, Origin, PageDir, call_text,
@@ -142,8 +143,7 @@ fn gchat_ddl() -> Vec<&'static str> {
 }
 
 async fn seed(pool: &MySqlPool) {
-    // A throwaway database: everything in it goes, so the archiver's migrations
-    // build it from nothing, as they do in production.
+    // A throwaway database: everything in it goes.
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()",
     )

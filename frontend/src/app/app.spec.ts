@@ -254,7 +254,7 @@ describe('App', () => {
   });
 
   /** Every filterable origin has a label. */
-  it('has a label for each filter button and no orphans', () => {
+  it('has a label for each filter toggle and no orphans', () => {
     const { app } = setup(makeApi());
     expect([...app.origins].sort()).toEqual(Object.keys(app.originLabels).sort());
   });

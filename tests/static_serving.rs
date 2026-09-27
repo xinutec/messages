@@ -1,5 +1,5 @@
 //! A missing file must 404, not be handed the page as a 200. A dot in the last
-//! path segment marks a file: `/c/irc/7` is a route, `/main-ABC123.js` a file.
+//! path segment marks a file: `/conversation/irc/7` is a route, `/main-ABC123.js` a file.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -71,7 +71,7 @@ async fn a_missing_asset_is_a_404_and_not_the_page() {
 /// A client-side route still loads the shell.
 #[tokio::test]
 async fn a_deep_link_still_gets_the_page() {
-    let (status, ct) = get("/c/irc/7").await;
+    let (status, ct) = get("/conversation/irc/7").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
         ct.starts_with("text/html"),
