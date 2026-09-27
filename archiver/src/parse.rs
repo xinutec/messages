@@ -270,13 +270,28 @@ pub struct Parsed {
 }
 
 impl Parsed {
-    fn skip() -> Self {
+    /// An action with nothing to learn about a contact.
+    fn only(action: Action) -> Self {
         Parsed {
-            action: Action::Skip,
+            action,
             contact: None,
             dm_name: None,
         }
     }
+
+    fn skip() -> Self {
+        Self::only(Action::Skip)
+    }
+}
+
+/// A frame's or payload's integer field.
+fn int(v: &Value, key: &str) -> Option<i64> {
+    v.get(key).and_then(Value::as_i64)
+}
+
+/// Who an envelope is from: us, for a sync or a receipt of ours.
+fn source_of(env: &Value) -> String {
+    id_of(env.get("sourceUuid"), env.get("source"))
 }
 
 /// Prefer the stable ACI UUID; fall back to the E.164 number, then "unknown".
@@ -334,8 +349,8 @@ impl ServerTimes {
     /// Read them off an `envelope`.
     fn of(env: &Value) -> Self {
         ServerTimes {
-            received: env.get("serverReceivedTimestamp").and_then(Value::as_i64),
-            delivered: env.get("serverDeliveredTimestamp").and_then(Value::as_i64),
+            received: int(env, "serverReceivedTimestamp"),
+            delivered: int(env, "serverDeliveredTimestamp"),
         }
     }
 }
@@ -367,7 +382,7 @@ fn payload_action(
     }
 
     if let Some(reaction) = msg.get("reaction") {
-        if let Some(target) = reaction.get("targetSentTimestamp").and_then(Value::as_i64) {
+        if let Some(target) = int(reaction, "targetSentTimestamp") {
             return Action::Reaction(Reaction {
                 thread_id,
                 target_ts: target,
@@ -431,7 +446,7 @@ fn payload_action(
                         .get("filename")
                         .and_then(Value::as_str)
                         .map(str::to_string),
-                    size: a.get("size").and_then(Value::as_i64),
+                    size: int(a, "size"),
                 })
                 .collect()
         })
@@ -443,10 +458,7 @@ fn payload_action(
         server_ts: ts,
         server_received_ts: times.received,
         server_delivered_ts: times.delivered,
-        expires_in_seconds: msg
-            .get("expiresInSeconds")
-            .and_then(Value::as_i64)
-            .and_then(|n| i32::try_from(n).ok()),
+        expires_in_seconds: int(msg, "expiresInSeconds").and_then(|n| i32::try_from(n).ok()),
         body,
         quote_target_ts: quote,
         quote_author,
@@ -498,15 +510,11 @@ pub fn parse_frame(frame: &Value) -> Parsed {
         let Some(inner) = edit.get("dataMessage") else {
             return Parsed::skip();
         };
-        let sender = id_of(env.get("sourceUuid"), env.get("source"));
-        let Some(edit_ts) = env
-            .get("timestamp")
-            .and_then(Value::as_i64)
-            .or_else(|| inner.get("timestamp").and_then(Value::as_i64))
-        else {
+        let sender = source_of(env);
+        let Some(edit_ts) = int(env, "timestamp").or_else(|| int(inner, "timestamp")) else {
             return Parsed::skip();
         };
-        let Some(target) = edit.get("targetSentTimestamp").and_then(Value::as_i64) else {
+        let Some(target) = int(edit, "targetSentTimestamp") else {
             return Parsed::skip();
         };
         let (contact, dm_name) = sender_contact(env, &sender, inner);
@@ -525,15 +533,15 @@ pub fn parse_frame(frame: &Value) -> Parsed {
             .or_else(|| sent.and_then(|s| s.get("editMessage")))
         {
             if let Some(inner) = edit.get("dataMessage") {
-                let sender = id_of(env.get("sourceUuid"), env.get("source"));
+                let sender = source_of(env);
                 let Some(edit_ts) = sent
                     .and_then(|s| s.get("timestamp"))
                     .and_then(Value::as_i64)
-                    .or_else(|| inner.get("timestamp").and_then(Value::as_i64))
+                    .or_else(|| int(inner, "timestamp"))
                 else {
                     return Parsed::skip();
                 };
-                let Some(target) = edit.get("targetSentTimestamp").and_then(Value::as_i64) else {
+                let Some(target) = int(edit, "targetSentTimestamp") else {
                     return Parsed::skip();
                 };
                 let dest = id_of(
@@ -541,23 +549,15 @@ pub fn parse_frame(frame: &Value) -> Parsed {
                     sent.and_then(|s| s.get("destination")),
                 );
                 let action = edit_action(inner, &sender, edit_ts, target, true, &dest);
-                return Parsed {
-                    action,
-                    contact: None,
-                    dm_name: None,
-                };
+                return Parsed::only(action);
             }
             return Parsed::skip();
         }
     }
 
     if let Some(dm) = env.get("dataMessage") {
-        let sender = id_of(env.get("sourceUuid"), env.get("source"));
-        let Some(ts) = env
-            .get("timestamp")
-            .and_then(Value::as_i64)
-            .or_else(|| dm.get("timestamp").and_then(Value::as_i64))
-        else {
+        let sender = source_of(env);
+        let Some(ts) = int(env, "timestamp").or_else(|| int(dm, "timestamp")) else {
             return Parsed::skip();
         };
         let (contact, dm_name) = sender_contact(env, &sender, dm);
@@ -579,18 +579,15 @@ pub fn parse_frame(frame: &Value) -> Parsed {
         .and_then(Value::as_array)
         && !reads.is_empty()
     {
-        let me = id_of(env.get("sourceUuid"), env.get("source"));
-        let targets: Vec<i64> = reads
-            .iter()
-            .filter_map(|r| r.get("timestamp").and_then(Value::as_i64))
-            .collect();
+        let me = source_of(env);
+        let targets: Vec<i64> = reads.iter().filter_map(|r| int(r, "timestamp")).collect();
         if !targets.is_empty() {
             return Parsed {
                 action: Action::Receipt(Receipt {
                     author: me,
                     kind: ReceiptKind::Read,
                     // A sync read has no `when`; the envelope's clock is closest.
-                    when_ts: env.get("timestamp").and_then(Value::as_i64).unwrap_or(0),
+                    when_ts: int(env, "timestamp").unwrap_or(0),
                     targets,
                 }),
                 contact: None,
@@ -621,12 +618,10 @@ pub fn parse_frame(frame: &Value) -> Parsed {
         {
             return Parsed {
                 action: Action::Receipt(Receipt {
-                    author: id_of(env.get("sourceUuid"), env.get("source")),
+                    author: source_of(env),
                     kind,
-                    when_ts: receipt
-                        .get("when")
-                        .and_then(Value::as_i64)
-                        .or_else(|| env.get("timestamp").and_then(Value::as_i64))
+                    when_ts: int(receipt, "when")
+                        .or_else(|| int(env, "timestamp"))
                         .unwrap_or(0),
                     targets,
                 }),
@@ -638,8 +633,8 @@ pub fn parse_frame(frame: &Value) -> Parsed {
     }
 
     if let Some(call) = env.get("callMessage") {
-        let peer = id_of(env.get("sourceUuid"), env.get("source"));
-        let event_ts = env.get("timestamp").and_then(Value::as_i64).unwrap_or(0);
+        let peer = source_of(env);
+        let event_ts = int(env, "timestamp").unwrap_or(0);
         // Not `iceUpdateMessages`: opaque transport, many per call.
         let found = [
             ("offerMessage", CallEventKind::Offer),
@@ -650,7 +645,7 @@ pub fn parse_frame(frame: &Value) -> Parsed {
         .into_iter()
         .find_map(|(key, kind)| call.get(key).map(|v| (kind, v)));
         if let Some((event, body)) = found
-            && let Some(call_id) = body.get("id").and_then(Value::as_i64)
+            && let Some(call_id) = int(body, "id")
         {
             return Parsed {
                 action: Action::Call(CallEvent {
@@ -658,7 +653,7 @@ pub fn parse_frame(frame: &Value) -> Parsed {
                     peer,
                     event,
                     detail: body.get("type").and_then(Value::as_str).map(str::to_string),
-                    device_id: body.get("deviceId").and_then(Value::as_i64),
+                    device_id: int(body, "deviceId"),
                     event_ts,
                 }),
                 contact: None,
@@ -669,17 +664,13 @@ pub fn parse_frame(frame: &Value) -> Parsed {
     }
 
     if let Some(sent) = env.get("syncMessage").and_then(|s| s.get("sentMessage")) {
-        let sender = id_of(env.get("sourceUuid"), env.get("source")); // ourselves
-        let Some(ts) = sent.get("timestamp").and_then(Value::as_i64) else {
+        let sender = source_of(env); // ourselves
+        let Some(ts) = int(sent, "timestamp") else {
             return Parsed::skip();
         };
         let dest = id_of(sent.get("destinationUuid"), sent.get("destination"));
         let action = payload_action(sent, &sender, ts, true, &dest, ServerTimes::of(env));
-        return Parsed {
-            action,
-            contact: None,
-            dm_name: None,
-        };
+        return Parsed::only(action);
     }
 
     Parsed::skip()

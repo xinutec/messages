@@ -22,7 +22,7 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 use signal_archiver::attach;
 use signal_archiver::db::Db;
-use signal_archiver::parse::{Action, display_name_of, parse_frame};
+use signal_archiver::parse::{Action, ThreadId, display_name_of, parse_frame};
 
 /// A window with no frame at all sends a probe ping; `MAX_IDLE_PROBES` silent
 /// windows in a row mean a dead socket, and force a reconnect.
@@ -31,6 +31,15 @@ const MAX_IDLE_PROBES: u32 = 3;
 
 /// The pause before reconnecting the receive websocket.
 const RECONNECT: Duration = Duration::from_secs(7);
+
+/// How often contact names are re-read. `/v1/contacts` resolves profiles and is
+/// slow, so it gets its own long timeout.
+const CONTACTS_EVERY: Duration = Duration::from_secs(3600);
+const CONTACTS_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// How often group titles are re-read.
+const GROUPS_EVERY: Duration = Duration::from_secs(600);
+const GROUPS_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Shared state for the per-frame dispatcher.
 #[derive(Clone)]
@@ -320,8 +329,7 @@ async fn fetch_array(ctx: &Ctx, url: &str, timeout: Duration) -> Result<Vec<Valu
 async fn refresh_contact_names(ctx: Ctx) {
     let url = format!("{}/v1/contacts/{}", ctx.http_base, ctx.number);
     loop {
-        // This endpoint resolves profiles and is slow.
-        match fetch_array(&ctx, &url, Duration::from_secs(120)).await {
+        match fetch_array(&ctx, &url, CONTACTS_TIMEOUT).await {
             Ok(contacts) => {
                 let (mut named, mut skipped) = (0usize, 0usize);
                 for c in &contacts {
@@ -353,7 +361,7 @@ async fn refresh_contact_names(ctx: Ctx) {
             }
             Err(e) => tracing::warn!("could not fetch contact names: {e:#}"),
         }
-        tokio::time::sleep(Duration::from_secs(3600)).await;
+        tokio::time::sleep(CONTACTS_EVERY).await;
     }
 }
 
@@ -361,7 +369,7 @@ async fn refresh_contact_names(ctx: Ctx) {
 async fn refresh_group_names(ctx: Ctx) {
     let url = format!("{}/v1/groups/{}", ctx.http_base, ctx.number);
     loop {
-        match fetch_array(&ctx, &url, Duration::from_secs(20)).await {
+        match fetch_array(&ctx, &url, GROUPS_TIMEOUT).await {
             Ok(groups) => {
                 for g in &groups {
                     let (Some(iid), Some(name)) = (
@@ -370,11 +378,8 @@ async fn refresh_group_names(ctx: Ctx) {
                     ) else {
                         continue;
                     };
-                    if let Err(e) = ctx
-                        .db
-                        .set_conversation_name(&format!("group:{iid}"), name)
-                        .await
-                    {
+                    let thread = ThreadId::Group(iid.to_string()).to_string();
+                    if let Err(e) = ctx.db.set_conversation_name(&thread, name).await {
                         tracing::warn!("failed to store group name for {iid}: {e}");
                     }
                 }
@@ -382,7 +387,7 @@ async fn refresh_group_names(ctx: Ctx) {
             }
             Err(e) => tracing::warn!("could not fetch group names: {e:#}"),
         }
-        tokio::time::sleep(Duration::from_secs(600)).await;
+        tokio::time::sleep(GROUPS_EVERY).await;
     }
 }
 
