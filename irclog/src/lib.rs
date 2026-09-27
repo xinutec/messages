@@ -138,6 +138,12 @@ pub fn is_channel(target: &str) -> bool {
     target.starts_with(['#', '&'])
 }
 
+/// One `--map` entry, `from=to`: a source tag and the network it is stored under.
+pub fn parse_map_entry(pair: &str) -> Option<(String, String)> {
+    let (from, to) = pair.split_once('=')?;
+    Some((from.to_string(), to.to_string()))
+}
+
 /// The network a source tag is stored under: `map` merges the tag irssi invents
 /// for a second connection (`net2`) into the first.
 pub fn stored_network<'a>(map: &'a [(String, String)], tag: &'a str) -> &'a str {
@@ -169,6 +175,15 @@ pub fn parse_path(rel: &str) -> Option<LogPath> {
         target: file.strip_suffix(".log")?.to_string(),
         date,
     })
+}
+
+/// One logged line, read alone, as it reads in its file: what `irc_tail` and the
+/// send echo are handed. Its `line_no` is 1; the caller knows the real one.
+pub fn parse_line(date: Date, line: &str) -> Option<Entry> {
+    parse_log(date, &format!("{line}\n"))
+        .entries
+        .into_iter()
+        .next()
 }
 
 /// Read one log file's text, starting from the date its path gave.

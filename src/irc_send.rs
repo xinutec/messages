@@ -272,8 +272,7 @@ pub async fn record_echo(pool: &MySqlPool, conversation_id: &str, sent: &Sent) -
     };
     // The importer's parser and row, so the two writes are one row.
     let entry = irclog::Date::parse_iso(&logged.file_date)
-        .map(|date| irclog::parse_log(date, &format!("{}\n", logged.line)))
-        .and_then(|parsed| parsed.entries.into_iter().next());
+        .and_then(|date| irclog::parse_line(date, &logged.line));
     let Some(entry) = entry else {
         // Not a log line: leave it to the import rather than guess.
         tracing::warn!(

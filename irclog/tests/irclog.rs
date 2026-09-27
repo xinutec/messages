@@ -3,7 +3,10 @@
 //! Fixtures are synthetic: the real logs are private and this repository is
 //! public. They reproduce the shapes of the live tree, not its content.
 
-use irclog::{Date, Entry, Kind, is_channel, parse_log, parse_path, stored_network};
+use irclog::{
+    Date, Entry, Kind, is_channel, parse_line, parse_log, parse_map_entry, parse_path,
+    stored_network,
+};
 
 fn d(year: i32, month: u32, day: u32) -> Date {
     Date { year, month, day }
@@ -72,10 +75,20 @@ fn a_local_channel_is_a_channel_too() {
 /// irssi tags a second connection `net2`; `--map` files it under the first.
 #[test]
 fn a_mapped_tag_is_stored_under_its_network() {
-    let map = [("xinutec2".to_string(), "xinutec".to_string())];
+    let map = [parse_map_entry("xinutec2=xinutec").unwrap()];
     assert_eq!(stored_network(&map, "xinutec2"), "xinutec");
     assert_eq!(stored_network(&map, "xinutec"), "xinutec");
     assert_eq!(stored_network(&map, "other"), "other");
+}
+
+/// A `--map` entry without its `=` is refused, not read as a tag mapped to nothing.
+#[test]
+fn a_map_entry_needs_both_halves() {
+    assert_eq!(parse_map_entry("xinutec2"), None);
+    assert_eq!(
+        parse_map_entry("a=b=c"),
+        Some(("a".to_string(), "b=c".to_string()))
+    );
 }
 
 /// Old files have no network component. `None` lets the caller count them.
@@ -371,15 +384,12 @@ fn a_line_parsed_alone_matches_the_same_line_parsed_in_its_file() {
     let lines: Vec<&str> = file.lines().collect();
     for entry in &whole.entries {
         let raw = lines[entry.line_no as usize - 1];
-        let alone = parse_log(DAY, &format!("{raw}\n"));
-        assert_eq!(
-            alone.entries.len(),
-            1,
-            "line {} parsed alone yielded {} entries: {raw:?}",
-            entry.line_no,
-            alone.entries.len()
-        );
-        let solo = &alone.entries[0];
+        let solo = parse_line(DAY, raw).unwrap_or_else(|| {
+            panic!(
+                "line {} parsed alone yielded nothing: {raw:?}",
+                entry.line_no
+            )
+        });
         assert_eq!(solo.at, entry.at, "timestamp differs for {raw:?}");
         assert_eq!(solo.kind, entry.kind, "kind differs for {raw:?}");
         assert_eq!(solo.nick, entry.nick, "nick differs for {raw:?}");

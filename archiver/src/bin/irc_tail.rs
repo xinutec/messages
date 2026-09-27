@@ -25,7 +25,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use irclog::{Date, IrcLine, parse_log, stored_network};
+use irclog::{Date, IrcLine, parse_line, parse_map_entry, stored_network};
 use serde::Deserialize;
 use signal_archiver::db::{Db, IrcConversations};
 use tokio::io::AsyncWriteExt;
@@ -103,10 +103,10 @@ fn parse_args() -> Result<Args> {
             "--heartbeat" => args.heartbeat = Some(PathBuf::from(value()?)),
             "--map" => {
                 let pair = value()?;
-                let (from, to) = pair
-                    .split_once('=')
-                    .with_context(|| format!("--map wants from=to, got {pair}"))?;
-                args.map.push((from.to_string(), to.to_string()));
+                args.map.push(
+                    parse_map_entry(&pair)
+                        .with_context(|| format!("--map wants from=to, got {pair}"))?,
+                );
             }
             other => bail!("unknown argument {other}"),
         }
@@ -213,8 +213,7 @@ async fn store(
     let date = Date::parse_iso(file_date)
         .with_context(|| format!("the plugin's file_date is not a date: {file_date}"))?;
     // The importer's parser, so this row is the one the import would write.
-    let parsed = parse_log(date, &format!("{line}\n"));
-    let Some(entry) = parsed.entries.into_iter().next() else {
+    let Some(entry) = parse_line(date, line) else {
         return Ok(false);
     };
 
@@ -228,7 +227,7 @@ async fn store(
         )
         .await?;
 
-    // The plugin's line number; `parse_log` saw only this one line.
+    // The plugin's line number; `parse_line` saw only this one line.
     let irc_line = IrcLine::from_entry(&entry, line_no, &args.self_nicks);
 
     // The raw tag, before `--map`, as in the dedupe key (migration v8).

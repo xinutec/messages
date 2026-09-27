@@ -50,7 +50,7 @@ use signal_archiver::db::{
 use signal_archiver::telegram::map::{self, Row};
 use signal_archiver::telegram::session::DbSession;
 use signal_archiver::telegram::{ConvKind, peer_name};
-use sqlx::{AssertSqlSafe, Row as _};
+use sqlx::Row as _;
 
 /// How often a changed session is written back. Losing up to this much costs a
 /// few replayed updates.
@@ -514,7 +514,7 @@ async fn probe(client: &Client, db: &Db) -> Result<()> {
                  WHERE media_kind IS NOT NULL ORDER BY RAND() LIMIT 150) \
                UNION (SELECT conversation_id, msg_id FROM telegram_messages \
                  WHERE kind = 'message' ORDER BY RAND() LIMIT 150)";
-    let rows = sqlx::query(AssertSqlSafe(sql)).fetch_all(db.pool()).await?;
+    let rows = sqlx::query(sql).fetch_all(db.pool()).await?;
 
     let mut by_conversation: HashMap<i64, Vec<i32>> = HashMap::new();
     for row in &rows {
@@ -539,8 +539,7 @@ async fn probe(client: &Client, db: &Db) -> Result<()> {
             tracing::warn!("conversation {conversation_id} is not in the dialog list; skipped");
             continue;
         };
-        // `messages.getMessages` takes at most 100 ids per call.
-        for chunk in ids.chunks(100) {
+        for chunk in ids.chunks(RECAPTURE_PAGE as usize) {
             let fetched = client
                 .get_messages_by_id(*peer_ref, chunk)
                 .await

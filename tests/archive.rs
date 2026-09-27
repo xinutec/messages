@@ -1066,9 +1066,7 @@ async fn a_sent_message_and_its_later_import_are_one_row() {
     // `irc_tail` make them: it must find the echo already present.
     let line = sent.logged.as_ref().unwrap();
     let date = irclog::Date::parse_iso(&line.file_date).unwrap();
-    let entry = irclog::parse_log(date, &format!("{}\n", line.line))
-        .entries
-        .remove(0);
+    let entry = irclog::parse_line(date, &line.line).unwrap();
     let importer = signal_archiver::db::Db::connect(&database::database_url().unwrap())
         .await
         .unwrap();

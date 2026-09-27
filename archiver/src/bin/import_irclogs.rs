@@ -27,7 +27,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use irclog::{IrcLine, Kind, parse_log, parse_path, stored_network};
+use irclog::{IrcLine, Kind, parse_log, parse_map_entry, parse_path, stored_network};
 use signal_archiver::db::{Db, IrcConversations};
 
 struct Args {
@@ -78,10 +78,10 @@ fn parse_args() -> Result<Args> {
             "--self-nick" => args.self_nicks.push(value()?),
             "--map" => {
                 let pair = value()?;
-                let (from, to) = pair
-                    .split_once('=')
-                    .with_context(|| format!("--map wants from=to, got {pair}"))?;
-                args.map.push((from.to_string(), to.to_string()));
+                args.map.push(
+                    parse_map_entry(&pair)
+                        .with_context(|| format!("--map wants from=to, got {pair}"))?,
+                );
             }
             "--apply" => args.apply = true,
             "--all" => args.all = true,
