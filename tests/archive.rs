@@ -714,13 +714,20 @@ async fn signal_attachments_available_flag_and_blob_lookup() {
     let img_id: i64 = img.id.parse().unwrap();
     let pdf_id: i64 = pdf.id.parse().unwrap();
     assert_eq!(
-        archive::attachment_blob(&pool, img_id).await.unwrap(),
+        archive::signal::attachment_blob(&pool, img_id)
+            .await
+            .unwrap(),
         Some((
             Some("image/jpeg".to_string()),
             "/attachments/pic_jpg".to_string()
         )),
     );
-    assert_eq!(archive::attachment_blob(&pool, pdf_id).await.unwrap(), None);
+    assert_eq!(
+        archive::signal::attachment_blob(&pool, pdf_id)
+            .await
+            .unwrap(),
+        None
+    );
 }
 
 #[tokio::test]
@@ -994,7 +1001,7 @@ async fn irc_target_names_the_network_and_flags_the_status_log() {
         .find(|c| c.origin == Origin::Irc && c.name.as_deref() == Some("carol"))
         .unwrap();
 
-    let t = archive::irc_target(&pool, &carol.id)
+    let t = archive::irc::target(&pool, &carol.id)
         .await
         .unwrap()
         .unwrap();
@@ -1007,7 +1014,7 @@ async fn irc_target_names_the_network_and_flags_the_status_log() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    let t = archive::irc_target(&pool, &status.to_string())
+    let t = archive::irc::target(&pool, &status.to_string())
         .await
         .unwrap()
         .unwrap();
@@ -1017,7 +1024,10 @@ async fn irc_target_names_the_network_and_flags_the_status_log() {
     );
 
     assert!(
-        archive::irc_target(&pool, "99999").await.unwrap().is_none(),
+        archive::irc::target(&pool, "99999")
+            .await
+            .unwrap()
+            .is_none(),
         "a conversation that does not exist is None, not an error"
     );
 }
@@ -1516,11 +1526,6 @@ async fn a_landing_contains_the_message_it_landed_on() {
 /// the fixture's lists are untouched.
 async fn seed_edits(pool: &MySqlPool, thread: &str) {
     // An original, two revisions, and a message after.
-    sqlx::query("DELETE FROM messages WHERE thread_id = ?")
-        .bind(thread)
-        .execute(pool)
-        .await
-        .unwrap();
     for (ts, body, edit_of, edited) in [
         (1_000i64, "first thought", None::<i64>, 1i8),
         (2_000, "second thought", Some(1_000), 0),
@@ -1940,9 +1945,15 @@ async fn requesting_media_queues_only_what_is_not_held() {
     };
 
     let video = id_of("third go");
-    assert!(archive::request_telegram_media(&pool, video).await.unwrap());
     assert!(
-        !archive::request_telegram_media(&pool, video).await.unwrap(),
+        archive::telegram::request_media(&pool, video)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !archive::telegram::request_media(&pool, video)
+            .await
+            .unwrap(),
         "a second tap must not re-queue it"
     );
 
@@ -1962,7 +1973,9 @@ async fn requesting_media_queues_only_what_is_not_held() {
 
     let photo = id_of("forget it");
     assert!(
-        !archive::request_telegram_media(&pool, photo).await.unwrap(),
+        !archive::telegram::request_media(&pool, photo)
+            .await
+            .unwrap(),
         "a stored file must not be re-queued"
     );
 }
@@ -2508,11 +2521,6 @@ async fn telegram_formatting_is_attached_and_a_retracted_run_is_not() {
 /// message the archive does not hold, and an edited message whose styles
 /// changed with its text.
 async fn seed_signal_fields(pool: &MySqlPool, thread: &str) {
-    sqlx::query("DELETE FROM messages WHERE thread_id = ?")
-        .bind(thread)
-        .execute(pool)
-        .await
-        .unwrap();
     for (ts, body, edit_of, edited) in [
         (10_000i64, "Hello bold mono strike", None::<i64>, 0i8),
         (11_000, "https://xinutec.org", None, 0),

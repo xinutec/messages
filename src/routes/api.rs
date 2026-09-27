@@ -137,7 +137,7 @@ pub async fn gchat_attachment(
     AuthUser(_user): AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Response, AppError> {
-    let Some((content_type, stored)) = archive::gchat_attachment_blob(&app.pool, id).await? else {
+    let Some((content_type, stored)) = archive::gchat::attachment_blob(&app.pool, id).await? else {
         return Err(AppError::NotFound);
     };
     let what = format!("gchat attachment {id}");
@@ -150,7 +150,8 @@ pub async fn attachment(
     AuthUser(_user): AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Response, AppError> {
-    let Some((content_type, stored)) = archive::attachment_blob(&app.pool, id).await? else {
+    let Some((content_type, stored)) = archive::signal::attachment_blob(&app.pool, id).await?
+    else {
         return Err(AppError::NotFound);
     };
     let what = format!("attachment {id}");
@@ -166,7 +167,7 @@ pub async fn telegram_media(
     AuthUser(_user): AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Response, AppError> {
-    let Some((content_type, stored)) = archive::telegram_media_blob(&app.pool, id).await? else {
+    let Some((content_type, stored)) = archive::telegram::media_blob(&app.pool, id).await? else {
         return Err(AppError::NotFound);
     };
     let what = format!("telegram media {id}");
@@ -182,7 +183,7 @@ pub async fn telegram_media_state(
     AuthUser(_user): AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<archive::MediaState>, AppError> {
-    match archive::telegram_media_state(&app.pool, id).await? {
+    match archive::telegram::media_state(&app.pool, id).await? {
         Some(state) => Ok(Json(state)),
         None => Err(AppError::NotFound),
     }
@@ -198,7 +199,7 @@ pub async fn request_telegram_media(
     AuthUser(_user): AuthUser,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, AppError> {
-    if archive::request_telegram_media(&app.pool, id).await? {
+    if archive::telegram::request_media(&app.pool, id).await? {
         tracing::info!("telegram media {id} requested");
     }
     Ok(StatusCode::NO_CONTENT)
@@ -213,7 +214,7 @@ pub async fn link_image(
     AuthUser(_user): AuthUser,
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
-    let Some((content_type, stored)) = archive::link_image_blob(&app.pool, &id).await? else {
+    let Some((content_type, stored)) = archive::links::blob(&app.pool, &id).await? else {
         return Err(AppError::NotFound);
     };
     let what = format!("link image {id}");
@@ -229,7 +230,7 @@ pub async fn request_link_image(
     AuthUser(_user): AuthUser,
     Path(id): Path<String>,
 ) -> Result<Json<LinkImageState>, AppError> {
-    let Some(url) = archive::offered_url(&app.pool, &id).await? else {
+    let Some(url) = archive::links::offered_url(&app.pool, &id).await? else {
         return Err(AppError::NotFound);
     };
     let url = url::Url::parse(&url).map_err(|_| AppError::NotFound)?;
@@ -245,7 +246,7 @@ pub async fn request_link_image(
     .await?;
     let (state, content_type) = match outcome {
         link_fetch::Outcome::Ok => {
-            let held = archive::link_image_state(&app.pool, &id).await?;
+            let held = archive::links::state(&app.pool, &id).await?;
             ("ok".to_string(), held.and_then(|(_, ct)| ct))
         }
         link_fetch::Outcome::NotImage => ("not_image".to_string(), None),
@@ -333,7 +334,7 @@ pub async fn send(
         }));
     };
 
-    let Some(target) = archive::irc_target(&app.pool, &id).await? else {
+    let Some(target) = archive::irc::target(&app.pool, &id).await? else {
         return Err(AppError::NotFound);
     };
     // irssi's server-notice window is named after Pippijn's nick.

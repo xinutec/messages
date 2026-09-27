@@ -3,7 +3,8 @@
 //! No fixture: the join reads links from the bodies it is handed, so the tests
 //! hand it messages directly.
 
-use messages::archive::{Message, MessageKind, attach_link_images, link_image_state, offered_url};
+use messages::archive::links::{attach, offered_url, state};
+use messages::archive::{Message, MessageKind};
 use messages::link_fetch::url_hash;
 use sqlx::MySqlPool;
 use sqlx::mysql::MySqlPoolOptions;
@@ -74,7 +75,7 @@ fn msg(body: &str) -> Message {
 async fn a_link_we_hold_a_picture_for_is_hung_on_its_message() {
     let Some(pool) = pool().await else { return };
     let mut msgs = [msg(&format!("look at {HELD} then"))];
-    attach_link_images(&pool, &mut msgs).await.unwrap();
+    attach(&pool, &mut msgs).await.unwrap();
     assert_eq!(msgs[0].link_images.len(), 1);
     assert_eq!(
         msgs[0].link_images[0].url, HELD,
@@ -89,7 +90,7 @@ async fn a_link_we_decided_against_stays_a_link() {
     // 404 page.
     let Some(pool) = pool().await else { return };
     let mut msgs = [msg(&format!("and {REFUSED} here"))];
-    attach_link_images(&pool, &mut msgs).await.unwrap();
+    attach(&pool, &mut msgs).await.unwrap();
     assert!(msgs[0].link_images.is_empty());
 }
 
@@ -97,7 +98,7 @@ async fn a_link_we_decided_against_stays_a_link() {
 async fn a_message_with_no_link_costs_no_query() {
     let Some(pool) = pool().await else { return };
     let mut msgs = [msg("no links at all")];
-    attach_link_images(&pool, &mut msgs).await.unwrap();
+    attach(&pool, &mut msgs).await.unwrap();
     assert!(msgs[0].link_images.is_empty());
 }
 
@@ -109,7 +110,7 @@ async fn a_deleted_message_still_reports_what_we_hold() {
         deleted: true,
         ..msg(&format!("gone, but {HELD}"))
     }];
-    attach_link_images(&pool, &mut msgs).await.unwrap();
+    attach(&pool, &mut msgs).await.unwrap();
     assert_eq!(msgs[0].link_images.len(), 1);
 }
 
@@ -155,7 +156,7 @@ async fn a_decided_link_is_not_offered_again() {
     let Some(pool) = pool().await else { return };
     let hash = url_hash(&Url::parse(REFUSED).unwrap());
     assert!(offered_url(&pool, &hash).await.unwrap().is_none());
-    let (state, _) = link_image_state(&pool, &hash).await.unwrap().unwrap();
+    let (state, _) = state(&pool, &hash).await.unwrap().unwrap();
     assert_eq!(state, "not_image", "left exactly as it was");
 }
 
@@ -176,13 +177,13 @@ async fn serving_a_message_offers_its_undecided_links() {
         .unwrap();
 
     let mut msgs = [msg(&format!("look at {FRESH} then"))];
-    attach_link_images(&pool, &mut msgs).await.unwrap();
+    attach(&pool, &mut msgs).await.unwrap();
 
     assert!(msgs[0].link_images.is_empty(), "nothing is held yet");
     assert_eq!(msgs[0].link_offers.len(), 1, "the reader is offered it");
     assert_eq!(msgs[0].link_offers[0].url, FRESH);
 
-    let (state, _) = link_image_state(&pool, &hash).await.unwrap().unwrap();
+    let (state, _) = state(&pool, &hash).await.unwrap().unwrap();
     assert_eq!(state, "offered", "registered, not queued");
 }
 
@@ -192,8 +193,8 @@ async fn offering_a_link_twice_leaves_a_decision_alone() {
     let Some(pool) = pool().await else { return };
     let hash = url_hash(&Url::parse(REFUSED).unwrap());
     let mut msgs = [msg(&format!("and {REFUSED} here"))];
-    attach_link_images(&pool, &mut msgs).await.unwrap();
-    let (state, _) = link_image_state(&pool, &hash).await.unwrap().unwrap();
+    attach(&pool, &mut msgs).await.unwrap();
+    let (state, _) = state(&pool, &hash).await.unwrap().unwrap();
     assert_eq!(state, "not_image");
     assert!(
         msgs[0].link_offers.is_empty(),
