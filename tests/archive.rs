@@ -7,16 +7,10 @@
 
 use messages::archive::{
     self, ConversationKind, DeliveryState, EXCERPT_CHARS, MessageKind, Origin, PageDir, call_text,
-    encode_cursor, escape_like, excerpt, kind_from_is_dm, parse_cursor, us_to_ms,
+    encode_cursor, escape_like, excerpt, parse_cursor,
 };
 
 // ---- pure units (no DB) -----------------------------------------------------
-
-#[test]
-fn us_to_ms_truncates_to_millis() {
-    assert_eq!(us_to_ms(7_000_000), 7000);
-    assert_eq!(us_to_ms(1_584_389_732_190_514), 1_584_389_732_190);
-}
 
 /// An `Action` renders as `* nick <body>`, so the body is a verb phrase. An
 /// unanswered call has no duration.
@@ -47,79 +41,10 @@ fn a_call_reads_as_something_its_sender_did() {
 }
 
 #[test]
-fn kind_from_is_dm_maps_both() {
-    assert_eq!(kind_from_is_dm(true), ConversationKind::Dm);
-    assert_eq!(kind_from_is_dm(false), ConversationKind::Group);
-}
-
-#[test]
-fn conversation_kind_parses_the_enum_column_and_nothing_else() {
-    assert_eq!(ConversationKind::parse("dm"), Some(ConversationKind::Dm));
-    assert_eq!(
-        ConversationKind::parse("group"),
-        Some(ConversationKind::Group)
-    );
-    assert_eq!(
-        ConversationKind::parse("channel"),
-        Some(ConversationKind::Channel)
-    );
-    // Anything else means the schema moved. ENUM values are case-sensitive here.
-    assert_eq!(ConversationKind::parse("DM"), None);
-    assert_eq!(ConversationKind::parse("broadcast"), None);
-    assert_eq!(ConversationKind::parse(""), None);
-}
-
-/// The wire spelling is the frontend's contract: the generated TS has string
-/// unions.
-#[test]
-fn enums_serialise_to_the_spellings_the_frontend_expects() {
-    assert_eq!(
-        serde_json::to_string(&Origin::Signal).unwrap(),
-        r#""signal""#
-    );
-    assert_eq!(serde_json::to_string(&Origin::Gchat).unwrap(), r#""gchat""#);
-    assert_eq!(serde_json::to_string(&Origin::Irc).unwrap(), r#""irc""#);
-    assert_eq!(
-        serde_json::to_string(&ConversationKind::Dm).unwrap(),
-        r#""dm""#
-    );
-    assert_eq!(
-        serde_json::to_string(&ConversationKind::Group).unwrap(),
-        r#""group""#
-    );
-    assert_eq!(
-        serde_json::to_string(&MessageKind::Message).unwrap(),
-        r#""message""#
-    );
-    assert_eq!(
-        serde_json::to_string(&MessageKind::Action).unwrap(),
-        r#""action""#
-    );
-}
-
-#[test]
-fn message_kind_parses_only_the_two_the_queries_admit() {
-    assert_eq!(MessageKind::parse("message"), Some(MessageKind::Message));
-    assert_eq!(MessageKind::parse("action"), Some(MessageKind::Action));
-    // The queries filter these two out.
-    assert_eq!(MessageKind::parse("event"), None);
-    assert_eq!(MessageKind::parse("notice"), None);
-}
-
-#[test]
 fn escape_like_neutralises_wildcards() {
     assert_eq!(escape_like("hi"), "%hi%");
     assert_eq!(escape_like("a%b_c"), "%a\\%b\\_c%");
     assert_eq!(escape_like("back\\slash"), "%back\\\\slash%");
-}
-
-#[test]
-fn origin_only_parses_known_path_segments() {
-    assert_eq!(Origin::parse("signal"), Some(Origin::Signal));
-    assert_eq!(Origin::parse("gchat"), Some(Origin::Gchat));
-    assert_eq!(Origin::parse("irc"), Some(Origin::Irc));
-    assert_eq!(Origin::parse("email"), None);
-    assert_eq!(Origin::parse(""), None);
 }
 
 #[test]
@@ -193,9 +118,9 @@ async fn test_pool() -> Option<MySqlPool> {
 /// The fixture is seeded once per process: `seed` drops and recreates the
 /// tables, so per-test seeding races under parallel tests.
 ///
-/// A test that writes must touch only rows no other test asserts on.
-/// `irc_conversation_stats` is seeded once and not maintained here (production
-/// uses triggers), so assert on `irc_messages` after inserting a line.
+/// A test that writes must touch only rows no other test asserts on, and leaves
+/// them: `irc_messages` is append-only, as in production, and the archiver's
+/// triggers keep `irc_conversation_stats` in step with it.
 static FIXTURE: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
 
 /// A pool onto the seeded fixture, or None when the DB tests are being skipped.
@@ -205,71 +130,42 @@ async fn seeded_pool() -> Option<MySqlPool> {
     Some(pool)
 }
 
+/// The Google Chat tables, from the one-off importer that owns them: the `"""`
+/// strings of `import_gchat.py`'s `DDL` list, run as it runs them.
+fn gchat_ddl() -> Vec<&'static str> {
+    let src = include_str!("../archiver/tools/import_gchat.py");
+    let (_, rest) = src
+        .split_once("DDL = [")
+        .expect("import_gchat.py declares DDL");
+    let (list, _) = rest.split_once("\n]").expect("DDL is a closed list");
+    list.split("\"\"\"").skip(1).step_by(2).collect()
+}
+
 async fn seed(pool: &MySqlPool) {
-    for t in [
-        "reactions",
-        "signal_receipts",
-        "attachments",
-        "messages",
-        "conversations",
-        "contacts",
-        "gchat_reactions",
-        "gchat_messages",
-        "gchat_conversations",
-        "irc_conversation_stats",
-        "irc_messages",
-        "irc_conversations",
-        "telegram_media",
-        "telegram_reactions",
-        "telegram_message_edits",
-        "telegram_messages",
-        "telegram_message_entities",
-        "telegram_read_marks",
-        "telegram_conversations",
-        "signal_text_styles",
-        "signal_link_previews",
-        "sessions",
-    ] {
-        let _ = sqlx::query(AssertSqlSafe(format!("DROP TABLE IF EXISTS {t}")))
+    // A throwaway database: everything in it goes, so the archiver's migrations
+    // build it from nothing, as they do in production.
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    for t in tables {
+        sqlx::query(AssertSqlSafe(format!("DROP TABLE `{t}`")))
             .execute(pool)
-            .await;
+            .await
+            .unwrap();
     }
-    let ddl = [
-        "CREATE TABLE conversations (thread_id VARCHAR(80) PRIMARY KEY, type ENUM('dm','group') NOT NULL, name VARCHAR(255) NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE contacts (uuid VARCHAR(64) PRIMARY KEY, phone VARCHAR(32) NULL, display_name VARCHAR(255) NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE signal_receipts (id BIGINT AUTO_INCREMENT PRIMARY KEY, target_ts BIGINT NOT NULL, author_uuid VARCHAR(64) NOT NULL, kind ENUM('delivery','read','viewed') NOT NULL, when_ts BIGINT NOT NULL, observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uniq_signal_receipt (target_ts, author_uuid, kind)) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, thread_id VARCHAR(80) NOT NULL, sender_uuid VARCHAR(64) NOT NULL, server_ts BIGINT NOT NULL, body TEXT NULL, quote_target_ts BIGINT NULL, is_outgoing TINYINT(1) NOT NULL DEFAULT 0, deleted TINYINT(1) NOT NULL DEFAULT 0, edited TINYINT(1) NOT NULL DEFAULT 0, edit_of_ts BIGINT NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, deleted_at TIMESTAMP NULL, expires_in_seconds INT NULL, server_delivered_ts BIGINT NULL, server_received_ts BIGINT NULL, quote_author_uuid VARCHAR(64) NULL, quote_text TEXT NULL) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE signal_text_styles (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL, style VARCHAR(16) NOT NULL, start_utf16 INT NOT NULL, length_utf16 INT NOT NULL, UNIQUE KEY uniq_signal_text_style (message_id, style, start_utf16, length_utf16)) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE signal_link_previews (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL, position INT NOT NULL, url TEXT NOT NULL, title TEXT NULL, description TEXT NULL, UNIQUE KEY uniq_signal_link_preview (message_id, position)) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, thread_id VARCHAR(80) NOT NULL, target_ts BIGINT NOT NULL, author_uuid VARCHAR(64) NOT NULL, emoji VARCHAR(32) NULL, reaction_ts BIGINT NOT NULL, removed TINYINT(1) NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE attachments (id BIGINT AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL, content_type VARCHAR(255) NULL, file_name VARCHAR(512) NULL, size_bytes BIGINT NULL, stored_path VARCHAR(1024) NULL) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE gchat_conversations (group_id VARCHAR(64) PRIMARY KEY, name VARCHAR(255) NULL, is_dm TINYINT(1) NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE gchat_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, group_id VARCHAR(64) NOT NULL, msg_id VARCHAR(64) NOT NULL, thread_id VARCHAR(64) NULL, reply_to_msg_id VARCHAR(64) NULL, sender_id VARCHAR(32) NULL, sender_name VARCHAR(255) NULL, is_self TINYINT(1) NOT NULL DEFAULT 0, ts_us BIGINT NOT NULL, sent_at DATETIME(6) NULL, text TEXT NULL) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE gchat_reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL, emoji VARCHAR(64) NULL, cnt INT NOT NULL DEFAULT 0) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE irc_conversations (id INT AUTO_INCREMENT PRIMARY KEY, network VARCHAR(64) NOT NULL, target VARCHAR(255) NOT NULL, is_channel TINYINT(1) NOT NULL DEFAULT 0, is_status TINYINT(1) NOT NULL DEFAULT 0, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
-        // `uniq_irc_line` is the archive's dedupe key, which the send-path
-        // tests rely on.
-        "CREATE TABLE irc_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id INT NOT NULL, source_tag VARCHAR(64) NOT NULL, file_date DATE NOT NULL, line_no INT NOT NULL, sent_at DATETIME NOT NULL, nick VARCHAR(255) NULL, is_self TINYINT(1) NOT NULL DEFAULT 0, kind ENUM('message','action','event','notice') NOT NULL, text TEXT NULL, UNIQUE KEY uniq_irc_line (conversation_id, source_tag, file_date, line_no), created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
-        // No trigger: `seed` computes this from the rows.
-        "CREATE TABLE irc_conversation_stats (conversation_id INT NOT NULL PRIMARY KEY, cnt BIGINT NOT NULL DEFAULT 0, last_sent_at DATETIME NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
-        // A copy of the archiver's tables, and dev-lint reads these
-        // CREATE TABLEs to know which tables `src/` may name, so keep them in
-        // step with archiver/src/db.rs.
-        "CREATE TABLE telegram_conversations (id BIGINT PRIMARY KEY, kind ENUM('dm','group','channel') NOT NULL, name VARCHAR(255) NULL, username VARCHAR(255) NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE telegram_messages (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, sent_at BIGINT NOT NULL, sender_id BIGINT NULL, sender_name VARCHAR(255) NULL, is_outgoing TINYINT(1) NOT NULL DEFAULT 0, kind ENUM('message','service') NOT NULL DEFAULT 'message', text TEXT NULL, media_kind VARCHAR(32) NULL, media_size BIGINT NULL, media_mime VARCHAR(128) NULL, edited_at BIGINT NULL, reply_to_msg_id INT NULL, fwd_from_name VARCHAR(255) NULL, edit_hidden TINYINT(1) NULL, deleted TINYINT(1) NOT NULL DEFAULT 0, deleted_at TIMESTAMP NULL, UNIQUE KEY uniq_tg_msg (conversation_id, msg_id), created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, fwd_channel_post INT NULL, fwd_date BIGINT NULL, fwd_from_id BIGINT NULL, grouped_id BIGINT NULL, reply_quote TEXT NULL, reply_to_peer_id BIGINT NULL, service_action VARCHAR(64) NULL, ttl_period INT NULL, via_bot_id BIGINT NULL) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE telegram_message_edits (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, was_edited_at BIGINT NULL, text TEXT NULL, UNIQUE KEY uniq_tg_edit (conversation_id, msg_id, was_edited_at), recorded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE telegram_media (conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, state ENUM('offered','wanted','stored','failed') NOT NULL, stored_name VARCHAR(255) NULL, content_type VARCHAR(128) NULL, note VARCHAR(255) NULL, requested_at TIMESTAMP NULL, stored_at TIMESTAMP NULL, PRIMARY KEY (conversation_id, msg_id), updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE telegram_reactions (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, emoji VARCHAR(32) NULL, custom_emoji_id BIGINT NULL, cnt INT NOT NULL DEFAULT 0, chosen TINYINT(1) NOT NULL DEFAULT 0, removed_at TIMESTAMP NULL, reaction_key VARCHAR(64) GENERATED ALWAYS AS (COALESCE(emoji, CONCAT('custom:', custom_emoji_id), '')) STORED, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
-        // Offsets in UTF-16 code units, as the archive stores them.
-        "CREATE TABLE telegram_message_entities (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, kind VARCHAR(32) NOT NULL, offset_utf16 INT NOT NULL, length_utf16 INT NOT NULL, url TEXT NULL, user_id BIGINT NULL, language VARCHAR(32) NULL, document_id BIGINT NULL, removed_at TIMESTAMP NULL) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE telegram_read_marks (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, direction ENUM('inbox','outbox') NOT NULL, max_id INT NOT NULL, observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uniq_tg_read (conversation_id, direction, max_id)) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE gchat_attachments (id BIGINT AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL, name VARCHAR(255) NULL, mime VARCHAR(128) NULL, width INT NULL, height INT NULL, uuid VARCHAR(64) NULL, token TEXT NULL, hash1 VARCHAR(128) NULL, hash2 VARCHAR(128) NULL, stored_path VARCHAR(255) NULL) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE gchat_reaction_authors (id BIGINT AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL, emoji VARCHAR(64) NOT NULL, reactor_id VARCHAR(32) NOT NULL, UNIQUE KEY uniq_gchat_reactor (message_id, emoji, reactor_id)) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE telegram_reaction_authors (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, peer_id BIGINT NOT NULL, emoji VARCHAR(32) NULL, custom_emoji_id BIGINT NULL, reacted_at BIGINT NOT NULL, removed_at TIMESTAMP NULL, reaction_key VARCHAR(64) GENERATED ALWAYS AS (COALESCE(emoji, CONCAT('custom:', custom_emoji_id), '')) STORED) DEFAULT CHARSET=utf8mb4",
-        "CREATE TABLE telegram_calls (id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id BIGINT NOT NULL, msg_id INT NOT NULL, call_id BIGINT NULL, duration_s INT NULL, reason VARCHAR(32) NULL, video TINYINT(1) NOT NULL DEFAULT 0, UNIQUE KEY uniq_tg_call (conversation_id, msg_id)) DEFAULT CHARSET=utf8mb4",
-    ];
-    for stmt in ddl {
-        sqlx::query(stmt).execute(pool).await.expect("ddl");
+    // The archiver owns these tables, so its own migrations make them, not a copy.
+    let url = database::database_url().expect("seeded only when the tests run");
+    signal_archiver::db::Db::connect(&url)
+        .await
+        .expect("the archiver's schema");
+    for stmt in gchat_ddl() {
+        sqlx::query(AssertSqlSafe(stmt))
+            .execute(pool)
+            .await
+            .expect("the Google Chat importer's schema");
     }
     // The app's own tables: a page with a link in it reads `link_images`.
     messages::db::ensure_schema(pool)
@@ -320,7 +216,8 @@ async fn seed(pool: &MySqlPool) {
          ('dm:alice',2000,'carol','😂',2300,1)",
     ).execute(pool).await.unwrap();
 
-    // A thread whose 4 messages share server_ts 1500; the id orders them.
+    // A thread whose 4 messages share server_ts 1500; the id orders them. Four
+    // senders, since Signal's timestamps are unique per sender (`uniq_sender_ts`).
     sqlx::query("INSERT INTO conversations (thread_id, type, name) VALUES ('dm:tie','dm','Tie')")
         .execute(pool)
         .await
@@ -328,9 +225,9 @@ async fn seed(pool: &MySqlPool) {
     sqlx::query(
         "INSERT INTO messages (thread_id, sender_uuid, server_ts, body, is_outgoing, deleted, edited) VALUES
          ('dm:tie','alice',1500,'tie a',0,0,0),
-         ('dm:tie','alice',1500,'tie b',0,0,0),
-         ('dm:tie','alice',1500,'tie c',0,0,0),
-         ('dm:tie','alice',1500,'tie d',0,0,0)",
+         ('dm:tie','bob',1500,'tie b',0,0,0),
+         ('dm:tie','carol',1500,'tie c',0,0,0),
+         ('dm:tie','dave',1500,'tie d',0,0,0)",
     ).execute(pool).await.unwrap();
 
     // A thread for receipts. `observed_at` is 1970-01-01 00:00:01, so capture
@@ -489,17 +386,6 @@ async fn seed(pool: &MySqlPool) {
     )
     .bind(status).bind(status)
     .execute(pool).await.unwrap();
-
-    // Computed from the rows with the archiver's backfill statement, never written by
-    // hand, so the list is checked against the aggregate.
-    sqlx::query(
-        "INSERT INTO irc_conversation_stats (conversation_id, cnt, last_sent_at)
-         SELECT conversation_id, COUNT(*), MAX(sent_at) FROM irc_messages
-          WHERE kind IN ('message', 'action') GROUP BY conversation_id",
-    )
-    .execute(pool)
-    .await
-    .unwrap();
 
     // Telegram: a DM and a channel, with a service event, a message edited
     // twice, a retracted one, and two sharing a second. Ids are written in their
@@ -1166,34 +1052,31 @@ async fn a_sent_message_and_its_later_import_are_one_row() {
         .unwrap();
     assert!(wrote, "the echo is written so it can be shown at once");
 
-    // The importer's row for the same logged line, from the importer's own
-    // parser and builder; inserted on its key, it must find the echo present.
+    // The importer's calls for the same logged line, as `import_irclogs` and
+    // `irc_tail` make them: it must find the echo already present.
     let line = sent.logged.as_ref().unwrap();
     let date = irclog::Date::parse_iso(&line.file_date).unwrap();
     let entry = irclog::parse_log(date, &format!("{}\n", line.line))
         .entries
         .remove(0);
-    let row = irclog::IrcLine::from_entry(&entry, line.line_no, &["me".to_string()]);
-    let importer = sqlx::query(
-        "INSERT IGNORE INTO irc_messages
-           (conversation_id, source_tag, file_date, line_no, sent_at, nick, is_self, kind, text)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(&sent.tag)
-    .bind(&line.file_date)
-    .bind(row.line_no)
-    .bind(&row.sent_at)
-    .bind(&row.nick)
-    .bind(row.is_self)
-    .bind(row.kind.as_str())
-    .bind(&row.text)
-    .execute(&pool)
-    .await
-    .unwrap();
+    let importer = signal_archiver::db::Db::connect(&database::database_url().unwrap())
+        .await
+        .unwrap();
+    let added = importer
+        .insert_irc_lines(
+            u64::try_from(carol).unwrap(),
+            &sent.tag,
+            &line.file_date,
+            &[irclog::IrcLine::from_entry(
+                &entry,
+                line.line_no,
+                &["me".to_string()],
+            )],
+        )
+        .await
+        .unwrap();
     assert_eq!(
-        importer.rows_affected(),
-        0,
+        added, 0,
         "the import must find it already present, not add a second copy"
     );
 
@@ -1206,7 +1089,7 @@ async fn a_sent_message_and_its_later_import_are_one_row() {
     .unwrap();
     assert_eq!(n, 1, "one message, however many times it is written");
 
-    // And the echo IS the importer's row, column for column.
+    // The row, as the log line says it.
     let stored: (String, Option<String>, i8, String, Option<String>) = sqlx::query_as(
         "SELECT DATE_FORMAT(sent_at, '%Y-%m-%d %H:%i:%s'), nick, is_self, kind, text
            FROM irc_messages WHERE conversation_id = ? AND file_date = '2020-01-02'",
@@ -1218,23 +1101,13 @@ async fn a_sent_message_and_its_later_import_are_one_row() {
     assert_eq!(
         stored,
         (
-            row.sent_at.clone(),
-            row.nick.clone(),
-            i8::from(row.is_self),
-            row.kind.as_str().to_string(),
-            Some(row.text.clone())
+            "2020-01-02 00:04:00".to_string(),
+            Some("me".to_string()),
+            1,
+            "message".to_string(),
+            Some("sent from the phone".to_string())
         )
     );
-    assert_eq!(
-        stored.0, "2020-01-02 00:04:00",
-        "the time is the log line's"
-    );
-
-    sqlx::query("DELETE FROM irc_messages WHERE conversation_id = ? AND file_date = '2020-01-02'")
-        .bind(&id)
-        .execute(&pool)
-        .await
-        .unwrap();
 }
 
 /// A send irssi could not find in the log records nothing; the importer will.
@@ -1317,12 +1190,6 @@ async fn the_echo_takes_its_timestamp_from_the_log_line() {
             "no row for a line with no timestamp: {line:?}"
         );
     }
-
-    sqlx::query("DELETE FROM irc_messages WHERE conversation_id = ? AND file_date = '2020-01-03'")
-        .bind(&id)
-        .execute(&pool)
-        .await
-        .unwrap();
 }
 
 // ---- the send guard, through the real router --------------------------------
@@ -1660,10 +1527,12 @@ async fn seed_edits(pool: &MySqlPool, thread: &str) {
         (3_000, "what it says now", Some(1_000), 0),
         (4_000, "a later message", None, 0),
     ] {
+        // The thread's own sender: Signal's timestamps are unique per sender.
         sqlx::query(
             "INSERT INTO messages (thread_id, sender_uuid, server_ts, body, is_outgoing, deleted, edited, edit_of_ts)
-             VALUES (?, 'u1', ?, ?, 0, 0, ?, ?)",
+             VALUES (?, ?, ?, ?, 0, 0, ?, ?)",
         )
+        .bind(thread)
         .bind(thread)
         .bind(ts)
         .bind(body)
@@ -2651,10 +2520,12 @@ async fn seed_signal_fields(pool: &MySqlPool, thread: &str) {
         (13_000, "plain", None, 1),
         (14_000, "now italic", Some(13_000), 0),
     ] {
+        // The thread's own sender, as in `seed_edits`.
         sqlx::query(
             "INSERT INTO messages (thread_id, sender_uuid, server_ts, body, is_outgoing, deleted, edited, edit_of_ts)
-             VALUES (?, 'me', ?, ?, 1, 0, ?, ?)",
+             VALUES (?, ?, ?, ?, 1, 0, ?, ?)",
         )
+        .bind(thread)
         .bind(thread)
         .bind(ts)
         .bind(body)

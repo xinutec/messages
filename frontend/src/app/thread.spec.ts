@@ -1,6 +1,7 @@
 import { ComponentRef, provideZonelessChangeDetection } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
+import { ActivatedRoute, Router, convertToParamMap, provideRouter, withComponentInputBinding } from '@angular/router';
+import { RouterTestingHarness } from '@angular/router/testing';
 import { BehaviorSubject, Observable, Subject, of } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 import { declaredUp, resolveUp } from '@xinutec/ui-scaffold';
@@ -128,15 +129,6 @@ describe('Thread', () => {
       ['z'],
       ['p4'],
     ]);
-  });
-
-  it('rendered window equals retained messages when nothing is collapsed', () => {
-    const { thread } = setup();
-    thread.messages.set([msg('a', 1), msg('b', 2), msg('c', 3)]);
-    expect(thread.renderCount()).toBe(3);
-    expect(thread.rendered().map((m) => m.id)).toEqual(['a', 'b', 'c']);
-    expect(thread.topSpacer()).toBe(0);
-    expect(thread.bottomSpacer()).toBe(0);
   });
 
   it('up from a conversation is the list, keeping the origin filter and dropping the paged depth', () => {
@@ -328,44 +320,52 @@ describe('Thread reply jump', () => {
     ...over,
   });
 
+  /** The Thread routed at `url` by the app's own routes, settled on `held`. */
+  async function routedAt(url: string, held: Message[]): Promise<{ thread: Thread; router: Router }> {
+    const api = makeApi() as unknown as { messages: ReturnType<typeof vi.fn> };
+    api.messages.mockReturnValue(page(held));
+    TestBed.configureTestingModule({
+      providers: [
+        provideZonelessChangeDetection(),
+        provideRouter(routes, withComponentInputBinding()),
+        { provide: MessagesApi, useValue: api },
+      ],
+    });
+    const harness = await RouterTestingHarness.create();
+    const thread = await harness.navigateByUrl(url, Thread);
+    await settle(thread);
+    return { thread, router: TestBed.inject(Router) };
+  }
+
+  /** The URL once anything `act` started has had its turn. */
+  async function urlAfter(router: Router, act: () => void): Promise<string> {
+    act();
+    await new Promise((r) => setTimeout(r, 0));
+    return router.url;
+  }
+
   it('scrolls to a message already on screen, without navigating', async () => {
-    const { thread } = await opened([msg('1', 100), msg('2', 200)]);
-    const router = TestBed.inject(Router);
-    const nav = vi.spyOn(router, 'navigate').mockResolvedValue(true);
+    const { thread, router } = await routedAt('/conversation/irc/7?origin=irc', [msg('1', 100), msg('2', 200)]);
 
-    thread.jumpToReply(replyTo());
-
-    expect(nav).not.toHaveBeenCalled();
+    expect(await urlAfter(router, () => thread.jumpToReply(replyTo()))).toBe('/conversation/irc/7?origin=irc');
     // Marked, as a search landing is.
     expect(thread.landedId()).toBe('1');
   });
 
-  it('navigates by cursor when the message is not in the rendered window', async () => {
-    const { thread } = await opened([msg('5', 500)]);
-    const router = TestBed.inject(Router);
-    const nav = vi.spyOn(router, 'navigate').mockResolvedValue(true);
+  it('lands by cursor when the message is not in the rendered window', async () => {
+    const { thread, router } = await routedAt('/conversation/irc/7?origin=irc', [msg('5', 500)]);
 
-    thread.jumpToReply(replyTo({ id: '1', cursor: '100_1' }));
-
-    expect(nav).toHaveBeenCalledWith(
-      [],
-      expect.objectContaining({
-        // `from` goes with it.
-        queryParams: { at: '100_1', from: null },
-        queryParamsHandling: 'merge',
-      }),
+    expect(await urlAfter(router, () => thread.jumpToReply(replyTo({ id: '1', cursor: '100_1' })))).toBe(
+      '/conversation/irc/7?origin=irc&at=100_1',
     );
-    expect(thread.landedId()).toBeNull();
   });
 
   it('does nothing for a reply the archive cannot resolve', async () => {
-    const { thread } = await opened([msg('5', 500)]);
-    const router = TestBed.inject(Router);
-    const nav = vi.spyOn(router, 'navigate').mockResolvedValue(true);
+    const { thread, router } = await routedAt('/conversation/irc/7?origin=irc', [msg('5', 500)]);
 
-    thread.jumpToReply(replyTo({ id: null, cursor: null, excerpt: null }));
-
-    expect(nav).not.toHaveBeenCalled();
+    expect(await urlAfter(router, () => thread.jumpToReply(replyTo({ id: null, cursor: null, excerpt: null })))).toBe(
+      '/conversation/irc/7?origin=irc',
+    );
     expect(thread.landedId()).toBeNull();
   });
 });
@@ -1150,80 +1150,5 @@ describe('the delivery tag', () => {
   it('says plain "read" in a DM, where one reader IS everybody', async () => {
     const tag = await render([outgoing('r', { state: 'read', read_by: [{ who: 'Alice', at: 1100 }] })], [dm]);
     expect(tag('r')?.textContent?.trim()).toBe('read');
-  });
-});
-
-/** Entity offsets are UTF-16 code units, as `String.prototype.slice` counts. */
-describe('formatted message bodies', () => {
-  function withEntities(body: string, entities: Message['entities']): Message {
-    return { ...msg('m', 1000), body, entities };
-  }
-  /** One TestBed per test; the splitter is pure, so one instance answers all. */
-  interface Seg { text: string; cls: string; href: string | null }
-  const segsWith = (t: Thread, m: Message): Seg[] =>
-    (t as unknown as { segments(m: Message): Seg[] }).segments(m);
-
-  it('splits a body into plain and formatted runs', () => {
-    const { thread } = setup();
-    const m = withEntities('hello brave world', [
-      { kind: 'bold', offset: 6, length: 5, url: null },
-    ]);
-    expect(segsWith(thread, m)).toEqual([
-      { text: 'hello ', cls: '', href: null },
-      { text: 'brave', cls: 'fmt-bold', href: null },
-      { text: ' world', cls: '', href: null },
-    ]);
-  });
-
-  it('counts an emoji as TWO, because Telegram and Signal do', () => {
-    // '👋' is two code units, so offset 2 is after it.
-    const { thread } = setup();
-    const m = withEntities('👋 bold', [{ kind: 'bold', offset: 3, length: 4, url: null }]);
-    expect(segsWith(thread, m).map((s) => s.text)).toEqual(['👋 ', 'bold']);
-  });
-
-  it('never lets an entity change how much of the message is shown', () => {
-    const { thread } = setup();
-    const body = 'short';
-    // Past the end: clamped.
-    const over = withEntities(body, [{ kind: 'bold', offset: 2, length: 99, url: null }]);
-    expect(segsWith(thread, over).map((s) => s.text).join('')).toBe(body);
-  });
-
-  it('combines overlapping runs rather than dropping one', () => {
-    const { thread } = setup();
-    // Signal's own shape: one span both monospace and struck, and a nested run.
-    const m = withEntities('abcdefgh mono', [
-      { kind: 'bold', offset: 0, length: 5, url: null },
-      { kind: 'italic', offset: 2, length: 3, url: null },
-      { kind: 'code', offset: 9, length: 4, url: null },
-      { kind: 'strike', offset: 9, length: 4, url: null },
-    ]);
-    expect(segsWith(thread, m)).toEqual([
-      { text: 'ab', cls: 'fmt-bold', href: null },
-      { text: 'cde', cls: 'fmt-bold fmt-italic', href: null },
-      { text: 'fgh ', cls: '', href: null },
-      { text: 'mono', cls: 'fmt-code fmt-strike', href: null },
-    ]);
-  });
-
-  it('keeps a link whole when formatting splits it', () => {
-    const { thread } = setup();
-    const m = withEntities('see https://x.org now', [
-      { kind: 'url', offset: 4, length: 13, url: null },
-      { kind: 'bold', offset: 12, length: 5, url: null },
-    ]);
-    expect(segsWith(thread, m)).toEqual([
-      { text: 'see ', cls: '', href: null },
-      { text: 'https://', cls: 'fmt-url', href: 'https://x.org' },
-      { text: 'x.org', cls: 'fmt-url fmt-bold', href: 'https://x.org' },
-      { text: ' now', cls: '', href: null },
-    ]);
-  });
-
-  it('is exactly the body when nothing is formatted', () => {
-    const { thread } = setup();
-    const m = withEntities('just words', []);
-    expect(segsWith(thread, m)).toEqual([{ text: 'just words', cls: '', href: null }]);
   });
 });

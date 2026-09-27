@@ -14,6 +14,7 @@ import { ScaffoldActions, scaffoldTitle } from '@xinutec/ui-scaffold';
 import { Subject, catchError, firstValueFrom, of, switchMap } from 'rxjs';
 
 import { attachmentName, attachmentNoun } from './attachment';
+import { segments } from './formatting';
 import { LogScope, chatLogHtml, formatChatLog } from './copy-log';
 import { MAX_RESTORE_PAGES, PAGE, ThreadWindow } from './thread-window';
 import { MessagesApi } from './messages-api';
@@ -371,37 +372,7 @@ export class Thread {
     return d.state === 'sent' || d.state === 'delivered';
   }
 
-  /** Cut a body into runs at every entity boundary; each run carries the classes
-   *  of every entity covering it, and the address of a covering link. Offsets are
-   *  UTF-16 code units, which is what JavaScript indexes by. Runs past the end
-   *  are clamped, and the text always comes from `body`, never the entity. */
-  protected segments(m: Message): { text: string; cls: string; href: string | null }[] {
-    const body = m.body ?? '';
-    // `?.`: a message without the field must not blank the whole thread.
-    if (!m.entities?.length) return [{ text: body, cls: '', href: null }];
-    const spans = m.entities
-      .map((e) => {
-        const start = Number(e.offset);
-        const stop = Math.min(start + Number(e.length), body.length);
-        return { e, start, stop };
-      })
-      .filter(({ start, stop }) => Number.isFinite(start) && start >= 0 && stop > start);
-    const cuts = [...new Set([0, body.length, ...spans.flatMap((s) => [s.start, s.stop])])].sort(
-      (a, b) => a - b,
-    );
-    const out: { text: string; cls: string; href: string | null }[] = [];
-    for (let i = 0; i + 1 < cuts.length; i++) {
-      const [a, b] = [cuts[i], cuts[i + 1]];
-      const covering = spans.filter((s) => s.start <= a && s.stop >= b);
-      const link = covering.find((s) => this.hrefOf(s.e, body) != null);
-      out.push({
-        text: body.slice(a, b),
-        cls: covering.map((s) => `fmt-${s.e.kind}`).join(' '),
-        href: link ? this.hrefOf(link.e, body) : null,
-      });
-    }
-    return out;
-  }
+  protected readonly segments = segments;
 
   /** A preview's host, or its whole url if that does not parse. */
   protected hostOf(url: string): string {
@@ -410,16 +381,6 @@ export class Thread {
     } catch {
       return url;
     }
-  }
-
-  /** Where a link entity points, or null. Reaches the DOM only through the
-   *  sanitising `[href]`. */
-  private hrefOf(e: Message['entities'][number], body: string): string | null {
-    const text = body.slice(Number(e.offset), Number(e.offset) + Number(e.length));
-    if (e.kind === 'textUrl') return e.url;
-    if (e.kind === 'url') return text;
-    if (e.kind === 'email') return `mailto:${text}`;
-    return null;
   }
 
   /** Jump to a date: local midnight, not `Date.parse`, which reads a bare date as

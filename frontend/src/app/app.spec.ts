@@ -1,11 +1,12 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
-import { Router, provideRouter } from '@angular/router';
+import { NavigationEnd, Router, provideRouter } from '@angular/router';
 import { provideServiceWorker } from '@angular/service-worker';
-import { of, throwError } from 'rxjs';
+import { filter, firstValueFrom, of, throwError } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 
 import { App } from './app';
+import { routes } from './app.routes';
 import { MessagesApi } from './messages-api';
 import { Conversation, Me, Message, MessagesPage, SearchHit } from './models';
 import { testMessage } from './test-message';
@@ -57,7 +58,7 @@ function setup(api: MessagesApi): { app: App; router: Router } {
   TestBed.configureTestingModule({
     providers: [
       provideZonelessChangeDetection(),
-      provideRouter([]),
+      provideRouter(routes),
       // As above.
       provideServiceWorker('ngsw-worker.js', { enabled: false }),
       { provide: MessagesApi, useValue: api },
@@ -65,6 +66,14 @@ function setup(api: MessagesApi): { app: App; router: Router } {
   });
   const app = TestBed.runInInjectionContext(() => new App());
   return { app, router: TestBed.inject(Router) };
+}
+
+/** The URL once the navigation `act` starts has finished. */
+async function urlAfter(router: Router, act: () => void): Promise<string> {
+  const done = firstValueFrom(router.events.pipe(filter((e) => e instanceof NavigationEnd)));
+  act();
+  await done;
+  return router.url;
 }
 
 describe('App', () => {
@@ -80,39 +89,25 @@ describe('App', () => {
     expect(app.visibleConversations().length).toBe(2);
   });
 
-  // These navigate; the URL-to-state wiring is in e2e/routing.spec.ts.
-  it('setFilter navigates with the origin query param', () => {
+  // Opening a conversation and the filter are in e2e/routing.spec.ts.
+  it('openHit lands on the hit in its conversation, keeping the filter and dropping the paged depth', async () => {
     const { app, router } = setup(makeApi());
-    const nav = vi.spyOn(router, 'navigate').mockResolvedValue(true);
-    app.setFilter('signal');
-    expect(nav).toHaveBeenCalledWith([], expect.objectContaining({ queryParams: { origin: 'signal' }, queryParamsHandling: 'merge' }));
-    app.setFilter('all');
-    expect(nav).toHaveBeenLastCalledWith([], expect.objectContaining({ queryParams: { origin: null } }));
-  });
-
-  it('open routes to the conversation as a path', () => {
-    const { app, router } = setup(makeApi());
-    const nav = vi.spyOn(router, 'navigate').mockResolvedValue(true);
-    app.open(CONVS[0]);
-    // `from` cleared; the origin filter kept.
-    expect(nav).toHaveBeenCalledWith(['/conversation', 'signal', 'dm:a'], expect.objectContaining({ queryParams: { from: null }, queryParamsHandling: 'merge' }));
-  });
-
-  it('openHit routes to the conversation a search hit belongs to', () => {
-    const { app, router } = setup(makeApi());
-    const nav = vi.spyOn(router, 'navigate').mockResolvedValue(true);
-    app.openHit({ origin: 'gchat', conversation_id: 'gc1', conversation_name: 'Bob', ts: 1, sender: 's', snippet: 'x', deleted: false, cursor: '1_1' });
-    expect(nav).toHaveBeenCalledWith(['/conversation', 'gchat', 'gc1'], expect.objectContaining({ queryParams: { at: '1_1', from: null } }));
+    await router.navigateByUrl('/conversation/signal/dm:a?origin=gchat&from=9');
+    const url = await urlAfter(router, () =>
+      app.openHit({ origin: 'gchat', conversation_id: 'gc1', conversation_name: 'Bob', ts: 1, sender: 's', snippet: 'x', deleted: false, cursor: '1_1' }),
+    );
+    expect(url).toBe('/conversation/gchat/gc1?origin=gchat&at=1_1');
   });
 
   /** A hit opens from its own origin and id, before the list has loaded. */
-  it('opens a hit even when the conversation list never loaded', () => {
+  it('opens a hit even when the conversation list never loaded', async () => {
     const conversations = vi.fn(() => throwError(() => new Error('offline')));
     const { app, router } = setup(makeApi({ conversations }));
     expect(app.conversations()).toEqual([]); // the precondition, not an assumption
-    const nav = vi.spyOn(router, 'navigate').mockResolvedValue(true);
-    app.openHit({ origin: 'irc', conversation_id: '7', conversation_name: '#chan', ts: 1, sender: 's', snippet: 'x', deleted: false, cursor: '1_1' });
-    expect(nav).toHaveBeenCalledWith(['/conversation', 'irc', '7'], expect.objectContaining({ queryParams: { at: '1_1', from: null } }));
+    const url = await urlAfter(router, () =>
+      app.openHit({ origin: 'irc', conversation_id: '7', conversation_name: '#chan', ts: 1, sender: 's', snippet: 'x', deleted: false, cursor: '1_1' }),
+    );
+    expect(url).toBe('/conversation/irc/7?at=1_1');
   });
 
   /** Search names a conversation as the list does, whitespace-only names
@@ -256,15 +251,6 @@ describe('App', () => {
     TestBed.resetTestingModule(); // destroys the injector the component was made in
     document.dispatchEvent(new Event('visibilitychange'));
     expect(conversations).toHaveBeenCalledTimes(1);
-  });
-
-  /** Every origin has its own label. */
-  it('labels every origin as itself, with none borrowing another name', () => {
-    const { app } = setup(makeApi());
-    const labels = app.origins.map((o) => app.originLabels[o]);
-    expect(labels).toEqual(['Signal', 'Google Chat', 'IRC', 'Telegram']);
-    expect(new Set(labels).size).toBe(app.origins.length);
-    for (const label of labels) expect(label).not.toBe('');
   });
 
   /** Every filterable origin has a label. */

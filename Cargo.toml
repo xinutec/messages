@@ -53,6 +53,11 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+[dev-dependencies]
+# The archiver's own migrations build the test database, and its own insert
+# stands for the importer (tests/archive.rs).
+signal-archiver = { path = "archiver" }
+
 # The fleet's `[lints]` baseline (dev-lint docs/standards.md §7), for both
 # crates.
 [workspace.lints.rust]
@@ -66,7 +71,6 @@ unimplemented = "deny"
 [lints]
 workspace = true
 
-# These tables are the archiver's; tests/archive.rs carries a copy as its
-# fixture, which dev-lint checks against the owner's DDL (DL-SQLX-FIXTURE-DRIFT).
+# These tables are the archiver's; the tests build them with its migrations.
 [package.metadata.dev-lint]
 schema_owner = "archiver"

@@ -95,7 +95,7 @@ pub fn s_to_ms(s: i64) -> i64 {
 }
 
 /// Google Chat stores microsecond timestamps; the unified API uses milliseconds.
-pub fn us_to_ms(us: i64) -> i64 {
+fn us_to_ms(us: i64) -> i64 {
     us / 1000
 }
 
@@ -116,7 +116,7 @@ pub fn cursor_for_day(origin: Origin, day_start_ms: i64) -> String {
 }
 
 /// Google Chat stores only `is_dm`, so its kind is derived.
-pub fn kind_from_is_dm(is_dm: bool) -> ConversationKind {
+fn kind_from_is_dm(is_dm: bool) -> ConversationKind {
     if is_dm {
         ConversationKind::Dm
     } else {
