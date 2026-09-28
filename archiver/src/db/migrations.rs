@@ -167,7 +167,7 @@ pub(super) const MIGRATIONS: &[&str] = &[
     // v9: answers the conversation list's per-conversation COUNT/MAX over
     // `kind IN ('message','action')` from the index alone. The optimizer picks it
     // only when `irc_messages` is aggregated in a derived table and then joined, and
-    // the viewer's `src/archive.rs` keeps that shape.
+    // the viewer's `src/archive/irc.rs` keeps that shape.
     //
     // `IF NOT EXISTS`: the live database had this index before this entry did.
     "ALTER TABLE irc_messages

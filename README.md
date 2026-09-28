@@ -42,11 +42,12 @@ source IPs survive k3s servicelb; check before relying on it.
 - `src/bin/link-fetch.rs` — the link-picture fetch service, the only part that
   reaches the internet. It holds no credentials, database or disk.
 - `frontend/` — Angular: conversation list with origin filter, thread view, and
-  an IRC composer. `src/app/thread-window.ts` keeps a window of a long thread in
-  the DOM; `src/app/copy-log.ts` copies a selection as an irssi log (the inverse
-  of `irclog/`); `src/app/attachment.ts` names attachments for both
-  screen and clipboard. `src/app/generated/` is written by ts-rs
-  (`scripts/gen-types.sh`) and imported through `src/app/models.ts`.
+  an IRC composer. `frontend/src/app/thread-window.ts` keeps a window of a long
+  thread in the DOM; `frontend/src/app/copy-log.ts` copies a selection as an
+  irssi log (the inverse of `irclog/`); `frontend/src/app/attachment.ts` names
+  attachments for both screen and clipboard. `frontend/src/app/generated/` is
+  written by ts-rs (`scripts/gen-types.sh`) and imported through
+  `frontend/src/app/models.ts`.
 - `Dockerfile` — `xinutec/messages:latest`, with both viewer binaries;
   `archiver/Dockerfile` is `xinutec/signal-archiver:latest`. Both build from the
   repository root, since the Cargo workspace spans the crates.
@@ -75,7 +76,7 @@ source IPs survive k3s servicelb; check before relying on it.
 
 `{origin}` is `signal`, `gchat`, `irc` or `telegram`. `{id}` is the Signal
 `thread_id`, the Google Chat `group_id`, the `irc_conversations.id`, or
-Telegram's folded peer id (see v15 in `archiver/src/db.rs`).
+Telegram's folded peer id (see v15 in `archiver/src/db/migrations.rs`).
 
 ## Local dev
 ```
