@@ -12,6 +12,10 @@
     in {
       devShells = forAll (pkgs: {
         default = pkgs.mkShell {
+          # Playwright's browsers come from the lock, not ~/Library/Caches: the
+          # driver's version must match @playwright/test's (tables/deps.dhall).
+          PLAYWRIGHT_BROWSERS_PATH = pkgs.playwright-driver.browsers;
+          PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "1";
           packages = [
             pkgs.cargo
             pkgs.rustc
