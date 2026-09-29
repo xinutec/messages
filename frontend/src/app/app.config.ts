@@ -1,12 +1,13 @@
-import { ApplicationConfig, LOCALE_ID, isDevMode, provideBrowserGlobalErrorListeners, provideZonelessChangeDetection } from '@angular/core';
+import { ErrorHandler, ApplicationConfig, LOCALE_ID, isDevMode, provideBrowserGlobalErrorListeners, provideZonelessChangeDetection } from '@angular/core';
 import { provideServiceWorker } from '@angular/service-worker';
-import { provideHttpClient, withFetch } from '@angular/common/http';
+import { provideHttpClient, withFetch, withInterceptors } from '@angular/common/http';
 import { provideRouter, withComponentInputBinding } from '@angular/router';
 
 import { registerLocaleData } from '@angular/common';
 import localeEnGb from '@angular/common/locales/en-GB';
 
 import { routes } from './app.routes';
+import { TelemetryErrorHandler, failedRequestInterceptor } from './error-reporting';
 
 // Angular defaults LOCALE_ID to `en-US` whatever the browser says, and the
 // `date` pipe follows it. The locale data must be registered too, or month and
@@ -15,10 +16,11 @@ registerLocaleData(localeEnGb);
 
 export const appConfig: ApplicationConfig = {
   providers: [
+    { provide: ErrorHandler, useClass: TelemetryErrorHandler },
     provideBrowserGlobalErrorListeners(),
     { provide: LOCALE_ID, useValue: 'en-GB' },
     provideZonelessChangeDetection(),
-    provideHttpClient(withFetch()),
+    provideHttpClient(withFetch(), withInterceptors([failedRequestInterceptor])),
     // Route params bind to the Thread's inputs; the URL is the source of truth.
     provideRouter(routes, withComponentInputBinding()),
     // Registered once the app settles, so it cannot compete with the first
