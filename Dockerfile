@@ -20,7 +20,7 @@ RUN GIT_SHA="$GIT_SHA" node scripts/stamp-version.mjs
 RUN pnpm exec ng build --configuration production
 
 # --- backend (deps cached in their own layer) ---
-FROM rust:1-bookworm AS backend
+FROM rust:1.98-bookworm AS backend
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 # The archiver is a workspace member: its manifest is needed, its code is not.

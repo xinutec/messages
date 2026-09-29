@@ -21,7 +21,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
-    container: rust:1-bookworm
+    container: rust:1.98-bookworm
     services:
       mariadb:
         image: mariadb:11.8

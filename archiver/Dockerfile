@@ -7,7 +7,7 @@
 #
 # Built from the repository root (the workspace). The viewer's crate is a
 # stub here: the workspace needs its manifest, not its code.
-FROM rust:1-bookworm AS build
+FROM rust:1.98-bookworm AS build
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY archiver/Cargo.toml archiver/
