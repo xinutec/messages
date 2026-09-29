@@ -87,6 +87,40 @@ describe('ThreadWindow', () => {
     expect(win.repinAfterResize()).toBe(false);
   });
 
+  it('takes a scroll that lands with a resize for where the reader is', () => {
+    // Layout settling can change the container's height between two scroll
+    // events. A resize moves the bottom by its own size, no more: a reader
+    // farther away than that has left it, and must not be re-pinned.
+    const { win, host } = harness(10);
+    const set = (h: number, sh: number, top: number) => {
+      Object.defineProperty(host, 'clientHeight', { value: h, configurable: true });
+      Object.defineProperty(host, 'scrollHeight', { value: sh, configurable: true });
+      host.scrollTop = top;
+    };
+    win.scrollToBottom();
+    set(800, 3000, 2200);
+    win.noteScroll();
+    set(760, 3000, 0);
+    win.noteScroll();
+    expect(win.repinAfterResize()).toBe(false);
+  });
+
+  it('keeps following through a resize that only moved the bottom', () => {
+    const { win, host } = harness(10);
+    const set = (h: number, sh: number, top: number) => {
+      Object.defineProperty(host, 'clientHeight', { value: h, configurable: true });
+      Object.defineProperty(host, 'scrollHeight', { value: sh, configurable: true });
+      host.scrollTop = top;
+    };
+    win.scrollToBottom();
+    set(800, 3000, 2200);
+    win.noteScroll();
+    // The soft keyboard: 300px shorter, scrollTop untouched.
+    set(500, 3000, 2200);
+    win.noteScroll();
+    expect(win.repinAfterResize()).toBe(true);
+  });
+
   it('follows the end again for a fresh conversation', () => {
     const { win } = harness(10);
     win.scrollToTs(1_000_005);

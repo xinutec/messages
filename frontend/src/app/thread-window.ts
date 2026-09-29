@@ -156,10 +156,12 @@ export class ThreadWindow {
     const h = this.host.clientHeight;
     const sh = this.host.scrollHeight;
     const grew = this.hostScrollHeight == null ? 0 : Math.max(0, sh - this.hostScrollHeight);
-    const resized = this.hostHeight != null && h !== this.hostHeight;
+    const resizedBy = this.hostHeight == null ? 0 : Math.abs(h - this.hostHeight);
     this.hostHeight = h;
     this.hostScrollHeight = sh;
-    if (resized) return;
+    // A resize (the soft keyboard) moves the bottom by its own size, no more: a
+    // reader farther off than that scrolled, in the same event.
+    if (resizedBy > 0 && sh - this.host.scrollTop - h <= resizedBy + BOTTOM_EPS) return;
     // Content growing below a reader at the end (an image loading) is not the
     // reader leaving: they are off by no more than the growth.
     if (this.following && grew > 0 && sh - this.host.scrollTop - h <= grew + BOTTOM_EPS) return;
