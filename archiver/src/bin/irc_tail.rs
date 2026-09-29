@@ -18,7 +18,7 @@
 //!
 //! Config via env, as the ingester: `DB_HOST`, `DB_PORT` (3306), `DB_NAME`,
 //! `DB_USER`, `DB_PASSWORD`, and the required `IRC_SELF_NICK` (+
-//! `IRC_SELF_NICK_ALT`), which decide whose lines are Pippijn's own.
+//! `IRC_SELF_NICK_ALT`), which decide whose lines are the user's own.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -126,7 +126,7 @@ fn parse_args() -> Result<Args> {
     if args.self_nicks.is_empty() {
         bail!(
             "IRC_SELF_NICK is not set: every line would be filed as somebody \
-             else's, including Pippijn's own"
+             else's, including the user's own"
         );
     }
     Ok(args)

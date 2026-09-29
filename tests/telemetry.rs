@@ -89,8 +89,8 @@ async fn no_field_of_an_event_can_forge_a_log_line() {
     let forged = "x\nclient-event kind=tap path=/admin label=forged";
     record(
         AuthUser(UserSession {
-            user_id: "pippijn".to_string(),
-            display_name: "Pippijn".to_string(),
+            user_id: "user".to_string(),
+            display_name: "User".to_string(),
         }),
         Json(vec![TelemetryEvent {
             kind: forged.to_string(),

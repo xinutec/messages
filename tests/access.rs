@@ -18,8 +18,8 @@ fn cfg(allowed: &[&str]) -> Config {
 
 #[test]
 fn a_listed_user_is_allowed_and_nobody_else_is() {
-    let c = cfg(&["pippijn"]);
-    assert!(c.is_allowed("pippijn"));
+    let c = cfg(&["user"]);
+    assert!(c.is_allowed("user"));
     assert!(!c.is_allowed("simon"));
     // Not a prefix match.
     assert!(!c.is_allowed("pippijn2"));
@@ -29,14 +29,14 @@ fn a_listed_user_is_allowed_and_nobody_else_is() {
 #[test]
 fn an_empty_list_admits_nobody() {
     let c = cfg(&[]);
-    assert!(!c.is_allowed("pippijn"));
+    assert!(!c.is_allowed("user"));
     assert!(!c.is_allowed(""));
 }
 
 #[test]
 fn an_empty_user_id_is_never_allowed() {
     // An empty caller id matches nothing.
-    assert!(!cfg(&["pippijn"]).is_allowed(""));
+    assert!(!cfg(&["user"]).is_allowed(""));
 }
 
 #[test]
@@ -45,15 +45,9 @@ fn the_parser_drops_the_empty_entries_that_would_admit_an_empty_id() {
     assert!(parse_allowed_users("").is_empty());
     assert!(parse_allowed_users("   ").is_empty());
     assert!(parse_allowed_users(",,").is_empty());
-    assert_eq!(parse_allowed_users("pippijn"), vec!["pippijn"]);
-    assert_eq!(
-        parse_allowed_users(" pippijn , simon "),
-        vec!["pippijn", "simon"]
-    );
-    assert_eq!(
-        parse_allowed_users("pippijn,,simon,"),
-        vec!["pippijn", "simon"]
-    );
+    assert_eq!(parse_allowed_users("user"), vec!["user"]);
+    assert_eq!(parse_allowed_users(" user , simon "), vec!["user", "simon"]);
+    assert_eq!(parse_allowed_users("user,,simon,"), vec!["user", "simon"]);
 }
 
 #[test]

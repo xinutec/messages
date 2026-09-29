@@ -1247,8 +1247,8 @@ async fn send_to(pool: &MySqlPool, conversation_id: i32) -> axum::http::StatusCo
         pool,
         SEND_SECRET,
         &messages::session::UserSession {
-            user_id: "pippijn".to_string(),
-            display_name: "Pippijn".to_string(),
+            user_id: "user".to_string(),
+            display_name: "User".to_string(),
         },
     )
     .await

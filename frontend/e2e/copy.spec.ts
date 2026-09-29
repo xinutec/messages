@@ -20,9 +20,9 @@ const line = (id: string, ts: number, sender: string, body: string, kind: Messag
   testMessage({ id, ts, sender, body, kind });
 
 const MESSAGES = [
-  line("a", Date.UTC(2026, 7, 13, 14, 32), "pippijn", "hello there"),
+  line("a", Date.UTC(2026, 7, 13, 14, 32), "user", "hello there"),
   line("b", Date.UTC(2026, 7, 13, 14, 33), "simon", "hi"),
-  line("d", Date.UTC(2026, 7, 13, 14, 34), "pippijn", "waves", "action"),
+  line("d", Date.UTC(2026, 7, 13, 14, 34), "user", "waves", "action"),
   line("c", Date.UTC(2026, 7, 14, 9, 5), "simon", "morning"),
 ];
 
@@ -57,10 +57,10 @@ test("a selection spanning messages copies as an irssi log", async ({ page }) =>
   await page.keyboard.press("ControlOrMeta+c");
   expect(await clipboardText(page)).toBe(
     "--- Day changed Thu Aug 13 2026\n" +
-      "14:32 <pippijn> hello there\n" +
+      "14:32 <user> hello there\n" +
       "14:33 <simon> hi\n" +
       // irssi's action line: two spaces, the sender inside the text.
-      "14:34  * pippijn waves\n" +
+      "14:34  * user waves\n" +
       "--- Day changed Fri Aug 14 2026\n" +
       "09:05 <simon> morning",
   );
@@ -99,7 +99,7 @@ test("the rich flavour is the same log, monospaced", async ({ page }) => {
       : "(no text/html on the clipboard)";
   });
   expect(html).toContain("<pre>");
-  expect(html).toContain("&lt;pippijn&gt;");
+  expect(html).toContain("&lt;user&gt;");
 });
 
 /** A select-all copies only the rendered window and says so. Here the window

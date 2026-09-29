@@ -2,7 +2,7 @@
 //! Telegram archive in the `signal` MariaDB. The binary (`src/main.rs`) is a thin
 //! wrapper; logic lives here.
 //!
-//! ⚠ It can send on IRC, as Pippijn, on networks other people are on;
+//! ⚠ It can send on IRC, as the user, on networks other people are on;
 //! [`irc_send`] says what bounds that.
 
 pub mod archive;

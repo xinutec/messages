@@ -274,7 +274,7 @@ pub async fn search(
     Ok(Json(archive::search(&app.pool, q, limit, scope).await?))
 }
 
-/// A message to put on IRC, as Pippijn.
+/// A message to put on IRC, as the user.
 #[derive(Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -327,7 +327,7 @@ pub async fn send(
     let Some(target) = archive::irc::target(&app.pool, &id).await? else {
         return Err(AppError::NotFound);
     };
-    // irssi's server-notice window is named after Pippijn's nick.
+    // irssi's server-notice window is named after the user's nick.
     if target.is_status {
         return Err(AppError::NotFound);
     }

@@ -84,13 +84,14 @@ Telegram's folded peer id (see v15 in `archiver/src/db/migrations.rs`).
 DB_HOST=127.0.0.1 DB_PORT=3306 DB_NAME=signal DB_USER=… DB_PASSWORD=… \
 NC_BASE_URL=https://dash.xinutec.org NC_CLIENT_ID=… NC_CLIENT_SECRET=… \
 NC_REDIRECT_URI=http://localhost:4200/auth/callback \
-SESSION_SECRET=$(openssl rand -hex 32) ALLOWED_USERS=pippijn \
+SESSION_SECRET=$(openssl rand -hex 32) ALLOWED_USERS=user \
   cargo run
 # frontend (proxies /api, /login, /auth, /logout to :8080)
 cd frontend && pnpm install && pnpm start  # http://localhost:4200
 ```
 
 ## Deploy (isis, namespace `signal`)
+<!-- dev-lint: allow-pii the repository's name -->
 Manifests are in the home monorepo (`xinutec/pippijn`): `code/kubes/messages/k8s/`
 for the viewer, `code/kubes/signal/k8s/` for the archiver.
 Push to main, wait for CI to build both images, then run
@@ -183,7 +184,7 @@ to send.
 - A Telegram message edited before the archive saw it has no earlier versions:
   Telegram serves only the current text.
 - A Google Chat picture's bytes are held only if a harvest fetched them; the
-  download URL needs Pippijn's session.
+  download URL needs the user's session.
 - Attachments are read whole into memory to serve, against the pod's memory limit.
 - Copying reaches only the rendered window (400 messages). A select-all of a
   longer conversation ends with `--- copied 400 of N messages; the rest were not

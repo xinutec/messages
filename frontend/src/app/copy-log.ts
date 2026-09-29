@@ -5,8 +5,8 @@
 // reads like one that went in:
 //
 //     --- Day changed Thu Aug 13 2026
-//     14:32 <pippijn> hello there
-//     14:35  * pippijn waves
+//     14:32 <user> hello there
+//     14:35  * user waves
 //
 // An action's two spaces are irssi's; the parser matches on them.
 

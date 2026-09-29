@@ -13,7 +13,7 @@ pub fn config() -> Config {
         nc_client_id: String::new(),
         nc_client_secret: String::new(),
         nc_redirect_uri: String::new(),
-        allowed_users: vec!["pippijn".to_string()],
+        allowed_users: vec!["user".to_string()],
         static_dir: None,
         attachments_dir: "/nonexistent".to_string(),
         link_images_dir: "/link-images".into(),

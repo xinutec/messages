@@ -59,7 +59,7 @@ pub struct Config {
     pub irc_send: Option<IrcSend>,
 }
 
-/// How to reach the irssi that holds Pippijn's IRC connections.
+/// How to reach the irssi that holds the user's IRC connections.
 ///
 /// Optional: without the key the app still serves the archive and refuses to
 /// send.

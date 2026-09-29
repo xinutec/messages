@@ -31,12 +31,12 @@ function file(over: Partial<Attachment>): Attachment {
 describe('formatChatLog', () => {
   it('writes irssi log lines', () => {
     const out = formatChatLog([
-      msg({ ts: at(2026, 8, 13, 14, 32), sender: 'pippijn', body: 'hello there' }),
+      msg({ ts: at(2026, 8, 13, 14, 32), sender: 'user', body: 'hello there' }),
       msg({ ts: at(2026, 8, 13, 14, 33), sender: 'simon', body: 'hi' }),
     ]);
     expect(out).toBe(
       '--- Day changed Thu Aug 13 2026\n' + //
-        '14:32 <pippijn> hello there\n' +
+        '14:32 <user> hello there\n' +
         '14:33 <simon> hi',
     );
   });
@@ -61,12 +61,12 @@ describe('formatChatLog', () => {
 
   it('writes an action irssi\'s way, with the sender inside the text', () => {
     const out = formatChatLog([
-      msg({ ts: at(2026, 8, 13, 14, 32), sender: 'pippijn', body: 'hello' }),
-      msg({ ts: at(2026, 8, 13, 14, 35), sender: 'pippijn', kind: 'action', body: 'waves' }),
+      msg({ ts: at(2026, 8, 13, 14, 32), sender: 'user', body: 'hello' }),
+      msg({ ts: at(2026, 8, 13, 14, 35), sender: 'user', kind: 'action', body: 'waves' }),
     ]);
     expect(out.split('\n').slice(1)).toEqual([
-      '14:32 <pippijn> hello', //
-      '14:35  * pippijn waves',
+      '14:32 <user> hello', //
+      '14:35  * user waves',
     ]);
   });
 
@@ -87,12 +87,12 @@ describe('formatChatLog', () => {
   it('repeats the prefix on every line of a multi-line body', () => {
     // Each line stands alone, as in a real IRC log.
     const out = formatChatLog([
-      msg({ ts: at(2026, 8, 13, 14, 32), sender: 'pippijn', body: 'one\ntwo' }),
+      msg({ ts: at(2026, 8, 13, 14, 32), sender: 'user', body: 'one\ntwo' }),
     ]);
     expect(out).toBe(
       '--- Day changed Thu Aug 13 2026\n' + //
-        '14:32 <pippijn> one\n' +
-        '14:32 <pippijn> two',
+        '14:32 <user> one\n' +
+        '14:32 <user> two',
     );
   });
 

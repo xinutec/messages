@@ -1,7 +1,7 @@
-//! Sending one IRC message, as Pippijn, through the irssi that holds his
+//! Sending one IRC message, as the user, through the irssi that holds their
 //! connections.
 //!
-//! The safety is mostly elsewhere: the app's Nextcloud login and `pippijn`-only
+//! The safety is mostly elsewhere: the app's Nextcloud login and single-account
 //! allow-list; the key's forced command on the far side
 //! (`command="/home/irssi/bin/irc-send",restrict`); and the plugin, which sends
 //! only to targets irssi has a window open for. So this module hands a request

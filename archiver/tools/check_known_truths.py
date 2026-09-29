@@ -1,6 +1,6 @@
 #!/usr/bin/env nix-shell
 #!nix-shell -i python3 -p "python3.withPackages(ps: [ps.pymysql])"
-"""Check the archive still answers the things Pippijn knows to be true.
+"""Check the archive still answers the things the user knows to be true.
 
 Each row of `known_truths.tsv` and `known_truths.private.tsv` is known
 independently of the archive, so a query that stops returning it means the

@@ -174,7 +174,7 @@ def main():
                             (gid, msg_id))
                 message_id = cur.fetchone()[0]
 
-            # Attachments. The bytes need Pippijn's session: the client mints the
+            # Attachments. The bytes need the user's session: the client mints the
             # download URL from `token` at render time. The hashes match bytes
             # fetched later back to their row.
             for a in m.get("attachments") or []:

@@ -69,7 +69,7 @@ def main():
     limit = next((int(o.split("=")[1]) for o in opts if o.startswith("--limit=")), None)
     self_uuid = os.environ["SELF_UUID"]
     # Caller-supplied, since this repo is public. A blank one would erase the
-    # recipient row that identifies Pippijn, so it is refused.
+    # recipient row that identifies the user, so it is refused.
     self_phone = norm_phone(os.environ["SELF_PHONE"].strip())
     if not self_phone:
         sys.exit("SELF_PHONE is empty; set it to your own number in E.164 form (+…)")

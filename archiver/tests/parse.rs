@@ -444,7 +444,7 @@ fn a_call_arrives_as_the_frames_it_is_made_of() {
 /// name, else profile name.
 #[test]
 fn a_nickname_outranks_the_profile_name_the_person_chose() {
-    // She calls herself Dot; Pippijn typed Dorothy Example.
+    // She calls herself Dot; the user typed Dorothy Example.
     let c = json!({
         "uuid": "fb07a20e", "name": "", "given_name": "",
         "profile": {"given_name": "Dot", "lastname": ""},

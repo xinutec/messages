@@ -1,7 +1,7 @@
 # Things the archive must be able to answer, checked against the live database.
 #
-# Each row is something Pippijn knows independently of the archive (his memory,
-# his phone, the Chat UI), so a query that stops returning it means the pipeline
+# Each row is something the user knows independently of the archive (their memory,
+# their phone, the Chat UI), so a query that stops returning it means the pipeline
 # lost something. Never derive a row from the database: that only tests that the
 # archive agrees with itself. A row must be true now, not expected to become
 # true, or it fails without any loss.

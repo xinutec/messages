@@ -68,8 +68,8 @@ async fn signed_in(pool: &MySqlPool) -> String {
         pool,
         SECRET,
         &UserSession {
-            user_id: "pippijn".to_string(),
-            display_name: "Pippijn".to_string(),
+            user_id: "user".to_string(),
+            display_name: "User".to_string(),
         },
     )
     .await

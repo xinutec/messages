@@ -7,7 +7,7 @@
 //! ```text
 //!                       ┌── iter_dialogs ──▶ conversations + the peer cache
 //!  Telegram ──MTProto──▶├── iter_messages ─▶ backfill, oldest-ward, resumable
-//!  (as Pippijn)         └── stream_updates ▶ new, edited and deleted, live
+//!  (as the user)         └── stream_updates ▶ new, edited and deleted, live
 //!                                    │
 //!                                    ▼
 //!                             signal MariaDB  (telegram_*)

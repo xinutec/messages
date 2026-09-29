@@ -269,7 +269,7 @@ async function threeRendered(): Promise<ComponentFixture<Thread>> {
   const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
   api.messages.mockReturnValue(
     page([
-      { ...msg('a', new Date(2026, 7, 13, 14, 32).getTime()), sender: 'pippijn', body: 'hello there' },
+      { ...msg('a', new Date(2026, 7, 13, 14, 32).getTime()), sender: 'user', body: 'hello there' },
       { ...msg('b', new Date(2026, 7, 13, 14, 33).getTime()), sender: 'simon', body: 'hi' },
       { ...msg('c', new Date(2026, 7, 14, 9, 5).getTime()), sender: 'simon', body: 'morning' },
     ]),
@@ -549,7 +549,7 @@ describe('Thread copy', () => {
     expect(prevented).toBe(true);
     expect(written.get('text/plain')).toBe(
       '--- Day changed Thu Aug 13 2026\n' +
-        '14:32 <pippijn> hello there\n' +
+        '14:32 <user> hello there\n' +
         '14:33 <simon> hi\n' +
         '--- Day changed Fri Aug 14 2026\n' +
         '09:05 <simon> morning',
@@ -561,7 +561,7 @@ describe('Thread copy', () => {
     select(fixture, ['a', 0], ['b', 2]);
     const html = fireCopy(fixture).written.get('text/html')!;
     expect(html.startsWith('<pre>')).toBe(true);
-    expect(html).toContain('&lt;pippijn&gt;');
+    expect(html).toContain('&lt;user&gt;');
   });
 
   it('takes a message the selection only clips, whole', async () => {
@@ -569,7 +569,7 @@ describe('Thread copy', () => {
     const fixture = await threeRendered();
     select(fixture, ['a', 6], ['b', 1]);
     expect(fireCopy(fixture).written.get('text/plain')).toBe(
-      '--- Day changed Thu Aug 13 2026\n14:32 <pippijn> hello there\n14:33 <simon> hi',
+      '--- Day changed Thu Aug 13 2026\n14:32 <user> hello there\n14:33 <simon> hi',
     );
   });
 
@@ -652,7 +652,7 @@ async function withDeleted(withImage = false): Promise<ComponentFixture<Thread>>
       }
     : { ...msg('d', new Date(2026, 7, 13, 14, 33).getTime()), sender: 'simon', body: 'the retracted words', deleted: true };
   api.messages.mockReturnValue(
-    page([{ ...msg('a', new Date(2026, 7, 13, 14, 32).getTime()), sender: 'pippijn', body: 'hello there' }, del]),
+    page([{ ...msg('a', new Date(2026, 7, 13, 14, 32).getTime()), sender: 'user', body: 'hello there' }, del]),
   );
   ref.setInput('origin', 'irc');
   ref.setInput('id', '7');
