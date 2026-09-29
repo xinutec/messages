@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { Conversation, LinkImageState, Me, MessagesPage, Origin, SearchHit, SendResult, TelemetryEvent, MediaState } from './models';
+import { Conversation, LinkImageState, Me, MessagesPage, Origin, SearchHit, SendResult, MediaState } from './models';
 
 /** Client for the messages backend: same-origin in prod, via proxy.conf.json in
  *  `ng serve`. */
@@ -14,11 +14,6 @@ export class MessagesApi {
   }
   logout(): Observable<unknown> {
     return this.http.post('/logout', {});
-  }
-
-  /** Send a batch of client events to be logged; callers ignore failures. */
-  sendTelemetry(events: readonly TelemetryEvent[]): Observable<void> {
-    return this.http.post<void>('/api/telemetry', events);
   }
 
   /** Ask for a link's picture, by the id the page offered. */
