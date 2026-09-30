@@ -25,6 +25,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use clap::Parser;
 use irclog::{Date, IrcLine, parse_line, parse_map_entry, stored_network};
 use serde::Deserialize;
 use signal_archiver::db::{Db, IrcConversations};
@@ -41,14 +42,32 @@ const ROUND_TRIP: Duration = Duration::from_secs(170);
 /// How long to wait before reconnecting after a failed cycle.
 const RECONNECT: Duration = Duration::from_secs(5);
 
+/// Follow the IRC logs on the log host and archive each line as it lands.
+#[derive(Parser)]
 struct Args {
+    /// The log host.
+    #[arg(long)]
     host: String,
+    #[arg(long, default_value_t = 2230)]
     port: u16,
+    /// The ssh key for the log host.
+    #[arg(long)]
     key: PathBuf,
+    #[arg(long)]
     known_hosts: PathBuf,
+    /// From `IRC_SELF_NICK` and `IRC_SELF_NICK_ALT`, not the command line.
+    #[arg(skip)]
     self_nicks: Vec<String>,
+    /// Source tag to stored network, as `from=to`; repeatable.
+    #[arg(long, value_name = "FROM=TO", value_parser = map_entry)]
     map: Vec<(String, String)>,
+    /// A file touched every cycle, for the liveness probe.
+    #[arg(long)]
     heartbeat: Option<PathBuf>,
+}
+
+fn map_entry(pair: &str) -> Result<(String, String), String> {
+    parse_map_entry(pair).ok_or_else(|| format!("wants from=to, got {pair}"))
 }
 
 #[derive(Deserialize)]
@@ -83,37 +102,7 @@ struct Event {
 }
 
 fn parse_args() -> Result<Args> {
-    let mut args = Args {
-        host: String::new(),
-        port: 2230,
-        key: PathBuf::new(),
-        known_hosts: PathBuf::new(),
-        self_nicks: vec![],
-        map: vec![],
-        heartbeat: None,
-    };
-    let mut argv = std::env::args().skip(1);
-    while let Some(arg) = argv.next() {
-        let mut value = || argv.next().with_context(|| format!("{arg} needs a value"));
-        match arg.as_str() {
-            "--host" => args.host = value()?,
-            "--port" => args.port = value()?.parse().context("--port")?,
-            "--key" => args.key = PathBuf::from(value()?),
-            "--known-hosts" => args.known_hosts = PathBuf::from(value()?),
-            "--heartbeat" => args.heartbeat = Some(PathBuf::from(value()?)),
-            "--map" => {
-                let pair = value()?;
-                args.map.push(
-                    parse_map_entry(&pair)
-                        .with_context(|| format!("--map wants from=to, got {pair}"))?,
-                );
-            }
-            other => bail!("unknown argument {other}"),
-        }
-    }
-    if args.host.is_empty() {
-        bail!("--host is required");
-    }
+    let mut args = Args::parse();
 
     // Required: without it every line is filed as somebody else's, and a daemon's
     // warning goes unread. From the environment, so the pod needs no shell.

@@ -37,6 +37,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use clap::{Parser, Subcommand};
 use grammers_client::Client;
 use grammers_client::client::UpdatesConfiguration;
 use grammers_client::session::Session;
@@ -99,8 +100,32 @@ fn cfg() -> Result<Cfg> {
     })
 }
 
+/// Archive Telegram; with no mode, run the archiver.
+#[derive(Parser)]
+struct Cli {
+    #[command(subcommand)]
+    mode: Option<Mode>,
+}
+
+#[derive(Subcommand)]
+enum Mode {
+    /// Log in, storing the session.
+    Login {
+        /// The phone number in E.164, e.g. +31…
+        phone: String,
+    },
+    /// Count how often each optional field is set, over a sample of stored
+    /// messages. Run with the feed scaled to zero.
+    Probe,
+    /// Re-read every stored message so later-added columns get filled. Run
+    /// with the feed scaled to zero.
+    Recapture,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Before the database and the pool: a mistyped mode must not connect.
+    let mode = Cli::parse().mode;
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -131,31 +156,20 @@ async fn main() -> Result<()> {
         SESSION_FLUSH,
     ));
 
-    let mut args = std::env::args().skip(1);
-    let mode = args.next();
-    match mode.as_deref() {
-        Some("login") => {
-            let phone = args
-                .next()
-                .context("usage: telegram login <phone in E.164, e.g. +31…>")?;
+    match mode {
+        Some(Mode::Login { phone }) => {
             login(&client, &cfg, &phone).await?;
             // Now, not on the timer: the new auth key is expensive to recreate.
             session.flush(db.pool()).await?;
             tracing::info!("logged in; the session is stored");
             Ok(())
         }
-        Some("probe") => probe(&client, &db).await,
-        Some("recapture") => {
+        Some(Mode::Probe) => probe(&client, &db).await,
+        Some(Mode::Recapture) => {
             let self_id = session.self_id()?.context("not logged in")?;
             recapture(&client, &db, self_id).await
         }
         None => archive(&client, &db, &cfg, &session, updates).await,
-        Some(other) => {
-            bail!(
-                "unknown mode {other:?}; expected `login <phone>`, `probe`, `recapture`, \
-             or no argument"
-            )
-        }
     }
 }
 

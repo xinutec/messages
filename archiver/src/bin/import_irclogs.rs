@@ -26,21 +26,38 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
+use clap::Parser;
 use irclog::{IrcLine, Kind, parse_log, parse_map_entry, parse_path, stored_network};
 use signal_archiver::db::{Db, IrcConversations};
 
+/// Import an irclogs tree into the archive.
+#[derive(Parser)]
 struct Args {
+    /// A local copy of the irclogs tree.
+    #[arg(long)]
     root: PathBuf,
-    /// Empty means every network found under the root.
+    /// A network to import; repeatable. None means every network found under
+    /// the root.
+    #[arg(long = "network", value_name = "NAME")]
     networks: Vec<String>,
-    /// Source tag → stored network.
+    /// Source tag to stored network, as `from=to`; repeatable.
+    #[arg(long, value_name = "FROM=TO", value_parser = map_entry)]
     map: Vec<(String, String)>,
+    /// A nick that is the user's own; repeatable.
+    #[arg(long = "self-nick", value_name = "NICK")]
     self_nicks: Vec<String>,
+    /// Write to the archive; without it, only report.
+    #[arg(long)]
     apply: bool,
     /// Read every file, whatever `irc_import_state` says. The end-of-run report
     /// describes only the files read, so this is the whole-corpus audit.
+    #[arg(long)]
     all: bool,
+}
+
+fn map_entry(pair: &str) -> Result<(String, String), String> {
+    parse_map_entry(pair).ok_or_else(|| format!("wants from=to, got {pair}"))
 }
 
 /// What the run saw, printed at the end.
@@ -58,40 +75,6 @@ struct Report {
     unparsed: u64,
     /// A few examples of unrecognised lines.
     unparsed_examples: Vec<String>,
-}
-
-fn parse_args() -> Result<Args> {
-    let mut args = Args {
-        root: PathBuf::new(),
-        networks: vec![],
-        map: vec![],
-        self_nicks: vec![],
-        apply: false,
-        all: false,
-    };
-    let mut argv = std::env::args().skip(1);
-    while let Some(arg) = argv.next() {
-        let mut value = || argv.next().with_context(|| format!("{arg} needs a value"));
-        match arg.as_str() {
-            "--root" => args.root = PathBuf::from(value()?),
-            "--network" => args.networks.push(value()?),
-            "--self-nick" => args.self_nicks.push(value()?),
-            "--map" => {
-                let pair = value()?;
-                args.map.push(
-                    parse_map_entry(&pair)
-                        .with_context(|| format!("--map wants from=to, got {pair}"))?,
-                );
-            }
-            "--apply" => args.apply = true,
-            "--all" => args.all = true,
-            other => bail!("unknown argument {other}"),
-        }
-    }
-    if args.root.as_os_str().is_empty() {
-        bail!("--root is required (a local copy of the irclogs tree)");
-    }
-    Ok(args)
 }
 
 /// Whether a log file has changed: mtime in nanoseconds, and size in bytes.
@@ -148,7 +131,7 @@ fn collect_logs(root: &Path) -> Result<Vec<String>> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = parse_args()?;
+    let args = Args::parse();
     let db = if args.apply {
         Some(Db::connect(&signal_archiver::db::url_from_env()?).await?)
     } else {

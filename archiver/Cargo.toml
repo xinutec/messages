@@ -5,6 +5,7 @@ edition = "2024"
 description = "Ingests Signal messages from signal-cli-rest-api's receive websocket into MariaDB"
 
 [dependencies]
+clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 # Plaintext ws:// to the in-cluster signal-cli-rest-api — no TLS feature needed.
