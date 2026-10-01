@@ -668,7 +668,38 @@ fn a_link_preview_is_kept() {
             title: Some("Welcome to nginx!".into()),
             // Empty is absent.
             description: None,
+            image: None,
         }]
+    );
+}
+
+/// A real preview with a picture, ids and text replaced: the picture is an
+/// attachment like any other.
+#[test]
+fn a_preview_keeps_its_picture() {
+    let f = json!({"envelope": {
+        "sourceUuid": "me", "timestamp": 1790770614179_i64,
+        "syncMessage": {"sentMessage": {
+            "destinationUuid": "me", "expiresInSeconds": 0,
+            "message": "https://example.org/article",
+            "previews": [{"description": "", "title": "An article",
+                          "url": "https://example.org/article",
+                          "image": {"caption": null, "contentType": "image/jpeg",
+                                    "height": 280, "id": "preview-image.jpg",
+                                    "isVoiceNote": false, "size": 5702,
+                                    "uploadTimestamp": 1790770614179_i64, "width": 280}}],
+            "timestamp": 1790770614179_i64}}}});
+    let Action::Message(m) = parse_frame(&f).action else {
+        panic!("not a message");
+    };
+    assert_eq!(
+        m.previews[0].image,
+        Some(Attachment {
+            id: Some("preview-image.jpg".into()),
+            content_type: Some("image/jpeg".into()),
+            file_name: None,
+            size: Some(5702),
+        })
     );
 }
 

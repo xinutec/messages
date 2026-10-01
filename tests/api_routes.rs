@@ -97,6 +97,7 @@ async fn every_api_route_refuses_a_request_with_no_cookie() {
         ("GET", "/api/conversations/irc/7/messages"),
         ("GET", "/api/search?q=hello"),
         ("GET", "/api/attachments/1"),
+        ("GET", "/api/link-previews/1/image"),
         ("POST", "/api/conversations/irc/7/send"),
     ] {
         assert_eq!(

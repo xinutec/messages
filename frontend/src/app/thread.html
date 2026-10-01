@@ -163,6 +163,9 @@
                     <!-- A preview the sender's app made. -->
                     @for (p of m.previews; track $index) {
                       <a class="preview" [href]="p.url" target="_blank" rel="noopener noreferrer">
+                        @if (p.image; as image) {
+                          <img [src]="'/api/link-previews/' + image + '/image'" alt="" loading="lazy" />
+                        }
                         @if (p.title) { <span class="title">{{ p.title }}</span> }
                         @if (p.description) { <span class="description">{{ p.description }}</span> }
                         <span class="host">{{ hostOf(p.url) }}</span>

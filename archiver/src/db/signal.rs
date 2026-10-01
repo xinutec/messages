@@ -247,26 +247,51 @@ impl Db {
         Ok(())
     }
 
-    /// Record a message row's link previews, in the order sent.
-    pub async fn insert_link_previews(
+    /// Record one of a message row's link previews; `position` is its place in
+    /// the order sent, and `image_path` where its picture was stored, if it was.
+    pub async fn insert_link_preview(
         &self,
         message_id: u64,
-        previews: &[crate::parse::LinkPreview],
+        position: usize,
+        p: &crate::parse::LinkPreview,
+        image_path: Option<&str>,
     ) -> Result<()> {
-        for (position, p) in previews.iter().enumerate() {
-            sqlx::query(
-                "INSERT IGNORE INTO signal_link_previews
-                    (message_id, position, url, title, description)
-                 VALUES (?, ?, ?, ?, ?)",
-            )
-            .bind(message_id)
-            .bind(position as i32)
-            .bind(&p.url)
-            .bind(p.title.as_deref())
-            .bind(p.description.as_deref())
+        let image = p.image.as_ref();
+        sqlx::query(
+            "INSERT IGNORE INTO signal_link_previews
+                (message_id, position, url, title, description,
+                 image_id, image_content_type, image_path)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(message_id)
+        .bind(position as i32)
+        .bind(&p.url)
+        .bind(p.title.as_deref())
+        .bind(p.description.as_deref())
+        .bind(image.and_then(|i| i.id.as_deref()))
+        .bind(image.and_then(|i| i.content_type.as_deref()))
+        .bind(image_path)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Previews whose picture is named but not stored: (preview id, attachment id).
+    pub async fn preview_images_to_fetch(&self) -> Result<Vec<(i64, String)>> {
+        Ok(sqlx::query_as(
+            "SELECT id, image_id FROM signal_link_previews
+              WHERE image_id IS NOT NULL AND image_path IS NULL",
+        )
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    pub async fn set_preview_image_path(&self, id: i64, path: &str) -> Result<()> {
+        sqlx::query("UPDATE signal_link_previews SET image_path = ? WHERE id = ?")
+            .bind(path)
+            .bind(id)
             .execute(&self.pool)
             .await?;
-        }
         Ok(())
     }
 

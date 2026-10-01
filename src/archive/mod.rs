@@ -430,6 +430,9 @@ pub struct LinkPreview {
     pub url: String,
     pub title: Option<String>,
     pub description: Option<String>,
+    /// Its handle for `GET /api/link-previews/{id}/image`, when the archive
+    /// holds the picture the sender's app fetched for it.
+    pub image: Option<String>,
 }
 
 /// A link the reader can ask us to fetch a picture for.

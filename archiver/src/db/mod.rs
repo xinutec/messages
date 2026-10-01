@@ -14,7 +14,8 @@ mod telegram;
 
 pub use irc::IrcConversations;
 pub use migrations::{
-    BACKFILL_LINK_PREVIEWS, BACKFILL_QUOTES, BACKFILL_SERVER_TIMES, BACKFILL_TEXT_STYLES,
+    BACKFILL_LINK_PREVIEWS, BACKFILL_PREVIEW_IMAGES, BACKFILL_QUOTES, BACKFILL_SERVER_TIMES,
+    BACKFILL_TEXT_STYLES,
 };
 pub use telegram::{
     TelegramBackfill, TelegramDeleteScope, TelegramMediaState, TelegramReadDirection,

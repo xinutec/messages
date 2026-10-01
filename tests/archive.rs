@@ -2516,8 +2516,8 @@ async fn telegram_formatting_is_attached_and_a_retracted_run_is_not() {
 // ---- Signal text styles, link previews, quote details -----------------------
 
 /// A thread of its own: a styled message, a link with a preview, a reply to a
-/// message the archive does not hold, and an edited message whose styles
-/// changed with its text.
+/// message the archive does not hold, an edited message whose styles changed
+/// with its text, and two previews with pictures, one stored and one not yet.
 async fn seed_signal_fields(pool: &MySqlPool, thread: &str) {
     for (ts, body, edit_of, edited) in [
         (10_000i64, "Hello bold mono strike", None::<i64>, 0i8),
@@ -2525,6 +2525,8 @@ async fn seed_signal_fields(pool: &MySqlPool, thread: &str) {
         (12_000, "This is many styles.", None, 0),
         (13_000, "plain", None, 1),
         (14_000, "now italic", Some(13_000), 0),
+        (15_000, "https://example.org/stored", None, 0),
+        (16_000, "https://example.org/unstored", None, 0),
     ] {
         // The thread's own sender, as in `seed_edits`.
         sqlx::query(
@@ -2570,6 +2572,28 @@ async fn seed_signal_fields(pool: &MySqlPool, thread: &str) {
     .execute(pool)
     .await
     .unwrap();
+    for (ts, url, path) in [
+        (
+            15_000i64,
+            "https://example.org/stored",
+            Some("/attachments/preview_jpg"),
+        ),
+        (16_000, "https://example.org/unstored", None),
+    ] {
+        sqlx::query(
+            "INSERT INTO signal_link_previews
+                (message_id, position, url, title, image_id, image_content_type, image_path)
+             SELECT id, 0, ?, 'An article', 'preview.jpg', 'image/jpeg', ?
+               FROM messages WHERE thread_id = ? AND server_ts = ?",
+        )
+        .bind(url)
+        .bind(path)
+        .bind(thread)
+        .bind(ts)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
     sqlx::query(
         "UPDATE messages SET quote_target_ts = 5, quote_author_uuid = 'alice',
                 quote_text = 'something from before the archive'
@@ -2635,6 +2659,33 @@ async fn a_signal_link_preview_comes_with_its_message() {
         vec![("https://xinutec.org", Some("Welcome to nginx!"))]
     );
     assert!(page.messages[0].previews.is_empty());
+}
+
+/// A preview's picture is offered once it is stored, and served from where it
+/// was stored.
+#[tokio::test]
+async fn a_signal_preview_offers_its_picture_once_stored() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let thread = "dm:fields-preview-pictures";
+    seed_signal_fields(&pool, thread).await;
+    let page = archive::messages_page(&pool, Origin::Signal, thread, None, 50, PageDir::Older)
+        .await
+        .unwrap();
+    let image = |i: usize| page.messages[i].previews[0].image.clone();
+    assert_eq!(image(1), None, "no picture");
+    assert_eq!(image(5), None, "named, not stored yet");
+    let id: i64 = image(4).expect("stored").parse().unwrap();
+    assert_eq!(
+        archive::signal::preview_image_blob(&pool, id)
+            .await
+            .unwrap(),
+        Some((
+            Some("image/jpeg".to_string()),
+            "/attachments/preview_jpg".to_string()
+        )),
+    );
 }
 
 /// A reply to a message the archive does not hold shows who and what from the

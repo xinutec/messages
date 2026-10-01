@@ -3,4 +3,9 @@
 /**
  * A link preview as the sender's app made it.
  */
-export type LinkPreview = { url: string, title: string | null, description: string | null, };
+export type LinkPreview = { url: string, title: string | null, description: string | null, 
+/**
+ * Its handle for `GET /api/link-previews/{id}/image`, when the archive
+ * holds the picture the sender's app fetched for it.
+ */
+image: string | null, };

@@ -65,6 +65,22 @@ pub const BACKFILL_LINK_PREVIEWS: &str = r"INSERT IGNORE INTO signal_link_previe
                        description TEXT PATH '$.description')) p
          WHERE p.url IS NOT NULL AND p.url <> ''";
 
+/// Migration v56; public so tests run the statement the migration runs.
+pub const BACKFILL_PREVIEW_IMAGES: &str = r"UPDATE signal_link_previews lp
+          JOIN messages m ON m.id = lp.message_id
+          JOIN signal_frames f ON f.envelope_ts = m.server_ts AND f.source_uuid = m.sender_uuid
+          JOIN JSON_TABLE(
+                   COALESCE(
+                       JSON_EXTRACT(f.frame, '$.envelope.dataMessage.previews'),
+                       JSON_EXTRACT(f.frame, '$.envelope.syncMessage.sentMessage.previews')),
+                   '$[*]' COLUMNS (
+                       position FOR ORDINALITY,
+                       image_id VARCHAR(255) PATH '$.image.id',
+                       image_content_type VARCHAR(255) PATH '$.image.contentType')) p
+            ON p.position - 1 = lp.position
+           SET lp.image_id = p.image_id, lp.image_content_type = p.image_content_type
+         WHERE lp.image_id IS NULL AND p.image_id IS NOT NULL";
+
 pub(super) const MIGRATIONS: &[&str] = &[
     // v0: people, keyed by ACI UUID (E.164 when there is none).
     r"CREATE TABLE IF NOT EXISTS contacts (
@@ -600,4 +616,11 @@ pub(super) const MIGRATIONS: &[&str] = &[
     BACKFILL_QUOTES,
     BACKFILL_TEXT_STYLES,
     BACKFILL_LINK_PREVIEWS,
+    // v55: a preview's picture, an attachment the ingester stores like any other.
+    r"ALTER TABLE signal_link_previews
+        ADD COLUMN image_id VARCHAR(255) NULL,
+        ADD COLUMN image_content_type VARCHAR(255) NULL,
+        ADD COLUMN image_path VARCHAR(1024) NULL",
+    // v56: backfill v55's names from `signal_frames`; the ingester fetches the bytes.
+    BACKFILL_PREVIEW_IMAGES,
 ];

@@ -463,7 +463,8 @@ pub(super) async fn attach_previews(pool: &MySqlPool, msgs: &mut [Message]) -> R
     }
     let placeholders = vec!["?"; ids.len()].join(",");
     let sql = format!(
-        "SELECT message_id, url, title, description FROM signal_link_previews
+        "SELECT id, message_id, url, title, description, image_path
+           FROM signal_link_previews
           WHERE message_id IN ({placeholders})
           ORDER BY message_id, position",
     );
@@ -472,13 +473,16 @@ pub(super) async fn attach_previews(pool: &MySqlPool, msgs: &mut [Message]) -> R
         q = q.bind(id);
     }
     for r in q.fetch_all(pool).await? {
-        let id: i64 = r.try_get("message_id")?;
-        let id = id.to_string();
-        if let Some(m) = msgs.iter_mut().find(|m| m.id == id) {
+        let message_id: i64 = r.try_get("message_id")?;
+        let message_id = message_id.to_string();
+        if let Some(m) = msgs.iter_mut().find(|m| m.id == message_id) {
+            let id: i64 = r.try_get("id")?;
+            let held: Option<String> = r.try_get("image_path")?;
             m.previews.push(LinkPreview {
                 url: r.try_get("url")?,
                 title: r.try_get("title")?,
                 description: r.try_get("description")?,
+                image: held.map(|_| id.to_string()),
             });
         }
     }
@@ -584,6 +588,27 @@ pub async fn attachment_blob(
         Some(r) => Ok(Some((
             r.try_get("content_type")?,
             r.try_get("stored_path")?,
+        ))),
+        None => Ok(None),
+    }
+}
+
+/// A link preview's stored picture: its content type and where it was stored.
+pub async fn preview_image_blob(
+    pool: &MySqlPool,
+    id: i64,
+) -> Result<Option<(Option<String>, String)>> {
+    let row = sqlx::query(
+        "SELECT image_content_type, image_path FROM signal_link_previews
+          WHERE id = ? AND image_path IS NOT NULL",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    match row {
+        Some(r) => Ok(Some((
+            r.try_get("image_content_type")?,
+            r.try_get("image_path")?,
         ))),
         None => Ok(None),
     }

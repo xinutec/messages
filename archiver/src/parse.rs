@@ -98,6 +98,18 @@ pub struct LinkPreview {
     pub url: String,
     pub title: Option<String>,
     pub description: Option<String>,
+    /// The picture the sender's app fetched for it.
+    pub image: Option<Attachment>,
+}
+
+fn attachment(a: &Value) -> Attachment {
+    let text = |k: &str| a.get(k).and_then(Value::as_str).map(str::to_string);
+    Attachment {
+        id: text("id"),
+        content_type: text("contentType"),
+        file_name: text("filename"),
+        size: int(a, "size"),
+    }
 }
 
 fn link_previews(msg: &Value) -> Vec<LinkPreview> {
@@ -116,6 +128,7 @@ fn link_previews(msg: &Value) -> Vec<LinkPreview> {
                         url: text(p, "url")?,
                         title: text(p, "title"),
                         description: text(p, "description"),
+                        image: p.get("image").filter(|i| i.is_object()).map(attachment),
                     })
                 })
                 .collect()
@@ -434,22 +447,7 @@ fn payload_action(
     let attachments = msg
         .get("attachments")
         .and_then(Value::as_array)
-        .map(|atts| {
-            atts.iter()
-                .map(|a| Attachment {
-                    id: a.get("id").and_then(Value::as_str).map(str::to_string),
-                    content_type: a
-                        .get("contentType")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                    file_name: a
-                        .get("filename")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                    size: int(a, "size"),
-                })
-                .collect()
-        })
+        .map(|atts| atts.iter().map(attachment).collect())
         .unwrap_or_default();
 
     Action::Message(Message {

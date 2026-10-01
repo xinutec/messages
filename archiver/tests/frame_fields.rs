@@ -1,11 +1,13 @@
-//! Text styles, link previews and quote details, against a real MariaDB: written
+//! Text styles, link previews with their pictures, and quote details, against a real MariaDB: written
 //! live by the ingester, and backfilled from `signal_frames`. The frames are
 //! real ones with ids replaced.
 //!
 //! Skips when `SIGNAL_TEST_DATABASE_URL` is unset, and refuses to skip in CI.
 
 use serde_json::{Value, json};
-use signal_archiver::db::{BACKFILL_LINK_PREVIEWS, BACKFILL_QUOTES, BACKFILL_TEXT_STYLES, Db};
+use signal_archiver::db::{
+    BACKFILL_LINK_PREVIEWS, BACKFILL_PREVIEW_IMAGES, BACKFILL_QUOTES, BACKFILL_TEXT_STYLES, Db,
+};
 use signal_archiver::parse::{Action, parse_frame};
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
 
@@ -69,6 +71,20 @@ fn linked(me: &str, ts: i64) -> Value {
     )
 }
 
+fn pictured(me: &str, ts: i64) -> Value {
+    sent(
+        me,
+        ts,
+        json!({"message": "https://example.org/article",
+               "previews": [{"description": "", "title": "An article",
+                             "url": "https://example.org/article",
+                             "image": {"caption": null, "contentType": "image/jpeg",
+                                       "height": 280, "id": "preview-image.jpg",
+                                       "isVoiceNote": false, "size": 5702,
+                                       "uploadTimestamp": ts, "width": 280}}]}),
+    )
+}
+
 fn reply(me: &str, ts: i64, target: i64) -> Value {
     sent(
         me,
@@ -111,6 +127,28 @@ async fn previews_of(
     .unwrap()
 }
 
+async fn preview_images_of(
+    pool: &MySqlPool,
+    me: &str,
+    ts: i64,
+) -> Vec<(Option<String>, Option<String>)> {
+    sqlx::query_as(
+        "SELECT p.image_id, p.image_content_type
+           FROM signal_link_previews p JOIN messages m ON m.id = p.message_id
+          WHERE m.sender_uuid = ? AND m.server_ts = ?
+          ORDER BY p.position",
+    )
+    .bind(me)
+    .bind(ts)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+fn expected_preview_image() -> Vec<(Option<String>, Option<String>)> {
+    vec![(Some("preview-image.jpg".into()), Some("image/jpeg".into()))]
+}
+
 async fn quote_of(pool: &MySqlPool, me: &str, ts: i64) -> (Option<String>, Option<String>) {
     sqlx::query_as(
         "SELECT quote_author_uuid, quote_text FROM messages
@@ -147,7 +185,9 @@ async fn ingest(db: &Db, frame: &Value) {
     db.upsert_conversation(&m.thread_id).await.unwrap();
     let id = db.insert_message(&m).await.unwrap().expect("a new row");
     db.insert_text_styles(id, &m.styles).await.unwrap();
-    db.insert_link_previews(id, &m.previews).await.unwrap();
+    for (position, p) in m.previews.iter().enumerate() {
+        db.insert_link_preview(id, position, p, None).await.unwrap();
+    }
 }
 
 #[tokio::test]
@@ -159,9 +199,18 @@ async fn the_ingester_keeps_styles_previews_and_the_quote() {
     ingest(&db, &styled(&me, ts)).await;
     ingest(&db, &linked(&me, ts + 1)).await;
     ingest(&db, &reply(&me, ts + 2, ts)).await;
+    ingest(&db, &pictured(&me, ts + 3)).await;
 
     assert_eq!(styles_of(&pool, &me, ts).await, expected_styles());
     assert_eq!(previews_of(&pool, &me, ts + 1).await, expected_previews());
+    assert_eq!(
+        preview_images_of(&pool, &me, ts + 1).await,
+        vec![(None, None)]
+    );
+    assert_eq!(
+        preview_images_of(&pool, &me, ts + 3).await,
+        expected_preview_image()
+    );
     assert_eq!(
         quote_of(&pool, &me, ts + 2).await,
         (Some(me.clone()), Some("Hello bold italic".into()))
@@ -185,6 +234,7 @@ async fn the_backfill_reads_them_from_the_kept_frames() {
         ),
         (linked(&me, ts + 1), ts + 1, "https://xinutec.org"),
         (reply(&me, ts + 2, ts), ts + 2, "This is many styles."),
+        (pictured(&me, ts + 3), ts + 3, "https://example.org/article"),
     ] {
         assert!(db.record_signal_frame(&frame).await.unwrap());
         sqlx::query(
@@ -205,6 +255,7 @@ async fn the_backfill_reads_them_from_the_kept_frames() {
             BACKFILL_QUOTES,
             BACKFILL_TEXT_STYLES,
             BACKFILL_LINK_PREVIEWS,
+            BACKFILL_PREVIEW_IMAGES,
         ] {
             sqlx::query(stmt).execute(&pool).await.unwrap();
         }
@@ -212,6 +263,14 @@ async fn the_backfill_reads_them_from_the_kept_frames() {
 
     assert_eq!(styles_of(&pool, &me, ts).await, expected_styles());
     assert_eq!(previews_of(&pool, &me, ts + 1).await, expected_previews());
+    assert_eq!(
+        preview_images_of(&pool, &me, ts + 1).await,
+        vec![(None, None)]
+    );
+    assert_eq!(
+        preview_images_of(&pool, &me, ts + 3).await,
+        expected_preview_image()
+    );
     assert_eq!(
         quote_of(&pool, &me, ts + 2).await,
         (Some(me.clone()), Some("Hello bold italic".into()))

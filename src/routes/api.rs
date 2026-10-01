@@ -156,6 +156,20 @@ pub async fn attachment(
     serve_held(&what, &app.cfg.attachments_dir, &stored, content_type).await
 }
 
+/// GET /api/link-previews/{id}/image → the picture a Signal link preview carried.
+pub async fn link_preview_image(
+    State(app): State<AppState>,
+    AuthUser(_user): AuthUser,
+    Path(id): Path<i64>,
+) -> Result<Response, AppError> {
+    let Some((content_type, stored)) = archive::signal::preview_image_blob(&app.pool, id).await?
+    else {
+        return Err(AppError::NotFound);
+    };
+    let what = format!("link preview {id}'s picture");
+    serve_held(&what, &app.cfg.attachments_dir, &stored, content_type).await
+}
+
 /// GET /api/telegram-media/{id} → bytes the archive holds for a Telegram message.
 ///
 /// `{id}` is the message's API id. The join keeps the lookup inside that

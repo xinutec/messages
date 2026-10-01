@@ -85,7 +85,8 @@ const THREAD = {
       delivery: null, entities: [], album: null,
       previews: [{ url: "https://xinutec.org/a/rather/long/path/that/keeps/going/and/going",
                    title: "A page with a title long enough to need wrapping on a phone screen",
-                   description: "And a description that says a little more about what is on the page." }],
+                   description: "And a description that says a little more about what is on the page.",
+                   image: "3" }],
       attachments: [], link_images: [], link_offers: [], edits: [] }),
     // An outgoing album of three: a captioned member, then two pictures.
     testMessage({ id: "7", ts: Date.UTC(2026, 0, 1, 12, 30), sender: "Test User", is_outgoing: true,
@@ -136,7 +137,7 @@ async function mockApi(page: Page): Promise<void> {
   await page.route("**/api/conversations", (r) => r.fulfill({ json: CONVERSATIONS }));
   await page.route("**/api/conversations/**/messages**", (r) => r.fulfill({ json: THREAD }));
   // See PIXELS.
-  await page.route("**/api/attachments/**", (r) =>
+  await page.route(/\/api\/(attachments|link-previews)\//, (r) =>
     r.fulfill({ contentType: "image/svg+xml", body: PIXELS }),
   );
 }
@@ -185,7 +186,8 @@ test("open thread — meta + reactions + attachment: lays out cleanly @ phone wi
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
-// A link preview renders as a card, and an unresolved quote shows what it quoted.
+// A link preview renders as a card with its picture, and an unresolved quote
+// shows what it quoted.
 test("a link preview and a quoted message from before the archive @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   await page.goto("/conversation/signal/dm:a");
@@ -193,6 +195,10 @@ test("a link preview and a quoted message from before the archive @ phone width"
   await expect(bubble.locator(".preview .title")).toHaveText(
     "A page with a title long enough to need wrapping on a phone screen");
   await expect(bubble.locator(".preview .host")).toHaveText("xinutec.org");
+  await expect(bubble.locator(".preview img")).toHaveAttribute("src", "/api/link-previews/3/image");
+  await expect
+    .poll(() => bubble.locator(".preview img").evaluate((e) => e instanceof HTMLImageElement && e.naturalWidth > 0))
+    .toBe(true);
   await expect(bubble.locator(".reply-quote .who")).toHaveText("Bob Bytecode");
   await expect(bubble.locator(".reply-quote .said")).toContainText("enormous climbing wall");
   await bubble.scrollIntoViewIfNeeded();

@@ -86,6 +86,7 @@ async fn main() -> Result<()> {
 
     tokio::spawn(refresh_group_names(ctx.clone()));
     tokio::spawn(refresh_contact_names(ctx.clone()));
+    tokio::spawn(fetch_preview_images(ctx.clone()));
 
     loop {
         match run_ws(&ws_url, &ctx).await {
@@ -251,7 +252,15 @@ async fn dispatch(ctx: &Ctx, frame: &Value) -> Result<()> {
             // `None` = a duplicate INSERT IGNORE dropped; skip its children.
             if let Some(msg_id) = ctx.db.insert_message(&m).await? {
                 ctx.db.insert_text_styles(msg_id, &m.styles).await?;
-                ctx.db.insert_link_previews(msg_id, &m.previews).await?;
+                for (position, p) in m.previews.iter().enumerate() {
+                    let stored = match p.image.as_ref().and_then(|i| i.id.as_deref()) {
+                        Some(id) => download_attachment(ctx, id).await,
+                        None => None,
+                    };
+                    ctx.db
+                        .insert_link_preview(msg_id, position, p, stored.as_deref())
+                        .await?;
+                }
                 for att in &m.attachments {
                     let stored = match &att.id {
                         Some(id) => download_attachment(ctx, id).await,
@@ -271,6 +280,26 @@ async fn dispatch(ctx: &Ctx, frame: &Value) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Store the pictures of previews written before the ingester kept them; one
+/// that will not download stays unstored and is asked for again next start.
+async fn fetch_preview_images(ctx: Ctx) {
+    let wanted = match ctx.db.preview_images_to_fetch().await {
+        Ok(wanted) => wanted,
+        Err(e) => {
+            tracing::warn!("listing preview pictures to fetch failed: {e:#}");
+            return;
+        }
+    };
+    for (id, image_id) in wanted {
+        let Some(path) = download_attachment(&ctx, &image_id).await else {
+            continue;
+        };
+        if let Err(e) = ctx.db.set_preview_image_path(id, &path).await {
+            tracing::warn!("recording preview {id}'s picture failed: {e:#}");
+        }
+    }
 }
 
 /// Best-effort: stream the attachment blob from the rest-api to disk.
