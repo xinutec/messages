@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { expectIconFontLoaded, expectNoTextOverlaps } from "@xinutec/ui-harness";
 
+import type { Conversation, Me, MessagesPage } from "../src/app/models";
 import { testMessage } from "../src/app/test-message";
 
 /**
@@ -42,12 +43,12 @@ async function scrollThread(page: Page, top: number | "bottom"): Promise<void> {
   }
 }
 
-const ME = { user_id: "u1", display_name: "Test User" };
+const ME = { user_id: "u1", display_name: "Test User" } satisfies Me;
 
 const CONVERSATIONS = [
-  { origin: "signal", id: "dm:a", name: "Alice", kind: "dm", message_count: 5, last_ts: 1_717_000_000_000 },
-  { origin: "gchat", id: "gc1", name: "Bob", kind: "dm", message_count: 3, last_ts: 1_717_100_000_000 },
-];
+  { origin: "signal", id: "dm:a", name: "Alice", kind: "dm", network: null, message_count: 5, last_ts: 1_717_000_000_000 },
+  { origin: "gchat", id: "gc1", name: "Bob", kind: "dm", network: null, message_count: 3, last_ts: 1_717_100_000_000 },
+] satisfies Conversation[];
 
 /** Mock every backend call. The catch-all goes first: Playwright runs handlers
  *  last-registered-first. */
@@ -90,7 +91,7 @@ test("message body has no spurious leading/trailing whitespace", async ({ page }
         has_more: false,
         next_cursor: null,
         prev_cursor: null,
-      },
+      } satisfies MessagesPage,
     }),
   );
   await page.goto("/conversation/signal/dm:a");
@@ -112,7 +113,7 @@ test("favicon is linked and served", async ({ page }) => {
 test("message bubbles are not content-visibility:auto (would jump on scroll-up)", async ({ page }) => {
   await mockApi(page);
   await page.route("**/api/conversations/**/messages**", (r) =>
-    r.fulfill({ json: { messages: multiDayThread(), has_more: false, next_cursor: null, prev_cursor: null } }),
+    r.fulfill({ json: { messages: multiDayThread(), has_more: false, next_cursor: null, prev_cursor: null } satisfies MessagesPage }),
   );
   await page.goto("/conversation/signal/dm:a");
   await page.locator(".msg").first().waitFor();
@@ -125,7 +126,7 @@ test("message bubbles are not content-visibility:auto (would jump on scroll-up)"
 test("a scrolled multi-day thread does not stack date separators", async ({ page }, testInfo) => {
   await mockApi(page);
   await page.route("**/api/conversations/**/messages**", (r) =>
-    r.fulfill({ json: { messages: multiDayThread(), has_more: false, next_cursor: null, prev_cursor: null } }),
+    r.fulfill({ json: { messages: multiDayThread(), has_more: false, next_cursor: null, prev_cursor: null } satisfies MessagesPage }),
   );
   await page.goto("/conversation/signal/dm:a");
   await page.getByText("msg 1-24", { exact: true }).waitFor();
@@ -138,7 +139,7 @@ test("a scrolled multi-day thread does not stack date separators", async ({ page
 test("the current day's date stays pinned at the top while scrolling", async ({ page }) => {
   await mockApi(page);
   await page.route("**/api/conversations/**/messages**", (r) =>
-    r.fulfill({ json: { messages: multiDayThread(), has_more: false, next_cursor: null, prev_cursor: null } }),
+    r.fulfill({ json: { messages: multiDayThread(), has_more: false, next_cursor: null, prev_cursor: null } satisfies MessagesPage }),
   );
   await page.goto("/conversation/signal/dm:a");
   await page.getByText("msg 0-0", { exact: true }).waitFor();

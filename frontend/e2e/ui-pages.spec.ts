@@ -9,6 +9,7 @@ import {
   expectUpInTheBar,
 } from "@xinutec/ui-harness";
 
+import type { Conversation, Me, MessagesPage, SearchHit, SendResult } from "../src/app/models";
 import { testMessage } from "../src/app/test-message";
 
 /**
@@ -17,7 +18,7 @@ import { testMessage } from "../src/app/test-message";
  * pieces of text collide and nothing spills past the right edge.
  */
 
-const ME = { user_id: "test", display_name: "Test User" };
+const ME = { user_id: "test", display_name: "Test User" } satisfies Me;
 
 /** A busy conversation list: every origin, a group, and a long name. */
 const CONVERSATIONS = [
@@ -30,7 +31,7 @@ const CONVERSATIONS = [
   // One target on two networks, the widest subtitle.
   { origin: "irc", id: "8", name: "s_20", kind: "dm", network: "xinutec", message_count: 14446, last_ts: Date.UTC(2026, 0, 2, 10, 15) },
   { origin: "irc", id: "9", name: "s_20", kind: "dm", network: "euirc", message_count: 8071, last_ts: Date.UTC(2026, 0, 1, 22, 40) },
-];
+] satisfies Conversation[];
 
 /** Real bytes for the available attachment, so a revealed image actually
  *  decodes rather than rendering a broken glyph. SVG, because `Buffer` needs
@@ -105,7 +106,7 @@ const THREAD = {
   has_more: false,
   next_cursor: null,
   prev_cursor: null,
-};
+} satisfies MessagesPage;
 
 /** A thread taller than the pane, so there is a scroll position the keyboard
  *  can disturb. */
@@ -125,14 +126,12 @@ const LONG_THREAD = {
   has_more: false,
   next_cursor: null,
   prev_cursor: null,
-};
+} satisfies MessagesPage;
 
 /** Mock every backend call. The catch-all goes first: Playwright runs handlers
  *  last-registered-first. */
 async function mockApi(page: Page): Promise<void> {
-  await page.route("**/api/**", (r) =>
-    r.request().method() === "GET" ? r.fulfill({ json: [] }) : r.fulfill({ status: 204, body: "" }),
-  );
+  await page.route("**/api/**", (r) => r.fulfill({ status: 204, body: "" }));
   await page.route("**/api/me", (r) => r.fulfill({ json: ME }));
   await page.route("**/api/conversations", (r) => r.fulfill({ json: CONVERSATIONS }));
   await page.route("**/api/conversations/**/messages**", (r) => r.fulfill({ json: THREAD }));
@@ -271,7 +270,7 @@ test("searching a conversation is reachable with the thread open @ phone width",
         { origin: "signal", conversation_id: "dm:a", conversation_name: "Alice Andersson",
           ts: Date.UTC(2024, 8, 9, 9, 30), sender: "Test User",
           snippet: "something withdrawn", deleted: true, cursor: "c2" },
-      ],
+      ] satisfies SearchHit[],
     }),
   );
   await page.goto("/conversation/signal/dm:a");
@@ -357,7 +356,7 @@ test("telegram formatting renders from the body, never from the entity @ phone w
           ],
         })],
         has_more: false, next_cursor: null, prev_cursor: null,
-      },
+      } satisfies MessagesPage,
     }),
   );
   await page.goto("/conversation/telegram/4242");
@@ -532,7 +531,7 @@ test("Enter while the IME is composing does not send @ phone width", async ({ pa
   let sends = 0;
   await page.route("**/api/conversations/*/*/send", async (r) => {
     sends += 1;
-    await r.fulfill({ json: { sent: true, error: null, archived: true } });
+    await r.fulfill({ json: { sent: true, error: null, archived: true } satisfies SendResult });
   });
   await page.goto("/conversation/irc/7");
   const input = page.getByLabel("Message", { exact: true });
@@ -568,7 +567,7 @@ const SEARCH = [
     sender: "s_20", snippet: "letter sent, check the pigeon", deleted: false, cursor: "4000_4" },
   { origin: "irc", conversation_id: "9", conversation_name: "s_20", ts: Date.UTC(2025, 11, 28, 12, 0),
     sender: "s_20", snippet: "letter never arrived", deleted: false, cursor: "5000_5" },
-];
+] satisfies SearchHit[];
 
 /** A retracted hit reads as a retraction among ordinary hits, without its words
  *  or crowding the row. */

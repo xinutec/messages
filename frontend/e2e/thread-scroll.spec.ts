@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import type { Attachment } from "../src/app/models";
+import type { Attachment, Conversation, Me, MessagesPage } from "../src/app/models";
 import { testMessage } from "../src/app/test-message";
 
 /**
@@ -9,10 +9,10 @@ import { testMessage } from "../src/app/test-message";
  * real browser can check this.
  */
 
-const ME = { user_id: "u1", display_name: "Test User" };
+const ME = { user_id: "u1", display_name: "Test User" } satisfies Me;
 const CONVERSATIONS = [
-  { origin: "signal", id: "dm:a", name: "Alice", kind: "dm", message_count: 1000, last_ts: 1_717_000_000_000 },
-];
+  { origin: "signal", id: "dm:a", name: "Alice", kind: "dm", network: null, message_count: 1000, last_ts: 1_717_000_000_000 },
+] satisfies Conversation[];
 
 // A real image, served for every /api/attachments/* request.
 const IMAGE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="280" height="210"><rect width="280" height="210" fill="#3b6ea5"/></svg>`;
@@ -52,10 +52,10 @@ async function mockApi(page: Page): Promise<void> {
     const cursor = new URL(route.request().url()).searchParams.get("cursor");
     // The newest page; older history is fetched on scroll-up.
     if (cursor) {
-      await route.fulfill({ json: { messages: [], has_more: false, next_cursor: null, prev_cursor: null } });
+      await route.fulfill({ json: { messages: [], has_more: false, next_cursor: null, prev_cursor: null } satisfies MessagesPage });
     } else {
       await route.fulfill({
-        json: { messages: newestPage(100), has_more: true, next_cursor: "1000000", prev_cursor: null },
+        json: { messages: newestPage(100), has_more: true, next_cursor: "1000000", prev_cursor: null } satisfies MessagesPage,
       });
     }
   });
@@ -137,11 +137,11 @@ test("scrolling to the bottom of a landing fetches forwards", async ({ page }) =
           has_more: true,
           next_cursor: null,
           prev_cursor: `c${n}`,
-        },
+        } satisfies MessagesPage,
       });
     } else {
       await route.fulfill({
-        json: { messages: pageAt("old", HIT - 3_600_000, 50), has_more: true, next_cursor: "older-c", prev_cursor: null },
+        json: { messages: pageAt("old", HIT - 3_600_000, 50), has_more: true, next_cursor: "older-c", prev_cursor: null } satisfies MessagesPage,
       });
     }
   });

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import type { MessageKind } from "../src/app/models";
+import type { Conversation, Me, MessageKind, MessagesPage } from "../src/app/models";
 import { testMessage } from "../src/app/test-message";
 
 /**
@@ -11,9 +11,9 @@ import { testMessage } from "../src/app/test-message";
 // Fixed, so the rendered clock does not follow the machine's time zone.
 test.use({ timezoneId: "UTC", permissions: ["clipboard-read", "clipboard-write"] });
 
-const ME = { user_id: "u1", display_name: "Test User" };
+const ME = { user_id: "u1", display_name: "Test User" } satisfies Me;
 /** Matches the four messages served, or every copy would report truncation. */
-const conversations = (total = 4) => [
+const conversations = (total = 4): Conversation[] => [
   { origin: "irc", id: "7", name: "#chan", kind: "group", network: "xinutec", message_count: total, last_ts: Date.UTC(2026, 7, 14, 9, 5) },
 ];
 const line = (id: string, ts: number, sender: string, body: string, kind: MessageKind = "message") =>
@@ -32,7 +32,7 @@ async function openThread(page: Page, total = 4): Promise<void> {
   await page.route("**/api/me", (r) => r.fulfill({ json: ME }));
   await page.route("**/api/conversations", (r) => r.fulfill({ json: conversations(total) }));
   await page.route("**/api/conversations/**/messages**", (r) =>
-    r.fulfill({ json: { messages: MESSAGES, has_more: false, next_cursor: null, prev_cursor: null } }),
+    r.fulfill({ json: { messages: MESSAGES, has_more: false, next_cursor: null, prev_cursor: null } satisfies MessagesPage }),
   );
   await page.goto("/conversation/irc/7");
   await page.locator('.msg[data-id="c"] .body').waitFor();
