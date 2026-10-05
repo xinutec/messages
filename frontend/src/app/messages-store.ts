@@ -37,6 +37,7 @@ export class MessagesStore {
   refresh(): void {
     this.api.conversations().subscribe({
       next: (cs) => this.conversations.set(cs),
+      // dev-lint: allow-ignored-error keeps the previous list: a stale list beats an empty one
       error: () => {},
     });
   }
