@@ -5,7 +5,6 @@ import { ActivatedRoute, NavigationEnd, Router, RouterOutlet } from '@angular/ro
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
-import { MatListModule } from '@angular/material/list';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatRippleModule } from '@angular/material/core';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
@@ -15,7 +14,8 @@ import { Scaffold } from '@xinutec/ui-scaffold';
 import { Subject, catchError, filter, fromEvent, of, switchMap } from 'rxjs';
 
 import { BUILD_INFO } from './build-info';
-import { hue, initials, preview, whenFormat } from './list-row';
+import { Avatar } from './avatar';
+import { ORIGIN_LABELS, preview, whenFormat } from './list-row';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
 import { AppSwUpdates } from './sw-updates';
@@ -34,10 +34,10 @@ import { Conversation, Origin, SearchHit } from './models';
     MatButtonModule,
     MatButtonToggleModule,
     MatIconModule,
-    MatListModule,
     MatMenuModule,
     MatProgressBarModule,
     MatRippleModule,
+    Avatar,
   ],
 })
 export class App {
@@ -57,19 +57,11 @@ export class App {
   readonly loading = this.store.loading;
   readonly conversations = this.store.conversations;
 
-  /** One label per origin. A `Record`, so a new origin is a type error until
-   *  labelled; `origins` gives the filter's order. */
-  readonly originLabels: Record<Origin, string> = {
-    signal: 'Signal',
-    gchat: 'Google Chat',
-    irc: 'IRC',
-    telegram: 'Telegram',
-  };
+  /** The filter's labels, and its order. */
+  readonly originLabels = ORIGIN_LABELS;
   readonly origins: readonly Origin[] = ['signal', 'gchat', 'irc', 'telegram'];
 
-  // A row's picture stand-in, time and last message; see list-row.ts.
-  protected readonly hue = hue;
-  protected readonly initials = initials;
+  // A row's time and last message; see list-row.ts.
   protected readonly whenFormat = whenFormat;
   protected readonly preview = preview;
 
@@ -218,11 +210,10 @@ export class App {
     return name.length > 0 ? name : 'Conversation';
   }
 
-  /** Which archive a hit came from, and on which network, as the conversation
-   *  list shows: one IRC target can exist on two networks. */
-  hitOrigin(h: SearchHit): string {
-    const network = this.store.find(h.origin, h.conversation_id)?.network;
-    return network ? `${this.originLabels[h.origin]} ${network}` : this.originLabels[h.origin];
+  /** The network a hit's conversation is on, as the conversation list shows it:
+   *  one IRC target can exist on two networks. The badge says which service. */
+  hitNetwork(h: SearchHit): string | null {
+    return this.store.find(h.origin, h.conversation_id)?.network ?? null;
   }
 
   title(c: Conversation): string {

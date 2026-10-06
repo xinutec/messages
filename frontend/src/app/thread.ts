@@ -1,6 +1,6 @@
 import { ApplicationRef, Component, DestroyRef, ElementRef, LOCALE_ID, computed, effect, inject, input, signal, viewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { DatePipe, formatDate } from '@angular/common';
+import { DatePipe, formatDate, NgTemplateOutlet } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -31,6 +31,7 @@ const POLL_MS = 5000;
   // bubbles here from wherever the selection is.
   host: { class: 'thread', '(scroll)': 'onScroll()', '(copy)': 'onCopy($event)' },
   imports: [
+    NgTemplateOutlet,
     DatePipe,
     FormsModule,
     MatButtonModule,

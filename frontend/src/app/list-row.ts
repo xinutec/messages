@@ -1,7 +1,16 @@
-// What a conversation's row shows besides its name: the picture stand-in, the
-// time, and the newest message. Pure: app.html draws them.
+// What a row in the list shows besides its name: the picture stand-in, the time,
+// and the newest message. Pure: app.html and avatar.ts draw them.
 
-import { Conversation } from './models';
+import { Conversation, Origin } from './models';
+
+/** One label per origin. A `Record`, so a new origin is a type error until
+ *  labelled. */
+export const ORIGIN_LABELS: Record<Origin, string> = {
+  signal: 'Signal',
+  gchat: 'Google Chat',
+  irc: 'IRC',
+  telegram: 'Telegram',
+};
 
 /** Up to two letters for the round picture: the first two words' initials,
  *  past an IRC channel's `#`. */
@@ -12,9 +21,9 @@ export function initials(name: string): string {
 }
 
 /** A hue per conversation, the same on every load. */
-export function hue(c: Conversation): number {
+export function hue(origin: Origin, id: string): number {
   let h = 0;
-  for (const ch of c.origin + c.id) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  for (const ch of origin + id) h = (h * 31 + ch.charCodeAt(0)) % 360;
   return h;
 }
 

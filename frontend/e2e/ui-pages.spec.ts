@@ -105,6 +105,24 @@ const THREAD = {
       body: null, deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740993", previews: [],
       delivery: { state: "delivered", read_by: [] },
       attachments: [{ id: "p9", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true, fetch: null }], link_images: [], link_offers: [], edits: [] }),
+    // An incoming album of four, captioned by its second member: the even case,
+    // where every row of the grid is full.
+    testMessage({ id: "21", ts: Date.UTC(2026, 0, 1, 12, 35), sender: "Alice Andersson", is_outgoing: false,
+      body: null, deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740994", previews: [],
+      delivery: null,
+      attachments: [{ id: "p21", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true, fetch: null }], link_images: [], link_offers: [], edits: [] }),
+    testMessage({ id: "22", ts: Date.UTC(2026, 0, 1, 12, 35), sender: "Alice Andersson", is_outgoing: false,
+      body: "Four from the summit, before the rain came in", deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740994", previews: [],
+      delivery: null,
+      attachments: [{ id: "p22", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true, fetch: null }], link_images: [], link_offers: [], edits: [] }),
+    testMessage({ id: "23", ts: Date.UTC(2026, 0, 1, 12, 35), sender: "Alice Andersson", is_outgoing: false,
+      body: null, deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740994", previews: [],
+      delivery: null,
+      attachments: [{ id: "p23", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true, fetch: null }], link_images: [], link_offers: [], edits: [] }),
+    testMessage({ id: "24", ts: Date.UTC(2026, 0, 1, 12, 35), sender: "Alice Andersson", is_outgoing: false,
+      body: null, deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740994", previews: [],
+      delivery: null,
+      attachments: [{ id: "p24", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true, fetch: null }], link_images: [], link_offers: [], edits: [] }),
   ],
   has_more: false,
   next_cursor: null,
@@ -167,7 +185,7 @@ test("conversation list — filter row + rows: lays out cleanly @ phone width", 
   await page.getByText("Alice Andersson").waitFor();
   // By the name alone: a preview can carry another row's name as its sender.
   const row = (name: string) =>
-    page.locator("button.conv", { has: page.locator(".name", { hasText: new RegExp(`^${name}`) }) });
+    page.locator("button.row", { has: page.locator(".name", { hasText: new RegExp(`^${name}`) }) });
   // Two rows titled `s_20`; only the network separates them.
   await expect(row("s_20").locator(".net")).toHaveText(["xinutec", "euirc"]);
   // The newest message: the sender in a group, You for mine, none in a DM.
@@ -236,20 +254,41 @@ test("a link preview and a quoted message from before the archive @ phone width"
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
-// An album renders as one set: its members in one grid, under one meta line.
+// An album renders as one set: its pictures fill a two-column grid, with the
+// caption and one meta line under them. Three is the odd case and four the even
+// one; once the captioned member took a row of its own, four came out with two
+// half-empty rows.
 test("an album is one set under one meta line @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   await page.goto("/conversation/signal/dm:a");
-  const album = page.locator(".run.album");
-  await expect(album).toHaveCount(1);
-  await expect(album.locator(".msg")).toHaveCount(3);
-  await expect(album.locator(".meta:visible")).toHaveCount(1);
-  await album.scrollIntoViewIfNeeded();
-  await expect
-    .poll(() => album.locator("img").evaluateAll((els) =>
-      els.filter((e) => e instanceof HTMLImageElement && e.complete && e.naturalWidth > 0).length))
-    .toBe(3);
-  await page.screenshot({ path: testInfo.outputPath("album.png") });
+  const albums = page.locator(".run.album");
+  await expect(albums).toHaveCount(2);
+  const sets: [number, string][] = [
+    [3, "From the climbing wall"],
+    [4, "Four from the summit"],
+  ];
+  for (const [i, [pictures, captioned]] of sets.entries()) {
+    const album = albums.nth(i);
+    await album.scrollIntoViewIfNeeded();
+    await expect(album.locator(".msg")).toHaveCount(pictures);
+    await expect(album.locator(".meta:visible")).toHaveCount(1);
+    await expect
+      .poll(() => album.locator("img").evaluateAll((els) =>
+        els.filter((e) => e instanceof HTMLImageElement && e.complete && e.naturalWidth > 0).length))
+      .toBe(pictures);
+    const albumWidth = (await album.boundingBox())!.width;
+    const boxes = await album.locator("img").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).map((r) => ({ w: r.width, top: r.top, bottom: r.bottom })));
+    // As few rows as the pictures need: the captioned one once took a row of
+    // its own, and four came out as [1 2] [3 _] [4 _].
+    expect(new Set(boxes.map((b) => Math.round(b.top))).size).toBe(Math.ceil(pictures / 2));
+    // Each picture fills its cell: a picture button sized to its picture once
+    // left them at their own 96px.
+    for (const b of boxes) expect(b.w).toBeGreaterThan(albumWidth * 0.4);
+    // The caption comes after every picture, whichever member carried it.
+    const caption = (await album.getByText(captioned).boundingBox())!;
+    expect(caption.y).toBeGreaterThanOrEqual(Math.max(...boxes.map((b) => b.bottom)) - 1);
+    await page.screenshot({ path: testInfo.outputPath(`album-${pictures}.png`) });
+  }
   await expectNoTextOverlaps(page, testInfo);
   await expectNoClippedText(page, testInfo);
   await expectNoClippedIcons(page, testInfo);
@@ -349,7 +388,7 @@ test("searching a conversation is reachable with the thread open @ phone width",
   await panel.getByText("a phrase that appears nowhere", { exact: false }).waitFor();
 
   // A retracted hit shows who and when, not the words.
-  await expect(panel.getByText("Test User: (deleted)")).toBeVisible();
+  await expect(panel.getByText("Test User: Message deleted")).toBeVisible();
   await expect(panel.getByText("something withdrawn")).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("thread-search.png") });
 
@@ -654,16 +693,17 @@ test("search — a retracted hit is listed without its text @ phone width", asyn
   await page.getByPlaceholder("Search messages").fill("letter");
   await page.getByPlaceholder("Search messages").press("Enter");
 
-  const list = page.locator("mat-action-list");
-  await list.getByText("(deleted)").waitFor();
+  const list = page.locator(".rows");
+  await list.getByText("Message deleted").waitFor();
   await expect(page.locator("body")).not.toContainText("posted the letter on Tuesday");
   await expect(list.getByRole("button")).toHaveCount(5);
   await expect(list).toContainText("the referral letter finally turned up");
 
   // The two `s_20` rows are told apart by network; located by snippet.
   const rows = list.getByRole("button");
-  await expect(rows.filter({ hasText: "letter sent, check the pigeon" })).toContainText("IRC xinutec");
-  await expect(rows.filter({ hasText: "letter never arrived" })).toContainText("IRC euirc");
+  await expect(rows.filter({ hasText: "letter sent, check the pigeon" }).locator(".net")).toHaveText("xinutec");
+  await expect(rows.filter({ hasText: "letter never arrived" }).locator(".net")).toHaveText("euirc");
+  await page.screenshot({ path: testInfo.outputPath("search.png") });
 
   await expectNoTextOverlaps(page, testInfo);
   await expectNoClippedText(page, testInfo);

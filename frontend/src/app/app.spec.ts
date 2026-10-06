@@ -122,15 +122,15 @@ describe('App', () => {
   });
 
   /** Search rows show the network, as the list does. */
-  it('says which archive and which network a hit came from', () => {
+  it('says which network a hit came from, where there is one', () => {
     const { app } = setup(makeApi({ conversations: vi.fn(() => of(TWO_NETWORKS)) }));
     const hit = { conversation_name: 's_20', ts: 1, sender: 's', snippet: 'x', deleted: false, cursor: '1_1' };
-    expect(app.hitOrigin({ ...hit, origin: 'irc', conversation_id: '8' })).toBe('IRC xinutec');
-    expect(app.hitOrigin({ ...hit, origin: 'irc', conversation_id: '9' })).toBe('IRC euirc');
+    expect(app.hitNetwork({ ...hit, origin: 'irc', conversation_id: '8' })).toBe('xinutec');
+    expect(app.hitNetwork({ ...hit, origin: 'irc', conversation_id: '9' })).toBe('euirc');
     // Signal and Google Chat have no network.
-    expect(app.hitOrigin({ ...hit, origin: 'gchat', conversation_id: 'gc1' })).toBe('Google Chat');
-    // Unknown to the list: still the archive.
-    expect(app.hitOrigin({ ...hit, origin: 'irc', conversation_id: 'nope' })).toBe('IRC');
+    expect(app.hitNetwork({ ...hit, origin: 'gchat', conversation_id: 'gc1' })).toBeNull();
+    // Unknown to the list: none to say.
+    expect(app.hitNetwork({ ...hit, origin: 'irc', conversation_id: 'nope' })).toBeNull();
   });
 
   it('runs a search and clears it', () => {
@@ -167,7 +167,7 @@ describe('App', () => {
     const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
     expect(text).not.toContain('withdrawn text');
     // Still listed: whose and when.
-    expect(text).toContain('(deleted)');
+    expect(text).toContain('Message deleted');
     expect(text).toContain('alice');
     expect(text).toContain('Alice');
   });
@@ -183,7 +183,7 @@ describe('App', () => {
 
     const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
     expect(text).toContain('still here');
-    expect(text).not.toContain('(deleted)');
+    expect(text).not.toContain('Message deleted');
   });
 
   /** Rows are tracked by index: an IRC hit's ts has second resolution, so two

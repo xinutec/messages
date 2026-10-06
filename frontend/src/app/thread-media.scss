@@ -1,33 +1,19 @@
 // Pictures and files: albums, attachments, link previews and the pictures held
 // for links, apart from thread.scss to keep each stylesheet in budget.
 
-// An album is one bubble: its members' pictures tile a two-column grid under
-// one meta line, and the captioned member comes last at full width.
+// An album is one bubble: its members' pictures tile a two-column grid, with
+// the caption and one meta line under them.
+// The bubble and the meta line's look are shared with a message's (thread.scss).
 .run.album {
   max-width: min(70%, 40rem);
   margin: 0.6rem 0 2px;
   padding: 0.4rem 0.6rem;
-  border-radius: 1rem;
-  background: var(--mat-sys-surface-container-high);
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.2rem;
-  &.out {
-    margin-left: auto;
-    background: var(--mat-sys-primary-container);
-    color: var(--mat-sys-on-primary-container);
-  }
-  // At the foot, as on any bubble: after the captioned member, which is `order: 1`.
+  // At the foot, as on any bubble.
   .album-meta {
-    order: 2;
-    justify-content: flex-end;
     grid-column: 1 / -1;
-    font: var(--mat-sys-label-small);
-    opacity: 0.7;
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    user-select: none;
     .tag.delivery.unread {
       opacity: 0.55;
     }
@@ -46,9 +32,11 @@
     .attach {
       margin-top: 0;
     }
+    // A button sizes to its content even as a block, where a link fills its cell.
     .attach a,
     .attach .picture {
       display: block;
+      width: 100%;
     }
     .attach img {
       width: 100%;
@@ -58,23 +46,9 @@
       object-fit: cover;
     }
   }
-  // Its own two-column tiling, so its picture lines up with the others and the
-  // caption closes the set.
-  > .msg.captioned {
+  // The caption, under the whole set.
+  .caption {
     grid-column: 1 / -1;
-    order: 1;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.2rem;
-    > * {
-      grid-column: 1 / -1;
-    }
-    > .attach {
-      grid-column: auto;
-    }
-    > .body {
-      order: 1;
-    }
   }
 }
 

@@ -33,7 +33,7 @@
             <button mat-list-item lines="2" (click)="openHit(h)">
               <!-- A retracted hit shows who and when, not the words. -->
               <span matListItemTitle [class.deleted]="h.deleted"
-                >{{ h.sender }}: {{ h.deleted ? '(deleted)' : h.snippet }}</span
+                >{{ h.sender }}: {{ h.deleted ? 'Message deleted' : h.snippet }}</span
               >
               <span matListItemLine>{{ h.ts | date: 'medium' }}</span>
             </button>
@@ -69,20 +69,8 @@
           @for (run of g.runs; track run[0].id) {
             <!-- An album is one set: its members share a grid and one meta line. -->
             <div class="run" [class.album]="run.length > 1" [class.out]="run[0].is_outgoing">
-              @if (run.length > 1) {
-                <div class="meta album-meta">
-                  @if (!run[0].is_outgoing && namesSenders()) {
-                    <span>{{ run[0].sender }}</span>
-                  }
-                  <span>{{ run[0].ts | date: 'shortTime' }}</span>
-                  @if (run[run.length - 1].delivery; as d) {
-                    <span class="tag delivery" [class.unread]="deliveryPending(d)"
-                          [title]="readers(d)">{{ deliveryLabel(d) }}</span>
-                  }
-                </div>
-              }
               @for (m of run; track m.id) {
-                <div class="msg" [class.out]="m.is_outgoing" [class.first]="startsRun().has(m.id)" [class.plain]="isPlain(m)" [class.captioned]="!!m.body" [class.landed]="landedId() === m.id" [attr.data-id]="m.id" [attr.data-ts]="m.ts">
+                <div class="msg" [class.out]="m.is_outgoing" [class.first]="startsRun().has(m.id)" [class.plain]="isPlain(m)" [class.landed]="landedId() === m.id" [attr.data-id]="m.id" [attr.data-ts]="m.ts">
                   <!-- Who speaks, once per run, and only where the bar does not already say. -->
                   @if (!m.is_outgoing && namesSenders() && startsRun().has(m.id)) {
                     <div class="who">{{ m.sender }}</div>
@@ -128,16 +116,13 @@
                         }
                       </div>
                     }
-                    @if (m.body) {
+                    @if (m.body && run.length === 1) {
                       <!-- An action renders as `* nick waves`; the star is the client's. Interpolation
                            is flush with the tags, since pre-wrap would show the template's indent. -->
                       <!-- Spans from slices, never innerHTML: the text comes from `body`, a link's
                            address goes through the sanitising `[href]`, and an unknown kind is a plain
                            span. Flush with the tags, as above. -->
-                      <div class="body" [class.deleted]="m.deleted"
-                        >@if (m.kind === 'action') {<span>* </span>}@for (seg of segments(m); track $index) {@if (seg.href; as href) {<a
-                            [href]="href" [class]="seg.cls" target="_blank" rel="noopener noreferrer"
-                            >{{ seg.text }}</a>} @else {<span [class]="seg.cls">{{ seg.text }}</span>}}</div>
+                      <ng-container *ngTemplateOutlet="text; context: { $implicit: m }" />
                     }
                     <!-- A preview the sender's app made. -->
                     @for (p of m.previews; track $index) {
@@ -243,6 +228,25 @@
                   }
                 </div>
               }
+              @if (run.length > 1) {
+                <!-- The caption under the whole set, as Signal sets it: the pictures fill the
+                     grid, whichever member carried the words. -->
+                @for (m of run; track m.id) {
+                  @if (m.body && !m.deleted) {
+                    <div class="caption"><ng-container *ngTemplateOutlet="text; context: { $implicit: m }" /></div>
+                  }
+                }
+                <div class="meta album-meta">
+                  @if (!run[0].is_outgoing && namesSenders()) {
+                    <span>{{ run[0].sender }}</span>
+                  }
+                  <span>{{ run[0].ts | date: 'shortTime' }}</span>
+                  @if (run[run.length - 1].delivery; as d) {
+                    <span class="tag delivery" [class.unread]="deliveryPending(d)"
+                          [title]="readers(d)">{{ deliveryLabel(d) }}</span>
+                  }
+                </div>
+              }
             </div>
           }
         </section>
@@ -281,3 +285,11 @@
 } @else {
   <div class="placeholder">Pick a conversation.</div>
 }
+
+<!-- A message's text, in its bubble or as an album's caption. -->
+<ng-template #text let-m>
+  <div class="body" [class.deleted]="m.deleted"
+    >@if (m.kind === 'action') {<span>* </span>}@for (seg of segments(m); track $index) {@if (seg.href; as href) {<a
+        [href]="href" [class]="seg.cls" target="_blank" rel="noopener noreferrer"
+        >{{ seg.text }}</a>} @else {<span [class]="seg.cls">{{ seg.text }}</span>}}</div>
+</ng-template>

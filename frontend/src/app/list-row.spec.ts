@@ -22,9 +22,9 @@ describe('initials', () => {
 
 describe('hue', () => {
   it('is stable for a conversation and differs between them', () => {
-    const a = conv('dm', null);
-    expect(hue(a)).toBe(hue({ ...a }));
-    expect(hue(a)).not.toBe(hue({ ...a, id: 'y' }));
+    expect(hue('signal', 'x')).toBe(hue('signal', 'x'));
+    expect(hue('signal', 'x')).not.toBe(hue('signal', 'y'));
+    expect(hue('signal', 'x')).not.toBe(hue('irc', 'x'));
   });
 });
 

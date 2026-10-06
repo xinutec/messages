@@ -30,22 +30,22 @@
         @if (searching()) {
           <mat-progress-bar mode="indeterminate" />
         }
-        <mat-action-list>
-          <!-- By index: an IRC hit's ts has second resolution and a hit has no unique id
-               (NG0955). The list is replaced wholesale by each search. -->
+        <!-- The same rows as the conversations: the conversation's picture and name, when,
+             and who said what. By index: an IRC hit's ts has second resolution and a hit has
+             no unique id (NG0955). The list is replaced wholesale by each search. -->
+        <div class="rows">
           @for (h of results(); track $index) {
-            <button mat-list-item lines="3" (click)="openHit(h)">
-              <span matListItemTitle>{{ hitTitle(h) }}</span>
-              <!-- Origin and network, as the conversation list shows them. -->
-              <span matListItemLine>{{ hitOrigin(h) }}</span>
-              <!-- A retracted hit shows who, where and when, not the words; the thread holds the
-                   reveal. The row is itself a button, so no reveal here. -->
-              <!-- One expression picks the text. The class goes on the line, not a nested span,
-                   which would break the line's ellipsis. Flush with the tags; see thread.html. -->
-              <span matListItemLine [class.deleted]="h.deleted"
-                >{{ h.sender }}: {{ h.deleted ? '(deleted)' : h.snippet }}</span
+            <button type="button" class="row" matRipple (click)="openHit(h)">
+              <app-avatar class="avatar" [origin]="h.origin" [id]="h.conversation_id" [name]="hitTitle(h)" />
+              <span class="name"
+                >{{ hitTitle(h) }}@if (hitNetwork(h); as net) {<span class="net"> {{ net }}</span>}</span
               >
-              <span matListItemMeta>{{ h.ts | date: 'shortDate' }}</span>
+              <span class="when">{{ h.ts | date: whenFormat(h.ts) }}</span>
+              <!-- A retracted hit shows who and when, not the words; the thread holds the
+                   reveal. Flush with the tags; see thread.html. -->
+              <span class="preview" [class.quiet]="h.deleted"
+                ><span class="who">{{ h.sender }}: </span>{{ h.deleted ? 'Message deleted' : h.snippet }}</span
+              >
             </button>
           } @empty {
             <!-- Only when the search ran: "No matches." is a claim. -->
@@ -59,7 +59,7 @@
               <p class="empty">No matches.</p>
             }
           }
-        </mat-action-list>
+        </div>
       } @else {
         <mat-button-toggle-group class="filters" hideSingleSelectionIndicator aria-label="Origin"
                                  [value]="originFilter()" (change)="setFilter($event.value)">
@@ -70,14 +70,11 @@
         </mat-button-toggle-group>
         <!-- A row as Signal draws a chat: the picture; the name over the newest message;
              when, over how many came in since I last read on the phone. -->
-        <div class="convs">
+        <div class="rows">
           @for (c of visibleConversations(); track c.origin + c.id) {
-            <button type="button" class="conv" matRipple [class.active]="isActive(c)"
+            <button type="button" class="row" matRipple [class.active]="isActive(c)"
                     [class.unread]="c.unread > 0" (click)="open(c)">
-              <span class="avatar" [style.--hue]="hue(c)"
-                >{{ initials(title(c)) }}<span class="origin" [attr.data-origin]="c.origin"
-                  [title]="originLabels[c.origin]">{{ originLabels[c.origin][0] }}</span></span
-              >
+              <app-avatar class="avatar" [origin]="c.origin" [id]="c.id" [name]="title(c)" />
               <span class="name"
                 >{{ title(c) }}@if (c.network) {<span class="net"> {{ c.network }}</span>}</span
               >

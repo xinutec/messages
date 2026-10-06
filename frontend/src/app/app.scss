@@ -43,13 +43,14 @@ ui-scaffold {
     background: color-mix(in srgb, var(--mat-sys-on-surface) 6%, transparent);
   }
 
-  // A row as Signal draws a chat: the round picture spans both lines; the name
-  // and when share the first, the newest message and the unread count the second.
-  .convs {
+  // A row as Signal draws a chat, for conversations and search hits alike: the
+  // round picture spans both lines; the name and when share the first, the
+  // newest message (or the hit) and the unread count the second.
+  .rows {
     display: flex;
     flex-direction: column;
   }
-  .conv {
+  .row {
     display: grid;
     grid-template-columns: 40px minmax(0, 1fr) auto;
     grid-template-areas:
@@ -74,36 +75,6 @@ ui-scaffold {
 
     .avatar {
       grid-area: avatar;
-      position: relative;
-      width: 40px;
-      height: 40px;
-      border-radius: 50%;
-      display: grid;
-      place-items: center;
-      // The theme's container colour at the conversation's own hue, so it follows
-      // light and dark like the rest.
-      background: oklch(from var(--mat-sys-primary-container) l c calc(h + var(--hue)));
-      color: var(--mat-sys-on-primary-container);
-      font: var(--mat-sys-title-small);
-    }
-    // Which service, as a small badge on the picture.
-    .origin {
-      position: absolute;
-      right: -3px;
-      bottom: -3px;
-      width: 16px;
-      height: 16px;
-      display: grid;
-      place-items: center;
-      border-radius: 50%;
-      border: 2px solid var(--mat-sys-surface);
-      font: var(--mat-sys-label-small);
-      color: var(--mat-sys-on-primary);
-      // The theme's primary at each service's hue: blue, green, grey, sky.
-      &[data-origin='signal'] { background: oklch(from var(--mat-sys-primary) l c 265); }
-      &[data-origin='gchat'] { background: oklch(from var(--mat-sys-primary) l c 150); }
-      &[data-origin='irc'] { background: oklch(from var(--mat-sys-primary) l 0 h); }
-      &[data-origin='telegram'] { background: oklch(from var(--mat-sys-primary) l c 230); }
     }
     .name,
     .preview {
