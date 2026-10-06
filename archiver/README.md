@@ -102,12 +102,17 @@ from an import run without `--groups-json`.
 
 ## Google Chat import
 From the decoded archive `~/Code/gchat-archive` produces (a browser capture, not
-Takeout). Reactions are counts per emoji, not per person; messages carry Google's
-threading. Dedupes on `(group_id, msg_id)`, so it is re-runnable.
+Takeout). Reactions are counts per emoji, with whoever `sync.py` could name;
+messages carry Google's threading. Dedupes on `(group_id, msg_id)`, so it is
+re-runnable. It writes SQL and never connects; the database's own client runs it
+with the password its pod holds:
 ```
-DB_HOST=… DB_PORT=… DB_USER=… DB_PASSWORD=… DB_NAME=signal \
-  ./tools/import_gchat.py [conversations_dir] [--apply]   # dry-run by default
+./tools/import_gchat.py [conversations_dir] \
+  | ssh root@isis kubectl -n signal exec -i deploy/signal-db -- \
+      sh -c 'mariadb --default-character-set=utf8mb4 -uroot -p"$MARIADB_ROOT_PASSWORD" signal'
 ```
+Without the pipe it is a dry run: the SQL goes to stdout, a summary to stderr.
+The client must be told utf8mb4, or emoji in names and reactions arrive mangled.
 
 ## Telegram
 One user session pages back through history and holds the update stream; both

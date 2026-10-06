@@ -11,13 +11,18 @@ reactions[{emoji, count, reactors[{id, name}]}]}. `sender_name` carries a traili
 `reactors` comes from a second rpc sync.py replays per reacted message; a
 reaction without it is unresolved, not unreacted.
 
+Writes SQL, one transaction, to stdout, and a summary to stderr. It never
+connects: the database's own client runs it, with the password its pod holds.
+
 Idempotent: messages dedupe on (group_id, msg_id) via INSERT IGNORE; conversation
 names and reaction counts are upserted, so re-running picks up a fresh export.
 
-Usage (env: DB_HOST DB_PORT DB_USER DB_PASSWORD DB_NAME):
-    ./import_gchat.py [conversations_dir] [--apply]
-Defaults the dir to ~/Code/gchat-archive/archive/conversations and to a dry-run;
-pass --apply to write.
+Usage:
+    ./import_gchat.py [conversations_dir] \\
+      | ssh root@isis kubectl -n signal exec -i deploy/signal-db -- \\
+          sh -c 'mariadb --default-character-set=utf8mb4 -uroot -p"$MARIADB_ROOT_PASSWORD" signal'
+The dir defaults to ~/Code/gchat-archive/archive/conversations. Without the
+pipe it is a dry run. The client must be told utf8mb4, or emoji arrive mangled.
 """
 import datetime as dt
 import glob
@@ -25,7 +30,7 @@ import json
 import os
 import sys
 
-import pymysql
+from pymysql.converters import escape_item
 
 DDL = [
     """CREATE TABLE IF NOT EXISTS gchat_conversations (
@@ -95,25 +100,25 @@ def self_split(sender_name):
     return sender_name, 0
 
 
-def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    opts = [a for a in sys.argv[1:] if a.startswith("--")]
-    apply = "--apply" in opts  # dry-run unless explicitly applied
-    conv_dir = args[0] if args else os.path.expanduser(
-        "~/Code/gchat-archive/archive/conversations")
+class Script:
+    """SQL for the database's own client, written as it is executed: each
+    statement with its parameters as MariaDB literals. A cursor's `execute`, so
+    dev-lint judges these statements against the schema as it would a cursor's."""
 
-    files = sorted(glob.glob(os.path.join(conv_dir, "*.json")))
-    if not files:
-        sys.exit(f"no conversation JSON found in {conv_dir}")
+    def __init__(self, out):
+        self.out = out
 
-    conn = pymysql.connect(
-        host=os.environ["DB_HOST"], port=int(os.environ.get("DB_PORT", "3306")),
-        user=os.environ["DB_USER"], password=os.environ["DB_PASSWORD"],
-        database=os.environ["DB_NAME"], charset="utf8mb4", autocommit=False)
-    cur = conn.cursor()
-    if apply:
-        for stmt in DDL:
-            cur.execute(stmt)
+    def execute(self, stmt, params=()):
+        self.out.write(stmt % tuple(escape_item(p, "utf8mb4") for p in params) + ";\n")
+
+
+def write(cur, conv_dir, stats):
+    """The import, as one transaction. A message's attachments and reactions
+    find its row by (group_id, msg_id), so a duplicate finds the row already
+    there."""
+    cur.execute("START TRANSACTION")
+    for stmt in DDL:
+        cur.execute(stmt)
 
     # What fetch_attachments.py pulled, by the key it wrote.
     stored = {}
@@ -122,9 +127,7 @@ def main():
         with open(by_msg) as fh:
             stored = json.load(fh)
 
-    stats = {"conversations": 0, "messages": 0, "dups": 0, "reactions": 0,
-             "reactors": 0, "attachments": 0, "skipped": 0}
-    for path in files:
+    for path in sorted(glob.glob(os.path.join(conv_dir, "*.json"))):
         with open(path) as f:
             conv = json.load(f)
         gid = conv.get("group_id")
@@ -133,11 +136,10 @@ def main():
         name = conv.get("name") or None
         is_dm = 1 if (name or "").startswith("DM with ") else 0
         stats["conversations"] += 1
-        if apply:
-            cur.execute(
-                "INSERT INTO gchat_conversations (group_id, name, is_dm) VALUES (%s,%s,%s) "
-                "ON DUPLICATE KEY UPDATE name=COALESCE(VALUES(name), name), is_dm=VALUES(is_dm)",
-                (gid, name, is_dm))
+        cur.execute(
+            "INSERT INTO gchat_conversations (group_id, name, is_dm) VALUES (%s,%s,%s) "
+            "ON DUPLICATE KEY UPDATE name=COALESCE(VALUES(name), name), is_dm=VALUES(is_dm)",
+            (gid, name, is_dm))
 
         for m in conv.get("messages", []):
             msg_id = m.get("msg_id")
@@ -148,11 +150,7 @@ def main():
             ts_us = int(ts_raw)
             sent_at = dt.datetime.fromtimestamp(ts_us / 1_000_000, dt.timezone.utc).replace(tzinfo=None)
             disp, is_self = self_split(m.get("sender_name"))
-
-            if not apply:
-                stats["messages"] += 1
-                stats["reactions"] += len(m.get("reactions") or [])
-                continue
+            stats["messages"] += 1
 
             cur.execute(
                 # Not `thread_id`: that is the topic; this is the message
@@ -165,47 +163,70 @@ def main():
                  (m.get("reply_to") or {}).get("msg_id"),
                  m.get("sender_id"), disp, is_self,
                  ts_us, sent_at, m.get("text")))
-            if cur.rowcount != 0:
-                stats["messages"] += 1
-                message_id = cur.lastrowid
-            else:
-                stats["dups"] += 1
-                cur.execute("SELECT id FROM gchat_messages WHERE group_id=%s AND msg_id=%s",
-                            (gid, msg_id))
-                message_id = cur.fetchone()[0]
 
             # Attachments. The bytes need the user's session: the client mints the
             # download URL from `token` at render time. The hashes match bytes
             # fetched later back to their row.
             for a in m.get("attachments") or []:
                 stats["attachments"] += 1
-                cur.execute(
-                    "INSERT INTO gchat_attachments "
-                    "(message_id, name, mime, width, height, uuid, token, hash1, hash2) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) "
-                    "ON DUPLICATE KEY UPDATE name=VALUES(name), mime=VALUES(mime), "
-                    "width=VALUES(width), height=VALUES(height), token=VALUES(token)",
-                    (message_id, a.get("name"), a.get("mime"), a.get("width"),
-                     a.get("height"), a.get("uuid"), a.get("token"),
-                     a.get("hash1"), a.get("hash2")))
+                if a.get("uuid"):
+                    cur.execute(
+                        "INSERT IGNORE INTO gchat_attachments "
+                        "(message_id, name, mime, width, height, uuid, token, hash1, hash2) "
+                        "SELECT id,%s,%s,%s,%s,%s,%s,%s,%s FROM gchat_messages "
+                        "WHERE group_id=%s AND msg_id=%s",
+                        (a.get("name"), a.get("mime"), a.get("width"), a.get("height"),
+                         a.get("uuid"), a.get("token"), a.get("hash1"), a.get("hash2"),
+                         gid, msg_id))
+                    cur.execute(
+                        "UPDATE gchat_attachments x JOIN gchat_messages m ON m.id = x.message_id "
+                        "SET x.name=%s, x.mime=%s, x.width=%s, x.height=%s, x.token=%s "
+                        "WHERE m.group_id=%s AND m.msg_id=%s AND x.uuid=%s",
+                        (a.get("name"), a.get("mime"), a.get("width"), a.get("height"),
+                         a.get("token"), gid, msg_id, a.get("uuid")))
+                else:
+                    # The unique key lets NULLs repeat, so without a uuid an
+                    # attachment is its message and name.
+                    cur.execute(
+                        "INSERT INTO gchat_attachments "
+                        "(message_id, name, mime, width, height, uuid, token, hash1, hash2) "
+                        "SELECT m.id,%s,%s,%s,%s,NULL,%s,%s,%s FROM gchat_messages m "
+                        "WHERE m.group_id=%s AND m.msg_id=%s AND NOT EXISTS "
+                        "(SELECT 1 FROM gchat_attachments x "
+                        " WHERE x.message_id=m.id AND x.uuid IS NULL AND x.name <=> %s)",
+                        (a.get("name"), a.get("mime"), a.get("width"), a.get("height"),
+                         a.get("token"), a.get("hash1"), a.get("hash2"),
+                         gid, msg_id, a.get("name")))
+                    cur.execute(
+                        "UPDATE gchat_attachments x JOIN gchat_messages m ON m.id = x.message_id "
+                        "SET x.mime=%s, x.width=%s, x.height=%s, x.token=%s "
+                        "WHERE m.group_id=%s AND m.msg_id=%s AND x.uuid IS NULL AND x.name <=> %s",
+                        (a.get("mime"), a.get("width"), a.get("height"), a.get("token"),
+                         gid, msg_id, a.get("name")))
                 # The bytes, if fetched, keyed on (group, message, uuid).
                 held = stored.get(f"{gid}\t{msg_id}\t{a.get('uuid')}")
                 if held:
                     # `<=>`: some attachments have no uuid.
                     cur.execute(
-                        "UPDATE gchat_attachments SET stored_path=%s "
-                        "WHERE message_id=%s AND uuid <=> %s",
-                        (held["file"], message_id, a.get("uuid")))
+                        "UPDATE gchat_attachments x JOIN gchat_messages m ON m.id = x.message_id "
+                        "SET x.stored_path=%s "
+                        "WHERE m.group_id=%s AND m.msg_id=%s AND x.uuid <=> %s",
+                        (held["file"], gid, msg_id, a.get("uuid")))
 
             for r in m.get("reactions") or []:
                 emoji = r.get("emoji")
                 if not emoji:
                     continue
                 stats["reactions"] += 1
+                count = int(r.get("count") or 0)
                 cur.execute(
-                    "INSERT INTO gchat_reactions (message_id, emoji, cnt) VALUES (%s,%s,%s) "
-                    "ON DUPLICATE KEY UPDATE cnt=VALUES(cnt)",
-                    (message_id, emoji, int(r.get("count") or 0)))
+                    "INSERT IGNORE INTO gchat_reactions (message_id, emoji, cnt) "
+                    "SELECT id,%s,%s FROM gchat_messages WHERE group_id=%s AND msg_id=%s",
+                    (emoji, count, gid, msg_id))
+                cur.execute(
+                    "UPDATE gchat_reactions x JOIN gchat_messages m ON m.id = x.message_id "
+                    "SET x.cnt=%s WHERE m.group_id=%s AND m.msg_id=%s AND x.emoji=%s",
+                    (count, gid, msg_id, emoji))
 
                 # Who reacted. Rows are only added: an absent or short
                 # `reactors` is unresolved, not a retraction.
@@ -216,13 +237,21 @@ def main():
                     stats["reactors"] += 1
                     cur.execute(
                         "INSERT IGNORE INTO gchat_reaction_authors "
-                        "(message_id, emoji, reactor_id) VALUES (%s,%s,%s)",
-                        (message_id, emoji, str(rid)))
+                        "(message_id, emoji, reactor_id) "
+                        "SELECT id,%s,%s FROM gchat_messages WHERE group_id=%s AND msg_id=%s",
+                        (emoji, str(rid), gid, msg_id))
+    cur.execute("COMMIT")
 
-    if apply:
-        conn.commit()
-    conn.close()
-    print(f"{'' if apply else 'DRY-RUN '}done ({len(files)} files): {stats}")
+
+def main():
+    conv_dir = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser(
+        "~/Code/gchat-archive/archive/conversations")
+    if not glob.glob(os.path.join(conv_dir, "*.json")):
+        sys.exit(f"no conversation JSON found in {conv_dir}")
+    stats = {"conversations": 0, "messages": 0, "reactions": 0,
+             "reactors": 0, "attachments": 0, "skipped": 0}
+    write(Script(sys.stdout), conv_dir, stats)
+    print(f"done: {stats} (messages counts duplicates too)", file=sys.stderr)
 
 
 if __name__ == "__main__":
