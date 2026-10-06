@@ -127,15 +127,26 @@
     opacity: 0.7;
     margin-top: 0.3rem;
   }
+  // Reactions hang on the bubble's lower edge, half outside it, as Signal draws
+  // them, so the time stays the bubble's last line: the negative margin lets the
+  // row out of the bubble, and the bubble's own margin keeps the next one clear.
+  &:has(> .reactions) {
+    margin-bottom: 1rem;
+  }
   .reactions {
     // Under a floated time, never beside it.
     clear: both;
-    margin-top: 0.25rem;
+    position: relative;
+    margin: 0.1rem 0 -1.1rem;
     // Furniture; see `.meta`.
     user-select: none;
     .chip {
+      display: inline-block;
       font: var(--mat-sys-label-medium);
-      background: color-mix(in srgb, var(--mat-sys-on-surface) 8%, transparent);
+      // Solid, with a ring in the page's colour, since half of it lies outside
+      // the bubble.
+      background: var(--mat-sys-surface-container-highest);
+      border: 2px solid var(--mat-sys-surface);
       border-radius: 1rem;
       padding: 0 0.4rem;
       margin-right: 0.25rem;
