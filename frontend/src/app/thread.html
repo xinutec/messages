@@ -18,12 +18,10 @@
 
   @if (searchOpen()) {
     <div class="thread-search">
-      <form (ngSubmit)="runThreadSearch()">
-        <mat-form-field class="slim-search" appearance="outline" subscriptSizing="dynamic">
-          <mat-icon matPrefix>search</mat-icon>
-          <input matInput name="tq" placeholder="Search this conversation"
-                 [ngModel]="searchQuery()" (ngModelChange)="searchQuery.set($event)" />
-        </mat-form-field>
+      <form class="search-pill" role="search" (ngSubmit)="runThreadSearch()">
+        <mat-icon aria-hidden="true">search</mat-icon>
+        <input name="tq" placeholder="Search this conversation" aria-label="Search this conversation"
+               [ngModel]="searchQuery()" (ngModelChange)="searchQuery.set($event)" />
       </form>
       @if (searchBusy()) {
         <mat-progress-bar mode="indeterminate" />

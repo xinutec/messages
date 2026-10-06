@@ -4,11 +4,10 @@ import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, NavigationEnd, Router, RouterOutlet } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
-import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
-import { MatInputModule } from '@angular/material/input';
 import { MatListModule } from '@angular/material/list';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { MatRippleModule } from '@angular/material/core';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatMenuModule } from '@angular/material/menu';
 import { Scaffold } from '@xinutec/ui-scaffold';
@@ -37,9 +36,8 @@ import { Conversation, Origin, SearchHit } from './models';
     MatIconModule,
     MatListModule,
     MatMenuModule,
-    MatFormFieldModule,
-    MatInputModule,
     MatProgressBarModule,
+    MatRippleModule,
   ],
 })
 export class App {

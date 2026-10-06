@@ -25,10 +25,7 @@ ui-scaffold {
   -webkit-overflow-scrolling: touch;
 
   .search {
-    padding: 0.5rem 0.5rem 0;
-    mat-form-field {
-      width: 100%;
-    }
+    margin: 0.5rem 0.5rem 0;
   }
 
   // Compact, so the list starts near the top.
@@ -46,14 +43,43 @@ ui-scaffold {
     background: color-mix(in srgb, var(--mat-sys-on-surface) 6%, transparent);
   }
 
-  // A row as Signal draws one: a round picture, the name with when beside it,
-  // and the newest message under them.
+  // A row as Signal draws a chat: the round picture spans both lines; the name
+  // and when share the first, the newest message and the unread count the second.
+  .convs {
+    display: flex;
+    flex-direction: column;
+  }
   .conv {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    grid-template-areas:
+      'avatar name when'
+      'avatar preview badge';
+    column-gap: 16px;
+    row-gap: 2px;
+    align-items: center;
+    padding: 10px 16px;
+    border: 0;
+    background: none;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    &:hover {
+      background: color-mix(in srgb, var(--mat-sys-on-surface) 6%, transparent);
+    }
+    &:focus-visible {
+      outline: 2px solid var(--mat-sys-primary);
+      outline-offset: -2px;
+    }
+
     .avatar {
+      grid-area: avatar;
       position: relative;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
       display: grid;
       place-items: center;
-      overflow: visible;
       // The theme's container colour at the conversation's own hue, so it follows
       // light and dark like the rest.
       background: oklch(from var(--mat-sys-primary-container) l c calc(h + var(--hue)));
@@ -79,34 +105,39 @@ ui-scaffold {
       &[data-origin='irc'] { background: oklch(from var(--mat-sys-primary) l 0 h); }
       &[data-origin='telegram'] { background: oklch(from var(--mat-sys-primary) l c 230); }
     }
+    .name,
+    .preview {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .name {
+      grid-area: name;
+      font: var(--mat-sys-body-large);
+    }
+    .preview {
+      grid-area: preview;
+      font: var(--mat-sys-body-medium);
+      color: var(--mat-sys-on-surface-variant);
+    }
     .net,
     .when {
       font: var(--mat-sys-label-small);
       color: var(--mat-sys-on-surface-variant);
     }
-    // The count sits in the row's corner, level with the last message, as
-    // Signal puts it; the meta slot holds only the time, level with the name.
-    position: relative;
-    // Unread on the phone: the name bold, the time and a count in the accent.
-    &.unread {
-      @include mat.list-overrides(
-        (
-          list-item-label-text-weight: 600,
-        )
-      );
-      .when {
-        color: var(--mat-sys-primary);
-      }
+    .when {
+      grid-area: when;
+      justify-self: end;
     }
     // A circle for one digit, a pill for more.
     .badge {
-      position: absolute;
-      right: 16px;
-      bottom: 8px;
+      grid-area: badge;
+      justify-self: end;
       min-width: 20px;
       height: 20px;
       padding: 0 6px;
       border-radius: 10px;
+      font: var(--mat-sys-label-small);
       line-height: 20px;
       text-align: center;
       background: var(--mat-sys-primary);
@@ -114,6 +145,15 @@ ui-scaffold {
     }
     .quiet {
       font-style: italic;
+    }
+    // Unread on the phone: the name bold, the time in the accent.
+    &.unread {
+      .name {
+        font-weight: 600;
+      }
+      .when {
+        color: var(--mat-sys-primary);
+      }
     }
   }
   .empty {

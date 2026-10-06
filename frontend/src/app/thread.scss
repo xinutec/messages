@@ -95,9 +95,6 @@
   z-index: 3; // above the day headers, which pin behind it
   background: var(--mat-sys-surface);
   padding: 0.5rem 0.5rem 0;
-  mat-form-field {
-    width: 100%;
-  }
   // Bounded, so a common word cannot push the thread off screen.
   mat-action-list {
     max-height: 50vh;

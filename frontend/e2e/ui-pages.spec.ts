@@ -166,15 +166,15 @@ test("conversation list — filter row + rows: lays out cleanly @ phone width", 
   await page.getByText("Alice Andersson").waitFor();
   // By the name alone: a preview can carry another row's name as its sender.
   const row = (name: string) =>
-    page.locator("button.conv", { has: page.locator("[matlistitemtitle]", { hasText: new RegExp(`^${name}`) }) });
+    page.locator("button.conv", { has: page.locator(".name", { hasText: new RegExp(`^${name}`) }) });
   // Two rows titled `s_20`; only the network separates them.
   await expect(row("s_20").locator(".net")).toHaveText(["xinutec", "euirc"]);
   // The newest message: the sender in a group, You for mine, none in a DM.
   // Visible, not only present: Material clips a line its layout has no room for.
-  await expect(row("Saturday climbing").locator("[matlistitemline]")).toBeVisible();
-  await expect(row("Saturday climbing").locator("[matlistitemline]")).toHaveText("Dana: Six of us are in.");
-  await expect(row("Bob Bytecode").locator("[matlistitemline]")).toHaveText("You: Sounds good, see you then");
-  await expect(row("Alice Andersson").locator("[matlistitemline]")).toContainText(/^From the climbing wall/);
+  await expect(row("Saturday climbing").locator(".preview")).toBeVisible();
+  await expect(row("Saturday climbing").locator(".preview")).toHaveText("Dana: Six of us are in.");
+  await expect(row("Bob Bytecode").locator(".preview")).toHaveText("You: Sounds good, see you then");
+  await expect(row("Alice Andersson").locator(".preview")).toContainText(/^From the climbing wall/);
   await expect(row("Platform on-call").locator(".quiet")).toHaveText("Erin Example: Message deleted");
   await expect(row("Alice Andersson").locator(".avatar")).toContainText("AA");
   // Unread on the phone: a count, capped; none where nothing is unread.
@@ -323,6 +323,7 @@ test("searching a conversation is reachable with the thread open @ phone width",
   // A retracted hit shows who and when, not the words.
   await expect(panel.getByText("Test User: (deleted)")).toBeVisible();
   await expect(panel.getByText("something withdrawn")).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath("thread-search.png") });
 
   // Scoped to the panel: a day header pins behind it, which a geometric scan
   // cannot tell from a collision.

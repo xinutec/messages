@@ -5,8 +5,6 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
-import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatInputModule } from '@angular/material/input';
 import { MatListModule } from '@angular/material/list';
 import { FormsModule } from '@angular/forms';
 import { ScaffoldActions, scaffoldTitle } from '@xinutec/ui-scaffold';
@@ -36,9 +34,7 @@ const POLL_MS = 5000;
     DatePipe,
     FormsModule,
     MatButtonModule,
-    MatFormFieldModule,
     MatIconModule,
-    MatInputModule,
     MatListModule,
     MatProgressBarModule,
     ScaffoldActions,

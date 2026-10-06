@@ -15,16 +15,14 @@
 
   <div class="shell" [class.has-selection]="active()">
     <aside class="list">
-      <form class="search" (ngSubmit)="runSearch()">
-        <mat-form-field class="slim-search" appearance="outline" subscriptSizing="dynamic">
-          <mat-icon matPrefix>search</mat-icon>
-          <input matInput placeholder="Search messages" name="q" [(ngModel)]="query" />
-          @if (query()) {
-            <button matSuffix mat-icon-button type="button" (click)="clearSearch()" aria-label="Clear">
-              <mat-icon>close</mat-icon>
-            </button>
-          }
-        </mat-form-field>
+      <form class="search search-pill" role="search" (ngSubmit)="runSearch()">
+        <mat-icon aria-hidden="true">search</mat-icon>
+        <input placeholder="Search messages" aria-label="Search messages" name="q" [(ngModel)]="query" />
+        @if (query()) {
+          <button mat-icon-button type="button" (click)="clearSearch()" aria-label="Clear">
+            <mat-icon>close</mat-icon>
+          </button>
+        }
       </form>
 
       @if (results() !== null) {
@@ -70,40 +68,38 @@
             <mat-button-toggle [value]="o">{{ originLabels[o] }}</mat-button-toggle>
           }
         </mat-button-toggle-group>
-        <mat-action-list>
+        <!-- A row as Signal draws a chat: the picture; the name over the newest message;
+             when, over how many came in since I last read on the phone. -->
+        <div class="convs">
           @for (c of visibleConversations(); track c.origin + c.id) {
-            <!-- As Signal draws a chat: a picture, the name and when, and the newest message. -->
-            <button mat-list-item lines="2" class="conv" [class.active]="isActive(c)"
+            <button type="button" class="conv" matRipple [class.active]="isActive(c)"
                     [class.unread]="c.unread > 0" (click)="open(c)">
-              <span matListItemAvatar class="avatar" [style.--hue]="hue(c)"
+              <span class="avatar" [style.--hue]="hue(c)"
                 >{{ initials(title(c)) }}<span class="origin" [attr.data-origin]="c.origin"
                   [title]="originLabels[c.origin]">{{ originLabels[c.origin][0] }}</span></span
               >
-              <span matListItemTitle
+              <span class="name"
                 >{{ title(c) }}@if (c.network) {<span class="net"> {{ c.network }}</span>}</span
               >
-              <!-- When, and how many came in since I last read on the phone. -->
-              <span matListItemMeta class="when">
-                @if (c.last_ts) {
-                  <span>{{ c.last_ts | date: whenFormat(c.last_ts) }}</span>
-                }
-                @if (c.unread > 0) {
-                  <span class="badge" [attr.aria-label]="c.unread + ' unread'"
-                    >{{ c.unread > 99 ? '99+' : c.unread }}</span
-                  >
-                }
-              </span>
+              @if (c.last_ts) {
+                <span class="when">{{ c.last_ts | date: whenFormat(c.last_ts) }}</span>
+              }
               @if (preview(c); as p) {
                 <!-- Flush with the tags; see thread.html. -->
-                <span matListItemLine [class.quiet]="p.quiet"
+                <span class="preview" [class.quiet]="p.quiet"
                   >@if (p.who) {<span class="who">{{ p.who }}: </span>}{{ p.text }}</span
+                >
+              }
+              @if (c.unread > 0) {
+                <span class="badge" [attr.aria-label]="c.unread + ' unread'"
+                  >{{ c.unread > 99 ? '99+' : c.unread }}</span
                 >
               }
             </button>
           } @empty {
             <p class="empty">No conversations.</p>
           }
-        </mat-action-list>
+        </div>
       }
       <!-- The build, stamped into the bundle rather than fetched, so a stale page shows
            its own old sha (scripts/stamp-version.mjs). At the end of the list, where it
