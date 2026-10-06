@@ -124,7 +124,15 @@ async fn serve_held(
         AppError::NotFound
     })?;
     let ct = content_type.unwrap_or_else(|| "application/octet-stream".to_string());
-    Ok(([(header::CONTENT_TYPE, ct)], Body::from(bytes)).into_response())
+    // Held bytes never change under their id, so the client keeps them: going
+    // back to a thread must not fetch every picture again. Private: they are a
+    // signed-in reader's alone.
+    let cache = "private, max-age=31536000, immutable".to_string();
+    Ok((
+        [(header::CONTENT_TYPE, ct), (header::CACHE_CONTROL, cache)],
+        Body::from(bytes),
+    )
+        .into_response())
 }
 
 /// GET /api/gchat-attachments/{id} → a Google Chat picture from the PVC.

@@ -175,3 +175,51 @@ async fn healthz_needs_no_session() {
     let Some(pool) = pool().await else { return };
     assert_eq!(go(&pool, "GET", "/healthz", None).await, StatusCode::OK);
 }
+
+/// A picture the archive holds never changes under its id, so the client keeps
+/// it: going back to a thread must not fetch every picture again. Private, since
+/// only a signed-in reader may see it.
+#[tokio::test]
+async fn a_held_picture_is_kept_by_the_client() {
+    let Some(pool) = pool().await else { return };
+    let dir = std::env::temp_dir().join(format!("messages-held-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("held.png"), b"not really a png").unwrap();
+    let hash = format!("{:064}", std::process::id());
+    sqlx::query(
+        "INSERT INTO link_images (url_hash, url, state, content_type, stored_name)
+         VALUES (?, 'https://example.org/p.png', 'ok', 'image/png', 'held.png')
+         ON DUPLICATE KEY UPDATE state = 'ok', stored_name = 'held.png'",
+    )
+    .bind(&hash)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let cookie = signed_in(&pool).await;
+    let app = messages::routes::router(AppState::new(
+        pool,
+        messages::config::Config {
+            link_images_dir: dir.to_string_lossy().into_owned(),
+            ..support::config()
+        },
+        reqwest::Client::new(),
+        None,
+    ));
+    let res = app
+        .oneshot(
+            Request::get(format!("/api/link-images/{hash}"))
+                .header("cookie", format!("{}={cookie}", session::COOKIE_NAME))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        res.headers()
+            .get("cache-control")
+            .and_then(|v| v.to_str().ok()),
+        Some("private, max-age=31536000, immutable")
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
