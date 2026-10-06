@@ -264,24 +264,28 @@ async fn attach_replies(
     for ts in &targets {
         q = q.bind(ts);
     }
+    let rows = q.fetch_all(pool).await?;
+    let mut bodies: HashMap<i64, String> = HashMap::new();
+    for r in &rows {
+        let deleted: i8 = r.try_get("deleted")?;
+        if let (0, Some(body)) = (deleted, r.try_get::<Option<String>, _>("body")?) {
+            bodies.insert(r.try_get("id")?, body);
+        }
+    }
+    with_names(pool, &mut bodies).await?;
     let mut found: HashMap<i64, ReplyTo> = HashMap::new();
-    for r in q.fetch_all(pool).await? {
+    for r in &rows {
         let id: i64 = r.try_get("id")?;
         let ts: i64 = r.try_get("ts")?;
         let deleted: i8 = r.try_get("deleted")?;
-        let deleted = deleted != 0;
-        let body: Option<String> = r.try_get("body")?;
         found.entry(ts).or_insert_with(|| ReplyTo {
             id: Some(id.to_string()),
             cursor: Some(encode_cursor(ts, id)),
             ts: Some(ts),
             sender: r.try_get("sender").ok(),
-            excerpt: if deleted {
-                None
-            } else {
-                excerpt(body.as_deref())
-            },
-            deleted,
+            // A deleted target has no body here.
+            excerpt: excerpt(bodies.get(&id).map(String::as_str)),
+            deleted: deleted != 0,
         });
     }
     for q in quotes {
@@ -459,6 +463,48 @@ fn shown_rows(msgs: &[Message], shown: &HashMap<String, i64>) -> Vec<(usize, i64
         .collect()
 }
 
+/// One mention, as the viewer names it: where its placeholder is (UTF-16) and
+/// the name a sender would get.
+struct Named {
+    start: i64,
+    length: i64,
+    who: String,
+}
+
+/// The mentions in each of these rows' bodies, last first, so naming one
+/// leaves the offsets of those before it alone.
+async fn mentions_in(pool: &MySqlPool, rows: &[i64]) -> Result<HashMap<i64, Vec<Named>>> {
+    let mut out: HashMap<i64, Vec<Named>> = HashMap::new();
+    if rows.is_empty() {
+        return Ok(out);
+    }
+    let placeholders = vec!["?"; rows.len()].join(",");
+    let sql = format!(
+        "SELECT x.message_id, x.start_utf16, x.length_utf16,
+                COALESCE(ct.display_name, x.uuid) AS who
+           FROM signal_mentions x
+           LEFT JOIN contacts ct ON ct.uuid = x.uuid
+          WHERE x.message_id IN ({placeholders})
+          ORDER BY x.message_id, x.start_utf16 DESC",
+    );
+    let mut q = sqlx::query(AssertSqlSafe(sql));
+    for row in rows {
+        q = q.bind(row);
+    }
+    for r in q.fetch_all(pool).await? {
+        let start: i32 = r.try_get("start_utf16")?;
+        let length: i32 = r.try_get("length_utf16")?;
+        out.entry(r.try_get("message_id")?)
+            .or_default()
+            .push(Named {
+                start: start.into(),
+                length: length.into(),
+                who: r.try_get("who")?,
+            });
+    }
+    Ok(out)
+}
+
 /// Name the people this page's Signal messages mention. Signal sends a mention
 /// as U+FFFC in the text; each becomes `@` and the name a sender would get, as
 /// a `mention` run, and the runs after it move with the text. Run after
@@ -469,63 +515,59 @@ pub(super) async fn attach_mentions(
     shown: &HashMap<String, i64>,
 ) -> Result<()> {
     let rows = shown_rows(msgs, shown);
-    if rows.is_empty() {
-        return Ok(());
-    }
-    let placeholders = vec!["?"; rows.len()].join(",");
-    // Last first, so naming one leaves the offsets of those before it alone.
-    let sql = format!(
-        "SELECT x.message_id, x.start_utf16, x.length_utf16,
-                COALESCE(ct.display_name, x.uuid) AS who
-           FROM signal_mentions x
-           LEFT JOIN contacts ct ON ct.uuid = x.uuid
-          WHERE x.message_id IN ({placeholders})
-          ORDER BY x.message_id, x.start_utf16 DESC",
-    );
-    let mut q = sqlx::query(AssertSqlSafe(sql));
-    for (_, row) in &rows {
-        q = q.bind(row);
-    }
-    for r in q.fetch_all(pool).await? {
-        let row: i64 = r.try_get("message_id")?;
-        let start: i32 = r.try_get("start_utf16")?;
-        let length: i32 = r.try_get("length_utf16")?;
-        let who: String = r.try_get("who")?;
-        for (i, _) in rows.iter().filter(|(_, rr)| *rr == row) {
-            name_mention(&mut msgs[*i], start.into(), length.into(), &who);
+    let ids: Vec<i64> = rows.iter().map(|(_, row)| *row).collect();
+    let mentions = mentions_in(pool, &ids).await?;
+    for (i, row) in rows {
+        let m = &mut msgs[i];
+        for x in mentions.get(&row).into_iter().flatten() {
+            let Some(named) = m.body.as_mut().and_then(|b| put_name(b, x)) else {
+                continue;
+            };
+            let (end, moved) = (x.start + x.length, named - x.length);
+            for e in &mut m.entities {
+                if e.offset >= end {
+                    e.offset += moved;
+                } else if e.offset + e.length >= end && e.offset <= x.start {
+                    e.length += moved;
+                }
+            }
+            m.entities.push(Entity {
+                kind: "mention".to_string(),
+                offset: x.start,
+                length: named,
+                url: None,
+            });
         }
     }
     Ok(())
 }
 
-/// Replace the placeholder at `start..start + length` (UTF-16) with `@who`.
-/// Anything else there is left alone: the text has moved, and a name in the
-/// wrong place is worse than a placeholder.
-fn name_mention(m: &mut Message, start: i64, length: i64, who: &str) {
-    let Some(body) = m.body.as_mut() else { return };
-    let (Some(a), Some(b)) = (byte_at(body, start), byte_at(body, start + length)) else {
-        return;
-    };
-    if a == b || body[a..b].chars().any(|c| c != '\u{FFFC}') {
-        return;
-    }
-    let name = format!("@{who}");
-    let named = name.encode_utf16().count() as i64;
-    body.replace_range(a..b, &name);
-    let (end, moved) = (start + length, named - length);
-    for e in &mut m.entities {
-        if e.offset >= end {
-            e.offset += moved;
-        } else if e.offset + e.length >= end && e.offset <= start {
-            e.length += moved;
+/// Each body with its mentions named, for text shown without runs: a quote's
+/// excerpt, a search hit. Keyed by message row.
+async fn with_names(pool: &MySqlPool, bodies: &mut HashMap<i64, String>) -> Result<()> {
+    let rows: Vec<i64> = bodies.keys().copied().collect();
+    for (row, mentions) in mentions_in(pool, &rows).await? {
+        if let Some(body) = bodies.get_mut(&row) {
+            for x in &mentions {
+                put_name(body, x);
+            }
         }
     }
-    m.entities.push(Entity {
-        kind: "mention".to_string(),
-        offset: start,
-        length: named,
-        url: None,
-    });
+    Ok(())
+}
+
+/// Replace the placeholder at `x`'s place with `@who`, giving the name's
+/// length in UTF-16. Anything else there is left alone: the text has moved,
+/// and a name in the wrong place is worse than a placeholder.
+fn put_name(body: &mut String, x: &Named) -> Option<i64> {
+    let a = byte_at(body, x.start)?;
+    let b = byte_at(body, x.start + x.length)?;
+    if a == b || body[a..b].chars().any(|c| c != '\u{FFFC}') {
+        return None;
+    }
+    let name = format!("@{}", x.who);
+    body.replace_range(a..b, &name);
+    Some(name.encode_utf16().count() as i64)
 }
 
 /// The byte index of UTF-16 offset `at` in `s`, if one falls there.
@@ -713,7 +755,7 @@ pub(super) async fn search(
     // where the thread shows it, and a message matching in several versions is
     // one hit: the newest.
     let sql = if id.is_some() {
-        r"SELECT COALESCE(o.id, m.id) AS id, m.thread_id AS cid, c.name AS cname,
+        r"SELECT COALESCE(o.id, m.id) AS id, m.id AS row_id, m.thread_id AS cid, c.name AS cname,
                  COALESCE(o.server_ts, m.server_ts) AS ts,
                  COALESCE(ct.display_name, m.sender_uuid) AS sender, m.body AS body,
                  COALESCE(o.deleted, m.deleted) AS deleted
@@ -727,7 +769,7 @@ pub(super) async fn search(
           WHERE m.body LIKE ? AND m.thread_id = ?
           ORDER BY m.server_ts DESC LIMIT ?"
     } else {
-        r"SELECT COALESCE(o.id, m.id) AS id, m.thread_id AS cid, c.name AS cname,
+        r"SELECT COALESCE(o.id, m.id) AS id, m.id AS row_id, m.thread_id AS cid, c.name AS cname,
                  COALESCE(o.server_ts, m.server_ts) AS ts,
                  COALESCE(ct.display_name, m.sender_uuid) AS sender, m.body AS body,
                  COALESCE(o.deleted, m.deleted) AS deleted
@@ -747,6 +789,8 @@ pub(super) async fn search(
     }
     let rows = q.bind(limit).fetch_all(pool).await?;
     let mut seen = std::collections::HashSet::new();
+    // The row each hit's text came from: mentions are kept per row.
+    let mut matched = Vec::new();
     for r in rows {
         let deleted: i8 = r.try_get("deleted")?;
         let id: i64 = r.try_get("id")?;
@@ -754,6 +798,7 @@ pub(super) async fn search(
             continue;
         }
         let ts: i64 = r.try_get("ts")?;
+        matched.push(r.try_get::<i64, _>("row_id")?);
         hits.push(SearchHit {
             origin: Origin::Signal,
             conversation_id: r.try_get("cid")?,
@@ -765,6 +810,17 @@ pub(super) async fn search(
             // Signal's native unit is milliseconds, the same as `ts`.
             cursor: encode_cursor(ts, id),
         });
+    }
+    let mut bodies: HashMap<i64, String> = matched
+        .iter()
+        .zip(&hits)
+        .map(|(row, h)| (*row, h.snippet.clone()))
+        .collect();
+    with_names(pool, &mut bodies).await?;
+    for (row, h) in matched.iter().zip(&mut hits) {
+        if let Some(named) = bodies.remove(row) {
+            h.snippet = named;
+        }
     }
     Ok(hits)
 }

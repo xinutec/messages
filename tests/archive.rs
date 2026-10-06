@@ -2517,8 +2517,8 @@ async fn telegram_formatting_is_attached_and_a_retracted_run_is_not() {
 
 /// A thread of its own: a styled message, a link with a preview, a reply to a
 /// message the archive does not hold, an edited message whose styles changed
-/// with its text, two previews with pictures, one stored and one not yet, and
-/// a message naming two people, one the archive knows.
+/// with its text, two previews with pictures, one stored and one not yet, a
+/// message naming two people, one the archive knows, and a reply to it.
 async fn seed_signal_fields(pool: &MySqlPool, thread: &str) {
     for (ts, body, edit_of, edited) in [
         (10_000i64, "Hello bold mono strike", None::<i64>, 0i8),
@@ -2529,6 +2529,7 @@ async fn seed_signal_fields(pool: &MySqlPool, thread: &str) {
         (15_000, "https://example.org/stored", None, 0),
         (16_000, "https://example.org/unstored", None, 0),
         (17_000, "\u{FFFC} \u{FFFC} are you coming?", None, 0),
+        (18_000, "count me in", None, 0),
     ] {
         // The thread's own sender, as in `seed_edits`.
         sqlx::query(
@@ -2614,6 +2615,15 @@ async fn seed_signal_fields(pool: &MySqlPool, thread: &str) {
                 quote_text = 'something from before the archive'
           WHERE thread_id = ? AND server_ts = 12000",
     )
+    .bind(thread)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE messages SET quote_target_ts = 17000, quote_author_uuid = ?
+          WHERE thread_id = ? AND server_ts = 18000",
+    )
+    .bind(thread)
     .bind(thread)
     .execute(pool)
     .await
@@ -2705,6 +2715,32 @@ async fn a_signal_mention_names_whom_it_mentions() {
             ("mention".into(), 7, 10),
         ]
     );
+}
+
+/// Outside the thread a mention is named too: in a reply's quote, and in a
+/// search hit.
+#[tokio::test]
+async fn a_signal_mention_is_named_in_quotes_and_search() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let thread = "dm:fields-mentions-elsewhere";
+    seed_signal_fields(&pool, thread).await;
+    let named = "@Alice @u-unknown are you coming?";
+    let page = archive::messages_page(&pool, Origin::Signal, thread, None, 50, PageDir::Older)
+        .await
+        .unwrap();
+    let quoted = page.messages[7].reply_to.as_ref().expect("a reply");
+    assert_eq!(quoted.excerpt.as_deref(), Some(named));
+    let scope = archive::SearchScope::Conversation {
+        origin: Origin::Signal,
+        id: thread,
+    };
+    let hits = archive::search(&pool, "are you coming", 50, scope)
+        .await
+        .unwrap();
+    let snippets: Vec<&str> = hits.iter().map(|h| h.snippet.as_str()).collect();
+    assert_eq!(snippets, vec![named]);
 }
 
 /// A preview's picture is offered once it is stored, and served from where it
