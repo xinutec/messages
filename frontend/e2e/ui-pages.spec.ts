@@ -2,6 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 // The fleet-shared harness, @xinutec/ui-harness (~/Code/ui-harness).
 import {
   expectNoTextOverlaps,
+  expectNoClippedText,
+  expectNoClippedIcons,
   expectNoHorizontalOverflow,
   expectViewportIsPhone,
   expectIconFontLoaded,
@@ -188,6 +190,8 @@ test("conversation list — filter row + rows: lays out cleanly @ phone width", 
   // An icon-font fallback would show the word "search" over the placeholder.
   await expectIconFontLoaded(page);
   await expectNoTextOverlaps(page, testInfo);
+  await expectNoClippedText(page, testInfo);
+  await expectNoClippedIcons(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
@@ -202,6 +206,8 @@ test("open thread — meta + reactions + attachment: lays out cleanly @ phone wi
   await expectUpInTheBar(page);
   await expect(page.locator("ui-scaffold h1")).toHaveText("Alice Andersson");
   await expectNoTextOverlaps(page, testInfo);
+  await expectNoClippedText(page, testInfo);
+  await expectNoClippedIcons(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
@@ -224,6 +230,8 @@ test("a link preview and a quoted message from before the archive @ phone width"
   await bubble.scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath("preview.png") });
   await expectNoTextOverlaps(page, testInfo);
+  await expectNoClippedText(page, testInfo);
+  await expectNoClippedIcons(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
@@ -242,6 +250,8 @@ test("an album is one set under one meta line @ phone width", async ({ page }, t
     .toBe(3);
   await page.screenshot({ path: testInfo.outputPath("album.png") });
   await expectNoTextOverlaps(page, testInfo);
+  await expectNoClippedText(page, testInfo);
+  await expectNoClippedIcons(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
@@ -275,6 +285,8 @@ test("a group counts its readers; a DM says read @ phone width", async ({ page }
   await tag().waitFor();
   await expect(tag()).toHaveText("read by 2");
   await expectNoTextOverlaps(page, testInfo);
+  await expectNoClippedText(page, testInfo);
+  await expectNoClippedIcons(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
@@ -315,6 +327,8 @@ test("searching a conversation is reachable with the thread open @ phone width",
   // Scoped to the panel: a day header pins behind it, which a geometric scan
   // cannot tell from a collision.
   await expectNoTextOverlaps(page, testInfo, ".thread-search");
+  await expectNoClippedText(page, testInfo, ".thread-search");
+  await expectNoClippedIcons(page, testInfo, ".thread-search");
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
@@ -355,6 +369,8 @@ test("picking a date asks the server for that day @ phone width", async ({ page 
   expect(withOn.some((u) => u.includes("dir=at"))).toBe(true);
 
   await expectNoTextOverlaps(page, testInfo);
+  await expectNoClippedText(page, testInfo);
+  await expectNoClippedIcons(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
@@ -393,6 +409,8 @@ test("telegram formatting renders from the body, never from the entity @ phone w
   // A spoiler is covered, not invisible.
   await expect(bodyEl.locator(".fmt-spoiler")).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expectNoTextOverlaps(page, testInfo);
+  await expectNoClippedText(page, testInfo);
+  await expectNoClippedIcons(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
@@ -408,6 +426,8 @@ test("a deleted message: hidden by default @ phone width", async ({ page }, test
   await expect(bubble).not.toContainText("something said and then taken back");
   await expect(bubble.locator("img")).toHaveCount(0);
   await expectNoTextOverlaps(page, testInfo);
+  await expectNoClippedText(page, testInfo);
+  await expectNoClippedIcons(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
@@ -425,6 +445,8 @@ test("a deleted message: revealed on click @ phone width", async ({ page }, test
     .poll(() => bubble.locator("img").first().evaluate((i: HTMLImageElement) => i.naturalWidth))
     .toBeGreaterThan(0);
   await expectNoTextOverlaps(page, testInfo);
+  await expectNoClippedText(page, testInfo);
+  await expectNoClippedIcons(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
@@ -441,6 +463,8 @@ test("open an IRC thread — the composer: lays out cleanly @ phone width", asyn
     "a fairly long line of the sort somebody actually types on a phone, to see whether the send button survives it",
   );
   await expectNoTextOverlaps(page, testInfo);
+  await expectNoClippedText(page, testInfo);
+  await expectNoClippedIcons(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
@@ -469,6 +493,8 @@ test("the composer stays above the Android keyboard @ phone width", async ({ pag
   // Scoped to the composer: a scrolled thread pins the day pill over a message
   // by design, which a page-wide scan would count as a collision.
   await expectNoTextOverlaps(page, testInfo, ".composer");
+  await expectNoClippedText(page, testInfo, ".composer");
+  await expectNoClippedIcons(page, testInfo, ".composer");
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
@@ -611,6 +637,8 @@ test("search — a retracted hit is listed without its text @ phone width", asyn
   await expect(rows.filter({ hasText: "letter never arrived" })).toContainText("IRC euirc");
 
   await expectNoTextOverlaps(page, testInfo);
+  await expectNoClippedText(page, testInfo);
+  await expectNoClippedIcons(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
@@ -624,5 +652,7 @@ test("search — a failed search says so rather than \"No matches.\" @ phone wid
   await page.getByText("The search didn't run", { exact: false }).waitFor();
   await expect(page.locator(".empty")).toHaveCount(0);
   await expectNoTextOverlaps(page, testInfo);
+  await expectNoClippedText(page, testInfo);
+  await expectNoClippedIcons(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
 });

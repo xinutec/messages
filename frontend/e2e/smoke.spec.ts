@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { expectIconFontLoaded, expectNoTextOverlaps } from "@xinutec/ui-harness";
+import { expectIconFontLoaded, expectNoClippedIcons, expectNoClippedText, expectNoTextOverlaps } from "@xinutec/ui-harness";
 
 import type { Conversation, Me, MessagesPage } from "../src/app/models";
 import { testMessage } from "../src/app/test-message";
@@ -66,6 +66,8 @@ test("authenticated shell renders: icon font loaded, no text overlaps @ phone wi
   await page.getByText("Alice").waitFor();
   await expectIconFontLoaded(page);
   await expectNoTextOverlaps(page, testInfo);
+  await expectNoClippedText(page, testInfo);
+  await expectNoClippedIcons(page, testInfo);
 });
 
 // Two days, each taller than the viewport, so a day header pins while
@@ -134,6 +136,8 @@ test("a scrolled multi-day thread does not stack date separators", async ({ page
   await scrollThread(page, "bottom");
   await page.waitForTimeout(150);
   await expectNoTextOverlaps(page, testInfo);
+  await expectNoClippedText(page, testInfo);
+  await expectNoClippedIcons(page, testInfo);
 });
 
 test("the current day's date stays pinned at the top while scrolling", async ({ page }) => {
