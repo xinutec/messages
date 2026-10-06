@@ -202,7 +202,13 @@ export class Thread {
     return starts;
   });
 
-  /** Others are named, except in a DM, whose bar already says who. */
+  /** Words and nothing after them, so the time can share their last line. */
+  protected isPlain(m: Message): boolean {
+    return !!m.body && !m.deleted && !m.previews.length && !m.attachments.length
+      && !m.link_images.length && !m.link_offers.length;
+  }
+
+    /** Others are named, except in a DM, whose bar already says who. */
   readonly namesSenders = computed(() => this.conversation()?.kind !== 'dm');
 
   constructor() {

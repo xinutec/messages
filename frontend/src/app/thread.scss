@@ -182,6 +182,18 @@
     background: var(--mat-sys-primary-container);
     color: var(--mat-sys-on-primary-container);
   }
+  // Words only: the time floats at the end of the text, on its last line when
+  // there is room and under it when not, as Signal sets it.
+  &.plain {
+    display: flow-root;
+    > .body {
+      display: inline;
+    }
+    > .meta {
+      float: right;
+      margin: 0.45rem 0 0 0.75rem;
+    }
+  }
   // The clock and tags are unselectable, so a copy inside one message is just
   // its text; across messages thread.ts rebuilds lines from the model.
   .meta {

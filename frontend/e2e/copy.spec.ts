@@ -45,7 +45,9 @@ async function dragSelect(page: Page, from: string, to: string): Promise<void> {
   const b = (await page.locator(`.msg[data-id="${to}"] .body`).boundingBox())!;
   await page.mouse.move(a.x + 2, a.y + a.height / 2);
   await page.mouse.down();
-  await page.mouse.move(b.x + b.width - 2, b.y + b.height / 2, { steps: 12 });
+  // Just past the last letter, as a hand drags: a plain message's text is
+  // inline, so its box ends with the words.
+  await page.mouse.move(b.x + b.width + 1, b.y + b.height / 2, { steps: 12 });
   await page.mouse.up();
 }
 
@@ -81,7 +83,7 @@ test("dragging over a whole bubble copies the sentence, not the nick and clock",
   const body = (await page.locator('.msg[data-id="b"] .body').boundingBox())!;
   await page.mouse.move(bubble.x + 2, bubble.y + 2);
   await page.mouse.down();
-  await page.mouse.move(body.x + body.width - 2, body.y + body.height / 2, { steps: 12 });
+  await page.mouse.move(body.x + body.width + 1, body.y + body.height / 2, { steps: 12 });
   await page.mouse.up();
   await page.keyboard.press("ControlOrMeta+c");
   expect(await clipboardText(page)).toBe("hi");
