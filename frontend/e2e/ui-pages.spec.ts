@@ -106,7 +106,7 @@ const THREAD = {
       delivery: { state: "delivered", read_by: [] },
       attachments: [{ id: "p9", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true, fetch: null }], link_images: [], link_offers: [], edits: [] }),
     // An incoming album of four, captioned by its second member: the even case,
-    // where every row of the grid is full.
+    // where every row of the grid is full. The last is a video, as albums from a phone mix them.
     testMessage({ id: "21", ts: Date.UTC(2026, 0, 1, 12, 35), sender: "Alice Andersson", is_outgoing: false,
       body: null, deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740994", previews: [],
       delivery: null,
@@ -122,7 +122,7 @@ const THREAD = {
     testMessage({ id: "24", ts: Date.UTC(2026, 0, 1, 12, 35), sender: "Alice Andersson", is_outgoing: false,
       body: null, deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740994", previews: [],
       delivery: null,
-      attachments: [{ id: "p24", content_type: "image/jpeg", file_name: null, size: 4096, available: true, is_image: true, fetch: null }], link_images: [], link_offers: [], edits: [] }),
+      attachments: [{ id: "v24", content_type: "video/webm", file_name: null, size: 10832, available: true, is_image: false, fetch: null }], link_images: [], link_offers: [], edits: [] }),
   ],
   has_more: false,
   next_cursor: null,
@@ -159,6 +159,10 @@ async function mockApi(page: Page): Promise<void> {
   // See PIXELS.
   await page.route(/\/api\/(attachments|link-previews)\//, (r) =>
     r.fulfill({ contentType: "image/svg+xml", body: PIXELS }),
+  );
+  // A second of test pattern, in WebM: Playwright's Chromium plays no H.264.
+  await page.route("**/api/attachments/v24", (r) =>
+    r.fulfill({ contentType: "video/webm", path: "e2e/clip.webm" }),
   );
 }
 
@@ -272,12 +276,15 @@ test("an album is one set under one meta line @ phone width", async ({ page }, t
     await album.scrollIntoViewIfNeeded();
     await expect(album.locator(".msg")).toHaveCount(pictures);
     await expect(album.locator(".meta:visible")).toHaveCount(1);
+    // Every tile drawn: a picture loaded, a video with a frame to show before
+    // play (`readyState` 2 is HAVE_CURRENT_DATA).
     await expect
-      .poll(() => album.locator("img").evaluateAll((els) =>
-        els.filter((e) => e instanceof HTMLImageElement && e.complete && e.naturalWidth > 0).length))
+      .poll(() => album.locator("img, video").evaluateAll((els) =>
+        els.filter((e) => e instanceof HTMLImageElement ? e.complete && e.naturalWidth > 0
+          : e instanceof HTMLVideoElement && e.readyState >= 2).length))
       .toBe(pictures);
     const albumWidth = (await album.boundingBox())!.width;
-    const boxes = await album.locator("img").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).map((r) => ({ w: r.width, top: r.top, bottom: r.bottom })));
+    const boxes = await album.locator("img, video").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).map((r) => ({ w: r.width, top: r.top, bottom: r.bottom })));
     // As few rows as the pictures need: the captioned one once took a row of
     // its own, and four came out as [1 2] [3 _] [4 _].
     expect(new Set(boxes.map((b) => Math.round(b.top))).size).toBe(Math.ceil(pictures / 2));

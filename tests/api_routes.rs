@@ -178,9 +178,9 @@ async fn healthz_needs_no_session() {
 
 /// A picture the archive holds never changes under its id, so the client keeps
 /// it: going back to a thread must not fetch every picture again. Private, since
-/// only a signed-in reader may see it.
+/// only a signed-in reader may see it. Served in parts too, for video.
 #[tokio::test]
-async fn a_held_picture_is_kept_by_the_client() {
+async fn a_held_file_is_kept_by_the_client_and_served_in_parts() {
     let Some(pool) = pool().await else { return };
     let dir = std::env::temp_dir().join(format!("messages-held-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -205,15 +205,15 @@ async fn a_held_picture_is_kept_by_the_client() {
         reqwest::Client::new(),
         None,
     ));
-    let res = app
-        .oneshot(
-            Request::get(format!("/api/link-images/{hash}"))
-                .header("cookie", format!("{}={cookie}", session::COOKIE_NAME))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let get = |range: Option<&str>| {
+        let mut req = Request::get(format!("/api/link-images/{hash}"))
+            .header("cookie", format!("{}={cookie}", session::COOKIE_NAME));
+        if let Some(range) = range {
+            req = req.header("range", range);
+        }
+        app.clone().oneshot(req.body(Body::empty()).unwrap())
+    };
+    let res = get(None).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     assert_eq!(
         res.headers()
@@ -221,5 +221,17 @@ async fn a_held_picture_is_kept_by_the_client() {
             .and_then(|v| v.to_str().ok()),
         Some("private, max-age=31536000, immutable")
     );
+    assert_eq!(
+        res.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("image/png")
+    );
+    // A part, as a video player asks for one: without it a video cannot seek,
+    // and Safari will not play it at all.
+    let res = get(Some("bytes=4-9")).await.unwrap();
+    assert_eq!(res.status(), StatusCode::PARTIAL_CONTENT);
+    let body = axum::body::to_bytes(res.into_body(), 64).await.unwrap();
+    assert_eq!(&body[..], b"really");
     std::fs::remove_dir_all(&dir).unwrap();
 }

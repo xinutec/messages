@@ -163,6 +163,12 @@
                                   [attr.aria-label]="'View ' + (attachmentName(a) ?? 'picture')">
                             <img [src]="attachmentUrl(a)" [alt]="attachmentName(a) ?? 'image'" loading="lazy" />
                           </button>
+                        } @else if (a.available && isVideo(a)) {
+                          <!-- Played in place. The `#t` asks for a moment in, so the browser fetches
+                               that frame and shows it as the preview before play. -->
+                          <video controls playsinline preload="metadata"
+                                 [src]="attachmentUrl(a) + '#t=0.1'"
+                                 [attr.aria-label]="attachmentName(a) ?? 'video'"></video>
                         } @else if (a.available) {
                           <a [href]="attachmentUrl(a)" target="_blank" rel="noopener">
                             <mat-icon>attach_file</mat-icon>{{ attachmentName(a) ?? attachmentNoun(a) }}

@@ -4,9 +4,11 @@
 use axum::Json;
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::{StatusCode, header};
-use axum::response::{IntoResponse, Response};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::response::Response;
 use serde::{Deserialize, Serialize};
+use tower::ServiceExt;
+use tower_http::services::ServeFile;
 
 use crate::archive;
 use crate::error::AppError;
@@ -103,36 +105,45 @@ pub struct LinkImageState {
 /// Serve bytes the archive says it holds.
 ///
 /// By the basename of the stored name under `dir`, so a stored path cannot
-/// escape the mount. The row claims the bytes exist, so a read failure means the
-/// mount and the archive disagree: logged, and a 404 for the client.
+/// escape the mount. The row claims the bytes exist, so a missing file means the
+/// mount and the archive disagree: logged, and a 404 for the client. Through
+/// `ServeFile`, which streams and answers `Range`: a video player asks in parts.
 async fn serve_held(
     what: &str,
     dir: &str,
     stored: &str,
     content_type: Option<String>,
+    asked: HeaderMap,
 ) -> Result<Response, AppError> {
     let Some(name) = std::path::Path::new(stored).file_name() else {
         tracing::warn!("{what}: the stored name names no file: {stored:?}");
         return Err(AppError::NotFound);
     };
     let path = std::path::Path::new(dir).join(name);
-    let bytes = tokio::fs::read(&path).await.map_err(|e| {
+    let mut req = axum::http::Request::new(Body::empty());
+    *req.headers_mut() = asked;
+    let Ok(mut res) = ServeFile::new(&path).oneshot(req).await;
+    if res.status() == StatusCode::NOT_FOUND {
         tracing::warn!(
-            "{what}: recorded as held, but reading {} failed: {e}",
+            "{what}: recorded as held, but {} is missing",
             path.display()
         );
-        AppError::NotFound
-    })?;
-    let ct = content_type.unwrap_or_else(|| "application/octet-stream".to_string());
+        return Err(AppError::NotFound);
+    }
+    // The archive's type, not one guessed from the stored name.
+    let ct = content_type
+        .and_then(|c| HeaderValue::from_str(&c).ok())
+        .unwrap_or(HeaderValue::from_static("application/octet-stream"));
+    let headers = res.headers_mut();
+    headers.insert(header::CONTENT_TYPE, ct);
     // Held bytes never change under their id, so the client keeps them: going
     // back to a thread must not fetch every picture again. Private: they are a
     // signed-in reader's alone.
-    let cache = "private, max-age=31536000, immutable".to_string();
-    Ok((
-        [(header::CONTENT_TYPE, ct), (header::CACHE_CONTROL, cache)],
-        Body::from(bytes),
-    )
-        .into_response())
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=31536000, immutable"),
+    );
+    Ok(res.map(Body::new))
 }
 
 /// GET /api/gchat-attachments/{id} → a Google Chat picture from the PVC.
@@ -141,19 +152,28 @@ async fn serve_held(
 pub async fn gchat_attachment(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
+    asked: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<Response, AppError> {
     let Some((content_type, stored)) = archive::gchat::attachment_blob(&app.pool, id).await? else {
         return Err(AppError::NotFound);
     };
     let what = format!("gchat attachment {id}");
-    serve_held(&what, &app.cfg.attachments_dir, &stored, content_type).await
+    serve_held(
+        &what,
+        &app.cfg.attachments_dir,
+        &stored,
+        content_type,
+        asked,
+    )
+    .await
 }
 
 /// GET /api/attachments/{id} → a Signal attachment from the PVC.
 pub async fn attachment(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
+    asked: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<Response, AppError> {
     let Some((content_type, stored)) = archive::signal::attachment_blob(&app.pool, id).await?
@@ -161,13 +181,21 @@ pub async fn attachment(
         return Err(AppError::NotFound);
     };
     let what = format!("attachment {id}");
-    serve_held(&what, &app.cfg.attachments_dir, &stored, content_type).await
+    serve_held(
+        &what,
+        &app.cfg.attachments_dir,
+        &stored,
+        content_type,
+        asked,
+    )
+    .await
 }
 
 /// GET /api/link-previews/{id}/image → the picture a Signal link preview carried.
 pub async fn link_preview_image(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
+    asked: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<Response, AppError> {
     let Some((content_type, stored)) = archive::signal::preview_image_blob(&app.pool, id).await?
@@ -175,7 +203,14 @@ pub async fn link_preview_image(
         return Err(AppError::NotFound);
     };
     let what = format!("link preview {id}'s picture");
-    serve_held(&what, &app.cfg.attachments_dir, &stored, content_type).await
+    serve_held(
+        &what,
+        &app.cfg.attachments_dir,
+        &stored,
+        content_type,
+        asked,
+    )
+    .await
 }
 
 /// GET /api/telegram-media/{id} → bytes the archive holds for a Telegram message.
@@ -185,13 +220,21 @@ pub async fn link_preview_image(
 pub async fn telegram_media(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
+    asked: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<Response, AppError> {
     let Some((content_type, stored)) = archive::telegram::media_blob(&app.pool, id).await? else {
         return Err(AppError::NotFound);
     };
     let what = format!("telegram media {id}");
-    serve_held(&what, &app.cfg.telegram_media_dir, &stored, content_type).await
+    serve_held(
+        &what,
+        &app.cfg.telegram_media_dir,
+        &stored,
+        content_type,
+        asked,
+    )
+    .await
 }
 
 /// GET /api/telegram-media/{id}/state → has it arrived yet?
@@ -232,13 +275,21 @@ pub async fn request_telegram_media(
 pub async fn link_image(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
+    asked: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
     let Some((content_type, stored)) = archive::links::blob(&app.pool, &id).await? else {
         return Err(AppError::NotFound);
     };
     let what = format!("link image {id}");
-    serve_held(&what, &app.cfg.link_images_dir, &stored, Some(content_type)).await
+    serve_held(
+        &what,
+        &app.cfg.link_images_dir,
+        &stored,
+        Some(content_type),
+        asked,
+    )
+    .await
 }
 
 /// POST /api/link-images/{id}/request → a reader tapped "show this picture".

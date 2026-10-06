@@ -11,7 +11,7 @@ import { Pictures, ScaffoldActions, scaffoldTitle } from '@xinutec/ui-scaffold';
 
 import { Subject, catchError, firstValueFrom, of, switchMap } from 'rxjs';
 
-import { attachmentName, attachmentNoun } from './attachment';
+import { attachmentName, attachmentNoun, isVideo } from './attachment';
 import { FetchRequests } from './fetch-requests';
 import { segments } from './formatting';
 import { LogScope, chatLogHtml, formatChatLog } from './copy-log';
@@ -78,6 +78,7 @@ export class Thread {
     return origin ? `/api/${route[origin]}/${a.id}` : '';
   }
   protected readonly attachmentNoun = attachmentNoun;
+  protected readonly isVideo = isVideo;
 
   /** Deleted messages the reader chose to see, by id. Screen only (the clipboard
    *  still says `(deleted)`), reset with the conversation. Ids rather than a flag
