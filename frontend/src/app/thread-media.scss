@@ -5,18 +5,22 @@
 // one meta line, and the captioned member comes last at full width.
 .run.album {
   max-width: min(70%, 40rem);
-  margin: 0.4rem 0;
+  margin: 0.6rem 0 2px;
   padding: 0.4rem 0.6rem;
-  border-radius: 0.5rem;
-  background: color-mix(in srgb, var(--mat-sys-on-surface) 5%, transparent);
+  border-radius: 1rem;
+  background: var(--mat-sys-surface-container-high);
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.2rem;
   &.out {
     margin-left: auto;
-    background: color-mix(in srgb, var(--mat-sys-primary) 15%, transparent);
+    background: var(--mat-sys-primary-container);
+    color: var(--mat-sys-on-primary-container);
   }
+  // At the foot, as on any bubble: after the captioned member, which is `order: 1`.
   .album-meta {
+    order: 2;
+    justify-content: flex-end;
     grid-column: 1 / -1;
     font: var(--mat-sys-label-small);
     opacity: 0.7;
@@ -34,7 +38,9 @@
     margin: 0;
     padding: 0;
     background: none;
-    .meta {
+    // The album's own line names the sender and the time.
+    .meta,
+    .who {
       display: none;
     }
     .attach {

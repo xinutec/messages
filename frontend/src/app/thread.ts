@@ -189,6 +189,22 @@ export class Thread {
     return groups;
   });
 
+  /** Messages that start a run by one sender on one day: where a bubble names
+   *  who speaks, and where the gap between bubbles widens. */
+  readonly startsRun = computed(() => {
+    const starts = new Set<string>();
+    let prev: Message | undefined;
+    for (const m of this.rendered()) {
+      const sameDay = prev && new Date(prev.ts).toDateString() === new Date(m.ts).toDateString();
+      if (!sameDay || prev?.sender !== m.sender || prev.is_outgoing !== m.is_outgoing) starts.add(m.id);
+      prev = m;
+    }
+    return starts;
+  });
+
+  /** Others are named, except in a DM, whose bar already says who. */
+  readonly namesSenders = computed(() => this.conversation()?.kind !== 'dm');
+
   constructor() {
     scaffoldTitle(this.barTitle);
     // `switchMap`, so a slow answer cannot land after a newer one.

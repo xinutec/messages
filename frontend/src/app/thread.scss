@@ -149,12 +149,23 @@
   }
 }
 
+// A bubble: mine in the primary container, theirs on the surface. Tight within
+// one sender's run, a gap where the next begins.
 .msg {
   max-width: 70%;
-  margin: 0.4rem 0;
-  padding: 0.4rem 0.6rem;
-  border-radius: 0.5rem;
-  background: color-mix(in srgb, var(--mat-sys-on-surface) 5%, transparent);
+  margin: 2px 0;
+  padding: 0.35rem 0.65rem 0.25rem;
+  border-radius: 1rem;
+  background: var(--mat-sys-surface-container-high);
+  &.first {
+    margin-top: 0.6rem;
+  }
+  // Furniture like `.meta`, so a copy is only the words.
+  .who {
+    font: var(--mat-sys-label-medium);
+    color: var(--mat-sys-primary);
+    user-select: none;
+  }
   // No `content-visibility: auto`: it renders off-screen rows at a guessed
   // height, and the resize on scroll would shift the viewport.
 
@@ -168,16 +179,19 @@
 
   &.out {
     margin-left: auto;
-    background: color-mix(in srgb, var(--mat-sys-primary) 15%, transparent);
+    background: var(--mat-sys-primary-container);
+    color: var(--mat-sys-on-primary-container);
   }
-  // Nick and clock are unselectable, so a copy inside one message is just its
-  // text; across messages thread.ts rebuilds lines from the model.
+  // The clock and tags are unselectable, so a copy inside one message is just
+  // its text; across messages thread.ts rebuilds lines from the model.
   .meta {
     font: var(--mat-sys-label-small);
     opacity: 0.7;
     display: flex;
+    justify-content: flex-end;
     gap: 0.5rem;
     flex-wrap: wrap;
+    margin-top: 0.1rem;
     user-select: none;
   }
   .body {

@@ -1152,3 +1152,41 @@ describe('the delivery tag', () => {
     expect(tag('r')?.textContent?.trim()).toBe('read');
   });
 });
+
+/** A bubble names its sender once per run, and only where the bar does not. */
+describe('the sender line', () => {
+  async function render(messages: Message[], kind: Conversation['kind']) {
+    const { thread, ref, fixture } = setup();
+    const api = TestBed.inject(MessagesApi) as unknown as {
+      messages: ReturnType<typeof vi.fn>;
+      conversations: ReturnType<typeof vi.fn>;
+    };
+    api.conversations.mockReturnValue(
+      of([{ origin: 'signal', id: 'dm:a', name: 'Chat', kind, network: null, message_count: 1, last_ts: 1, last: null }]),
+    );
+    api.messages.mockReturnValue(page(messages));
+    TestBed.inject(MessagesStore).refresh();
+    ref.setInput('origin', 'signal');
+    ref.setInput('id', 'dm:a');
+    fixture.detectChanges();
+    await settle(thread);
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    return [...root.querySelectorAll('.msg')].map((el) => el.querySelector('.who')?.textContent?.trim() ?? null);
+  }
+  const from = (id: string, ts: number, sender: string, is_outgoing = false): Message => ({
+    ...msg(id, ts), sender, is_outgoing,
+  });
+
+  it('names each run of another sender in a group, once', async () => {
+    const named = await render(
+      [from('1', 100, 'Alice'), from('2', 200, 'Alice'), from('3', 300, 'Bob'), from('4', 400, 'Me', true), from('5', 500, 'Alice')],
+      'group',
+    );
+    expect(named).toEqual(['Alice', null, 'Bob', null, 'Alice']);
+  });
+
+  it('names nobody in a DM', async () => {
+    expect(await render([from('1', 100, 'Alice'), from('2', 200, 'Me', true)], 'dm')).toEqual([null, null]);
+  });
+});

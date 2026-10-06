@@ -73,7 +73,9 @@
             <div class="run" [class.album]="run.length > 1" [class.out]="run[0].is_outgoing">
               @if (run.length > 1) {
                 <div class="meta album-meta">
-                  <span>{{ run[0].sender }}</span>
+                  @if (!run[0].is_outgoing && namesSenders()) {
+                    <span>{{ run[0].sender }}</span>
+                  }
                   <span>{{ run[0].ts | date: 'shortTime' }}</span>
                   @if (run[run.length - 1].delivery; as d) {
                     <span class="tag delivery" [class.unread]="deliveryPending(d)"
@@ -82,32 +84,11 @@
                 </div>
               }
               @for (m of run; track m.id) {
-                <div class="msg" [class.out]="m.is_outgoing" [class.captioned]="!!m.body" [class.landed]="landedId() === m.id" [attr.data-id]="m.id" [attr.data-ts]="m.ts">
-                  <div class="meta">
-                    <span>{{ m.sender }}</span>
-                    <span>{{ m.ts | date: 'shortTime' }}</span>
-                    <!-- The tag opens the earlier versions. -->
-                    @if (m.edited) {
-                      @if (m.edits.length) {
-                        <button type="button" class="tag history-toggle" (click)="toggleHistory(m.id)"
-                                [attr.aria-expanded]="isHistoryOpen(m.id)">
-                          edited
-                        </button>
-                      } @else {
-                        <span class="tag">edited</span>
-                      }
-                    }
-                    <!-- Only once revealed; while hidden the body already says `(deleted)`. -->
-                    @if (m.deleted && isRevealed(m.id)) {
-                      <span class="tag">deleted</span>
-                    }
-                    <!-- Only when the archive can say; `delivery` is null otherwise. The title names
-                         who and when, which only Signal records. -->
-                    @if (m.delivery; as d) {
-                      <span class="tag delivery" [class.unread]="deliveryPending(d)"
-                            [title]="readers(d)">{{ deliveryLabel(d) }}</span>
-                    }
-                  </div>
+                <div class="msg" [class.out]="m.is_outgoing" [class.first]="startsRun().has(m.id)" [class.captioned]="!!m.body" [class.landed]="landedId() === m.id" [attr.data-id]="m.id" [attr.data-ts]="m.ts">
+                  <!-- Who speaks, once per run, and only where the bar does not already say. -->
+                  @if (!m.is_outgoing && namesSenders() && startsRun().has(m.id)) {
+                    <div class="who">{{ m.sender }}</div>
+                  }
                   <!-- What this message replied to, above the body and outside the deletion gate:
                        being a reply is not content. Clickable only when the archive holds the
                        target. -->
@@ -226,6 +207,31 @@
                     }
                   }
 
+                  <!-- When, and what became of it, small at the foot as Signal puts it. -->
+                  <div class="meta">
+                    <span>{{ m.ts | date: 'shortTime' }}</span>
+                    <!-- The tag opens the earlier versions. -->
+                    @if (m.edited) {
+                      @if (m.edits.length) {
+                        <button type="button" class="tag history-toggle" (click)="toggleHistory(m.id)"
+                                [attr.aria-expanded]="isHistoryOpen(m.id)">
+                          edited
+                        </button>
+                      } @else {
+                        <span class="tag">edited</span>
+                      }
+                    }
+                    <!-- Only once revealed; while hidden the body already says `(deleted)`. -->
+                    @if (m.deleted && isRevealed(m.id)) {
+                      <span class="tag">deleted</span>
+                    }
+                    <!-- Only when the archive can say; `delivery` is null otherwise. The title names
+                         who and when, which only Signal records. -->
+                    @if (m.delivery; as d) {
+                      <span class="tag delivery" [class.unread]="deliveryPending(d)"
+                            [title]="readers(d)">{{ deliveryLabel(d) }}</span>
+                    }
+                  </div>
                   @if (m.reactions.length) {
                     <div class="reactions">
                       @for (r of m.reactions; track r.emoji) {
