@@ -133,6 +133,11 @@
   &:has(> .reactions) {
     margin-bottom: 1rem;
   }
+  // Towards the middle of the screen, as Signal sets them: at the right edge of
+  // someone else's bubble, the left edge of mine.
+  &:not(.out) > .reactions {
+    text-align: right;
+  }
   .reactions {
     // Under a floated time, never beside it.
     clear: both;
