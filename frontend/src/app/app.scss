@@ -84,17 +84,9 @@ ui-scaffold {
       font: var(--mat-sys-label-small);
       color: var(--mat-sys-on-surface-variant);
     }
-    // Two items, time over count: Material sizes the meta slot for one line of
-    // text, so it is centred on the row and sized by its content instead.
-    .when {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-end;
-      gap: 0.3rem;
-      align-self: center;
-      height: auto;
-      margin-top: 0;
-    }
+    // The count sits in the row's corner, level with the last message, as
+    // Signal puts it; the meta slot holds only the time, level with the name.
+    position: relative;
     // Unread on the phone: the name bold, the time and a count in the accent.
     &.unread {
       @include mat.list-overrides(
@@ -106,13 +98,19 @@ ui-scaffold {
         color: var(--mat-sys-primary);
       }
     }
+    // A circle for one digit, a pill for more.
     .badge {
-      min-width: 1.25rem;
-      padding: 0.1rem 0.35rem;
-      border-radius: 0.7rem;
+      position: absolute;
+      right: 16px;
+      bottom: 8px;
+      min-width: 20px;
+      height: 20px;
+      padding: 0 6px;
+      border-radius: 10px;
+      line-height: 20px;
+      text-align: center;
       background: var(--mat-sys-primary);
       color: var(--mat-sys-on-primary);
-      text-align: center;
     }
     .quiet {
       font-style: italic;

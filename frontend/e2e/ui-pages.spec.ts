@@ -179,6 +179,11 @@ test("conversation list — filter row + rows: lays out cleanly @ phone width", 
   await expect(row("Alice Andersson").locator(".badge")).toHaveText("3");
   await expect(row("Saturday climbing").locator(".badge")).toHaveText("99+");
   await expect(row("Bob Bytecode").locator(".badge")).toHaveCount(0);
+  // Whole and round: it once sat clipped in a slot sized for one line of text.
+  const rowBox = (await row("Alice Andersson").boundingBox())!;
+  const badge = (await row("Alice Andersson").locator(".badge").boundingBox())!;
+  expect(badge.y + badge.height).toBeLessThanOrEqual(rowBox.y + rowBox.height);
+  expect(badge.width).toBeCloseTo(badge.height, 0);
   await page.screenshot({ path: testInfo.outputPath("list.png") });
   // An icon-font fallback would show the word "search" over the placeholder.
   await expectIconFontLoaded(page);
