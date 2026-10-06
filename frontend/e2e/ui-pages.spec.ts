@@ -9,6 +9,7 @@ import {
   expectIconFontLoaded,
   expectRecoversFromMissingBundle,
   expectUpInTheBar,
+  expectBackClosesOverlay,
 } from "@xinutec/ui-harness";
 
 import type { Conversation, Me, MessagesPage, SearchHit, SendResult } from "../src/app/models";
@@ -253,6 +254,33 @@ test("an album is one set under one meta line @ phone width", async ({ page }, t
   await expectNoClippedText(page, testInfo);
   await expectNoClippedIcons(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
+});
+
+// A picture opens in the fleet's viewer over the thread, and back closes it
+// with the thread where it was.
+test("a picture opens in the viewer and back closes it @ phone width", async ({ page }, testInfo) => {
+  await mockApi(page);
+  await page.goto("/conversation/signal/dm:a");
+  const picture = page.locator(".attach .picture").first();
+  await picture.scrollIntoViewIfNeeded();
+  await expectBackClosesOverlay(page, async () => {
+    await picture.click();
+    const img = page.locator("ui-picture-sheet img");
+    await expect(img).toHaveAttribute("src", /^\/api\/attachments\//);
+    // Settled: the sheet has slid up to fill the screen, and the picture is drawn.
+    const viewport = page.viewportSize()!;
+    await expect
+      .poll(async () => (await page.locator(".ui-picture-panel").boundingBox())?.height)
+      .toBeCloseTo(viewport.height, 0);
+    await expect.poll(() => img.evaluate((e) => (e instanceof HTMLImageElement ? e.naturalWidth : 0))).toBeGreaterThan(0);
+    // The pane is full height at once; the sheet inside it slides up into it.
+    await page.locator("ui-picture-sheet").evaluate(async (e) => {
+      const sheet = e.closest(".cdk-overlay-pane") ?? e;
+      await Promise.all(sheet.getAnimations({ subtree: true }).map((a) => a.finished));
+    });
+    await page.screenshot({ path: testInfo.outputPath("viewer.png") });
+    await expectNoClippedIcons(page, testInfo, "ui-picture-sheet");
+  });
 });
 
 // Who reacted lives in a `title`, which cannot change the chip's size, and

@@ -46,7 +46,8 @@
     .attach {
       margin-top: 0;
     }
-    .attach a {
+    .attach a,
+    .attach .picture {
       display: block;
     }
     .attach img {
@@ -161,6 +162,13 @@
 
   .attach {
     margin-top: 0.3rem;
+    // A picture is a button that opens the viewer; it looks like the picture.
+    .picture {
+      padding: 0;
+      border: 0;
+      background: none;
+      cursor: zoom-in;
+    }
     img {
       max-width: min(320px, 100%);
       max-height: 320px;

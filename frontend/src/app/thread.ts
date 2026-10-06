@@ -7,7 +7,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatListModule } from '@angular/material/list';
 import { FormsModule } from '@angular/forms';
-import { ScaffoldActions, scaffoldTitle } from '@xinutec/ui-scaffold';
+import { Pictures, ScaffoldActions, scaffoldTitle } from '@xinutec/ui-scaffold';
 
 import { Subject, catchError, firstValueFrom, of, switchMap } from 'rxjs';
 
@@ -52,6 +52,13 @@ export class Thread {
 
   // Shared with the clipboard; see attachment.ts.
   protected readonly attachmentName = attachmentName;
+
+  private readonly pictures = inject(Pictures);
+
+  /** A picture, full screen in the fleet's viewer; back closes it. */
+  protected viewPicture(a: Attachment): void {
+    this.pictures.open({ label: attachmentName(a) ?? 'picture', source: this.attachmentUrl(a) });
+  }
 
   /** Where an attachment's bytes come from: each origin has its own route, since
    *  attachment ids are per origin. */

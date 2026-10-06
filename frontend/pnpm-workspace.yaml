@@ -8,7 +8,7 @@ allowBuilds:
   esbuild: true
   lmdb: true
   msgpackr-extract: true
-  "@xinutec/ui-harness@https://codeload.github.com/xinutec/ui-harness/tar.gz/a68eba05fef26f9370051dfd1da40fd2ff1221de": true
+  "@xinutec/ui-harness@https://codeload.github.com/xinutec/ui-harness/tar.gz/af9b3d9f00622c9c06f775e7b737098f4020d8f4": true
 
 # npm-format `overrides` from package.json, which pnpm does not read.
 overrides:
