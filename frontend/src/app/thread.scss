@@ -216,6 +216,25 @@
   }
 }
 
+// One sender's run reads as one block: where two of its bubbles meet, the
+// corners on the sender's side tighten, as Signal draws them.
+.run {
+  > .msg:not(.first) {
+    border-top-left-radius: 0.3rem;
+  }
+  &:has(+ .run > .msg:not(.first)) > .msg {
+    border-bottom-left-radius: 0.3rem;
+  }
+  &.out > .msg:not(.first) {
+    border-top-left-radius: 1rem;
+    border-top-right-radius: 0.3rem;
+  }
+  &.out:has(+ .run > .msg:not(.first)) > .msg {
+    border-bottom-left-radius: 1rem;
+    border-bottom-right-radius: 0.3rem;
+  }
+}
+
 // Phone: full-width pane with roomier bubbles.
 @media (max-width: 767px) {
   :host {
