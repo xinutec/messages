@@ -9,7 +9,6 @@ import {
   expectIconFontLoaded,
   expectRecoversFromMissingBundle,
   expectUpInTheBar,
-  expectBackClosesOverlay,
 } from "@xinutec/ui-harness";
 
 import type { Conversation, Me, MessagesPage, SearchHit, SendResult } from "../src/app/models";
@@ -254,24 +253,6 @@ test("an album is one set under one meta line @ phone width", async ({ page }, t
   await expectNoClippedText(page, testInfo);
   await expectNoClippedIcons(page, testInfo);
   await expectNoHorizontalOverflow(page, testInfo);
-});
-
-// A picture opens over the thread, and back closes it with the thread where it
-// was: as a link it replaced the page in the phone app, and back reloaded the
-// thread and every picture in it.
-test("a picture opens over the thread and back closes it @ phone width", async ({ page }, testInfo) => {
-  await mockApi(page);
-  await page.goto("/conversation/signal/dm:a");
-  const picture = page.locator(".attach .picture").first();
-  await picture.scrollIntoViewIfNeeded();
-  await expectBackClosesOverlay(page, async () => {
-    await picture.click();
-    await expect(page.locator("app-picture-viewer img")).toHaveAttribute("src", /^\/api\/attachments\//);
-    // Once the backdrop has faded in, so the screenshot shows what stays.
-    await expect(page.locator(".picture-viewer-backdrop")).toHaveCSS("opacity", "1");
-    await page.screenshot({ path: testInfo.outputPath("viewer.png") });
-    await expectNoClippedIcons(page, testInfo, "app-picture-viewer");
-  });
 });
 
 // Who reacted lives in a `title`, which cannot change the chip's size, and

@@ -1,5 +1,4 @@
 @use '@angular/material' as mat;
-@use '@xinutec/ui-harness/tokens';
 
 html {
   color-scheme: light dark;
@@ -64,19 +63,4 @@ mat-icon {
   &:focus-within {
     outline: 2px solid var(--mat-sys-primary);
   }
-}
-
-// The picture viewer's overlay: an overlay panel, so styled here by its
-// panelClass. No surface of its own; the picture lies on black, as in Signal.
-.picture-viewer {
-  @include mat.dialog-overrides(
-    (
-      container-color: transparent,
-      container-shape: 0,
-      container-elevation-shadow: none,
-    )
-  );
-}
-.picture-viewer-backdrop {
-  background: var(--media-bed);
 }

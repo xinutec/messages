@@ -173,12 +173,9 @@
                       <div class="attach">
                         <!-- Named by `attachment.ts`, as the clipboard names it; the icon gives the kind. -->
                         @if (a.available && a.is_image) {
-                          <!-- Opens over the thread, not in place of it: a link would replace the
-                               page in the phone app, and back would reload the thread. -->
-                          <button type="button" class="picture" (click)="viewPicture(a)"
-                                  [attr.aria-label]="'View ' + (attachmentName(a) ?? 'picture')">
+                          <a [href]="attachmentUrl(a)" target="_blank" rel="noopener">
                             <img [src]="attachmentUrl(a)" [alt]="attachmentName(a) ?? 'image'" loading="lazy" />
-                          </button>
+                          </a>
                         } @else if (a.available) {
                           <a [href]="attachmentUrl(a)" target="_blank" rel="noopener">
                             <mat-icon>attach_file</mat-icon>{{ attachmentName(a) ?? attachmentNoun(a) }}
