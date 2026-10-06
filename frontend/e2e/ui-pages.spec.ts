@@ -530,6 +530,7 @@ test("open an IRC thread — the composer: lays out cleanly @ phone width", asyn
   await page.getByLabel("Message", { exact: true }).fill(
     "a fairly long line of the sort somebody actually types on a phone, to see whether the send button survives it",
   );
+  await page.screenshot({ path: testInfo.outputPath("composer.png") });
   await expectNoTextOverlaps(page, testInfo);
   await expectNoClippedText(page, testInfo);
   await expectNoClippedIcons(page, testInfo);

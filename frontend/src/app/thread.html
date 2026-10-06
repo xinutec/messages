@@ -6,7 +6,6 @@
          empty `type=date` shows only `dd/mm/yyyy`. -->
     <label class="go-to-date">
       <mat-icon aria-hidden="true">event</mat-icon>
-      <span class="sr-only">Jump to a date</span>
       <input type="date" aria-label="Jump to a date"
              (change)="jumpToDate($any($event.target).value)" />
     </label>

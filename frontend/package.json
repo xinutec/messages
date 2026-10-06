@@ -29,8 +29,8 @@
     "@angular/router": "^22.2.1",
     "@angular/service-worker": "^22.2.1",
     "@fontsource/roboto": "^5.3.0",
-    "@xinutec/ui-harness": "github:xinutec/ui-harness#af9b3d9f00622c9c06f775e7b737098f4020d8f4",
-    "@xinutec/ui-scaffold": "github:xinutec/ui-harness#af9b3d9f00622c9c06f775e7b737098f4020d8f4&path:/scaffold",
+    "@xinutec/ui-harness": "github:xinutec/ui-harness#0b1da700cc3c346956e189227a20a3c9ab2767d5",
+    "@xinutec/ui-scaffold": "github:xinutec/ui-harness#0b1da700cc3c346956e189227a20a3c9ab2767d5&path:/scaffold",
     "material-icons": "^1.13.14",
     "rxjs": "~7.8.2",
     "tslib": "^2.8.1"

@@ -78,16 +78,6 @@
   }
 }
 
-// Visually hidden but read aloud — the date input's own label.
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
 // In-thread search, pinned above the messages; the thread stays in place behind it.
 .thread-search {
   position: sticky;
@@ -269,15 +259,16 @@
     // A flex item's minimum is its content, so a long draft would push the
     // button off.
     min-width: 0;
-    font: var(--mat-sys-body-medium);
+    // The search boxes' pill (styles.scss): the same surface, shape and focus ring.
+    height: 40px;
+    font: var(--mat-sys-body-large);
     color: var(--mat-sys-on-surface);
-    background: color-mix(in srgb, var(--mat-sys-on-surface) 6%, transparent);
+    background: var(--mat-sys-surface-container-high);
     border: none;
-    border-radius: 1.25rem;
-    padding: 0.6rem 0.9rem;
+    border-radius: 20px;
+    padding: 0 0.9rem;
     &:focus {
       outline: 2px solid var(--mat-sys-primary);
-      outline-offset: -2px;
     }
   }
 }
