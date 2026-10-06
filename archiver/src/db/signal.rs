@@ -247,6 +247,27 @@ impl Db {
         Ok(())
     }
 
+    /// Record who a message row's body names, and where.
+    pub async fn insert_mentions(
+        &self,
+        message_id: u64,
+        mentions: &[crate::parse::Mention],
+    ) -> Result<()> {
+        for x in mentions {
+            sqlx::query(
+                "INSERT IGNORE INTO signal_mentions (message_id, start_utf16, length_utf16, uuid)
+                 VALUES (?, ?, ?, ?)",
+            )
+            .bind(message_id)
+            .bind(x.start_utf16)
+            .bind(x.length_utf16)
+            .bind(&x.uuid)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
+    }
+
     /// Record one of a message row's link previews; `position` is its place in
     /// the order sent, and `image_path` where its picture was stored, if it was.
     pub async fn insert_link_preview(

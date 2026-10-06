@@ -227,6 +227,7 @@ async fn dispatch(ctx: &Ctx, frame: &Value) -> Result<()> {
                 .await?
             {
                 ctx.db.insert_text_styles(row, &e.styles).await?;
+                ctx.db.insert_mentions(row, &e.mentions).await?;
             }
             tracing::info!(
                 "edit flagged {n} original(s) + stored new version (sender={}, target={})",
@@ -252,6 +253,7 @@ async fn dispatch(ctx: &Ctx, frame: &Value) -> Result<()> {
             // `None` = a duplicate INSERT IGNORE dropped; skip its children.
             if let Some(msg_id) = ctx.db.insert_message(&m).await? {
                 ctx.db.insert_text_styles(msg_id, &m.styles).await?;
+                ctx.db.insert_mentions(msg_id, &m.mentions).await?;
                 for (position, p) in m.previews.iter().enumerate() {
                     let stored = match p.image.as_ref().and_then(|i| i.id.as_deref()) {
                         Some(id) => download_attachment(ctx, id).await,

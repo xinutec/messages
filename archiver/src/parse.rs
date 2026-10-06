@@ -89,6 +89,7 @@ pub struct Message {
     pub is_outgoing: bool,
     pub attachments: Vec<Attachment>,
     pub styles: Vec<TextStyle>,
+    pub mentions: Vec<Mention>,
     pub previews: Vec<LinkPreview>,
 }
 
@@ -146,6 +147,15 @@ pub struct TextStyle {
     pub length_utf16: i32,
 }
 
+/// Someone named in a message body: the U+FFFC standing for them, in UTF-16
+/// code units, and their uuid. Signal's `name` is the number, so it is dropped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mention {
+    pub start_utf16: i32,
+    pub length_utf16: i32,
+    pub uuid: String,
+}
+
 /// A payload's `textStyles`, dropping any run that lacks a field or has a
 /// negative position.
 fn text_styles(msg: &Value) -> Vec<TextStyle> {
@@ -164,6 +174,34 @@ fn text_styles(msg: &Value) -> Vec<TextStyle> {
                         style: r.get("style")?.as_str()?.to_string(),
                         start_utf16: int(r, "start")?,
                         length_utf16: int(r, "length")?,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A payload's `mentions`, dropping any without a uuid or with a negative position.
+fn mentions(msg: &Value) -> Vec<Mention> {
+    let int = |r: &Value, k: &str| {
+        r.get(k)
+            .and_then(Value::as_i64)
+            .and_then(|n| i32::try_from(n).ok())
+            .filter(|n| *n >= 0)
+    };
+    msg.get("mentions")
+        .and_then(Value::as_array)
+        .map(|ms| {
+            ms.iter()
+                .filter_map(|r| {
+                    Some(Mention {
+                        start_utf16: int(r, "start")?,
+                        length_utf16: int(r, "length")?,
+                        uuid: r
+                            .get("uuid")?
+                            .as_str()
+                            .filter(|u| !u.is_empty())?
+                            .to_string(),
                     })
                 })
                 .collect()
@@ -192,6 +230,7 @@ pub struct Edit {
     pub body: Option<String>,
     pub is_outgoing: bool,
     pub styles: Vec<TextStyle>,
+    pub mentions: Vec<Mention>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -464,6 +503,7 @@ fn payload_action(
         is_outgoing,
         attachments,
         styles: text_styles(msg),
+        mentions: mentions(msg),
         previews: link_previews(msg),
     })
 }
@@ -490,6 +530,7 @@ fn edit_action(
             .map(str::to_string),
         is_outgoing,
         styles: text_styles(inner),
+        mentions: mentions(inner),
     })
 }
 

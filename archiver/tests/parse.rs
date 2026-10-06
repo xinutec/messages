@@ -2,8 +2,8 @@
 
 use serde_json::json;
 use signal_archiver::parse::{
-    Action, Attachment, CallEvent, CallEventKind, Contact, Edit, LinkPreview, Message, Reaction,
-    Receipt, ReceiptKind, TextStyle, ThreadId, ThreadKind, display_name_of, parse_frame,
+    Action, Attachment, CallEvent, CallEventKind, Contact, Edit, LinkPreview, Mention, Message,
+    Reaction, Receipt, ReceiptKind, TextStyle, ThreadId, ThreadKind, display_name_of, parse_frame,
 };
 
 #[test]
@@ -29,6 +29,7 @@ fn incoming_text_dm() {
             is_outgoing: false,
             attachments: vec![],
             styles: vec![],
+            mentions: vec![],
             previews: vec![],
         })
     );
@@ -67,6 +68,7 @@ fn outgoing_sync_dm_keys_thread_by_destination() {
             is_outgoing: true,
             attachments: vec![],
             styles: vec![],
+            mentions: vec![],
             previews: vec![],
         })
     );
@@ -250,6 +252,7 @@ fn incoming_edit_maps_to_edit_action() {
             body: Some("fixed typo".into()),
             is_outgoing: false,
             styles: vec![],
+            mentions: vec![],
         })
     );
     // An incoming edit still refreshes the contact and DM name.
@@ -283,6 +286,7 @@ fn outgoing_sync_edit_maps_to_edit_action() {
             body: Some("edited (sync)".into()),
             is_outgoing: true,
             styles: vec![],
+            mentions: vec![],
         })
     );
 }
@@ -701,6 +705,33 @@ fn a_preview_keeps_its_picture() {
             size: Some(5702),
         })
     );
+}
+
+/// A real group message with two mentions, ids replaced: each sits on a U+FFFC
+/// in the text, and `name` is the number, not a name, so only the uuid is kept.
+#[test]
+fn a_mention_keeps_where_and_whom() {
+    let f = json!({"envelope": {
+        "sourceUuid": "me", "timestamp": 1791230000000_i64,
+        "syncMessage": {"sentMessage": {
+            "destinationUuid": null, "expiresInSeconds": 0,
+            "groupInfo": {"groupId": "GID==", "type": "DELIVER"},
+            "message": "\u{FFFC} \u{FFFC} are you coming?",
+            "mentions": [
+                {"length": 1, "name": "+440000000001", "number": "+440000000001",
+                 "start": 0, "uuid": "u-alice"},
+                {"length": 1, "name": "+440000000002", "number": "+440000000002",
+                 "start": 2, "uuid": "u-bob"}],
+            "timestamp": 1791230000000_i64}}}});
+    let Action::Message(m) = parse_frame(&f).action else {
+        panic!("not a message");
+    };
+    let mention = |start: i32, uuid: &str| Mention {
+        start_utf16: start,
+        length_utf16: 1,
+        uuid: uuid.into(),
+    };
+    assert_eq!(m.mentions, vec![mention(0, "u-alice"), mention(2, "u-bob")]);
 }
 
 /// A preview without a url is not a preview.

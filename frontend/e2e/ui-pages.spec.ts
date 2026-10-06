@@ -77,13 +77,13 @@ const THREAD = {
       reactions: [{ emoji: "👍", count: 6, who: ["Alice Andersson", "Bob Bytecode", "Test User", "Dana", "Erin Example"] },
                   { emoji: "🎉", count: 1, who: ["Dana"] }],
       attachments: [], link_images: [], link_offers: [], edits: [] }),
-    // A link preview, and a reply to a message the archive does not hold whose
-    // quote carried its author and text.
+    // A mention, a link preview, and a reply to a message the archive does not
+    // hold whose quote carried its author and text.
     testMessage({ id: "10", ts: Date.UTC(2026, 0, 1, 12, 27), sender: "Alice Andersson", is_outgoing: false,
-      body: "Look: https://xinutec.org/a/rather/long/path/that/keeps/going/and/going", deleted: false, edited: false, reactions: [],
+      body: "@Dana look: https://xinutec.org/a/rather/long/path/that/keeps/going/and/going", deleted: false, edited: false, reactions: [],
       reply_to: { id: null, cursor: null, ts: Date.UTC(2025, 5, 3, 8, 30), sender: "Bob Bytecode",
         excerpt: "Did anybody write down the address of that place with the enormous climbing wall and the good coffee?", deleted: false },
-      delivery: null, entities: [], album: null,
+      delivery: null, entities: [{ kind: "mention", offset: 0, length: 5, url: null }], album: null,
       previews: [{ url: "https://xinutec.org/a/rather/long/path/that/keeps/going/and/going",
                    title: "A page with a title long enough to need wrapping on a phone screen",
                    description: "And a description that says a little more about what is on the page.",
@@ -185,12 +185,13 @@ test("open thread — meta + reactions + attachment: lays out cleanly @ phone wi
   await expectNoHorizontalOverflow(page, testInfo);
 });
 
-// A link preview renders as a card with its picture, and an unresolved quote
-// shows what it quoted.
+// A mention is its own run, a link preview renders as a card with its picture,
+// and an unresolved quote shows what it quoted.
 test("a link preview and a quoted message from before the archive @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   await page.goto("/conversation/signal/dm:a");
   const bubble = page.locator('.msg[data-id="10"]');
+  await expect(bubble.locator(".body .fmt-mention")).toHaveText("@Dana");
   await expect(bubble.locator(".preview .title")).toHaveText(
     "A page with a title long enough to need wrapping on a phone screen");
   await expect(bubble.locator(".preview .host")).toHaveText("xinutec.org");

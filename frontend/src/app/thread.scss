@@ -55,6 +55,11 @@
   .fmt-strike { text-decoration: line-through; }
   .fmt-underline { text-decoration: underline; }
   .fmt-strike.fmt-underline { text-decoration: line-through underline; }
+  .fmt-mention,
+  .fmt-mentionName {
+    color: var(--mat-sys-primary);
+    font-weight: 500;
+  }
   // Family only: sizes come from the M3 scale (DL-SCSS-ADHOC-FONT-SIZE).
   .fmt-code,
   .fmt-pre {

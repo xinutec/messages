@@ -2517,7 +2517,8 @@ async fn telegram_formatting_is_attached_and_a_retracted_run_is_not() {
 
 /// A thread of its own: a styled message, a link with a preview, a reply to a
 /// message the archive does not hold, an edited message whose styles changed
-/// with its text, and two previews with pictures, one stored and one not yet.
+/// with its text, two previews with pictures, one stored and one not yet, and
+/// a message naming two people, one the archive knows.
 async fn seed_signal_fields(pool: &MySqlPool, thread: &str) {
     for (ts, body, edit_of, edited) in [
         (10_000i64, "Hello bold mono strike", None::<i64>, 0i8),
@@ -2527,6 +2528,7 @@ async fn seed_signal_fields(pool: &MySqlPool, thread: &str) {
         (14_000, "now italic", Some(13_000), 0),
         (15_000, "https://example.org/stored", None, 0),
         (16_000, "https://example.org/unstored", None, 0),
+        (17_000, "\u{FFFC} \u{FFFC} are you coming?", None, 0),
     ] {
         // The thread's own sender, as in `seed_edits`.
         sqlx::query(
@@ -2549,6 +2551,7 @@ async fn seed_signal_fields(pool: &MySqlPool, thread: &str) {
         (10_000, "STRIKETHROUGH", 11, 11),
         (13_000, "BOLD", 0, 5),
         (14_000, "ITALIC", 4, 6),
+        (17_000, "BOLD", 12, 6),
     ] {
         sqlx::query(
             "INSERT INTO signal_text_styles (message_id, style, start_utf16, length_utf16)
@@ -2572,6 +2575,18 @@ async fn seed_signal_fields(pool: &MySqlPool, thread: &str) {
     .execute(pool)
     .await
     .unwrap();
+    for (start, uuid) in [(0, "alice"), (2, "u-unknown")] {
+        sqlx::query(
+            "INSERT INTO signal_mentions (message_id, start_utf16, length_utf16, uuid)
+             SELECT id, ?, 1, ? FROM messages WHERE thread_id = ? AND server_ts = 17000",
+        )
+        .bind(start)
+        .bind(uuid)
+        .bind(thread)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
     for (ts, url, path) in [
         (
             15_000i64,
@@ -2659,6 +2674,37 @@ async fn a_signal_link_preview_comes_with_its_message() {
         vec![("https://xinutec.org", Some("Welcome to nginx!"))]
     );
     assert!(page.messages[0].previews.is_empty());
+}
+
+/// A mention's placeholder becomes the person's name, as a `mention` run, and
+/// the styles after it move with the text; someone the archive cannot name
+/// keeps their uuid, as a sender would.
+#[tokio::test]
+async fn a_signal_mention_names_whom_it_mentions() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let thread = "dm:fields-mentions";
+    seed_signal_fields(&pool, thread).await;
+    let page = archive::messages_page(&pool, Origin::Signal, thread, None, 50, PageDir::Older)
+        .await
+        .unwrap();
+    let m = &page.messages[6];
+    assert_eq!(m.body.as_deref(), Some("@Alice @u-unknown are you coming?"));
+    let mut runs: Vec<(String, i64, i64)> = m
+        .entities
+        .iter()
+        .map(|e| (e.kind.clone(), e.offset, e.length))
+        .collect();
+    runs.sort();
+    assert_eq!(
+        runs,
+        vec![
+            ("bold".into(), 26, 6),
+            ("mention".into(), 0, 6),
+            ("mention".into(), 7, 10),
+        ]
+    );
 }
 
 /// A preview's picture is offered once it is stored, and served from where it

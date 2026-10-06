@@ -302,7 +302,8 @@ pub struct MessageEdit {
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct Entity {
     /// Telegram's own name: `bold`, `italic`, `url`, `textUrl`, `strike`,
-    /// `code`, `spoiler`, … A string, so an unknown kind renders as plain text.
+    /// `code`, `spoiler`, `mention`, … A string, so an unknown kind renders as
+    /// plain text. Signal's styles and mentions are mapped onto these.
     pub kind: String,
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub offset: i64,
@@ -647,6 +648,7 @@ pub async fn messages_page(
         Origin::Signal => {
             let shown = signal::attach_edits(pool, id, &mut page.msgs).await?;
             signal::attach_styles(pool, &mut page.msgs, &shown).await?;
+            signal::attach_mentions(pool, &mut page.msgs, &shown).await?;
             signal::attach_previews(pool, &mut page.msgs).await?;
         }
         Origin::Telegram => telegram::attach_edits(pool, id, &mut page.msgs).await?,

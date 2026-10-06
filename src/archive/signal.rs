@@ -416,14 +416,7 @@ pub(super) async fn attach_styles(
     msgs: &mut [Message],
     shown: &HashMap<String, i64>,
 ) -> Result<()> {
-    let rows: Vec<(usize, i64)> = msgs
-        .iter()
-        .enumerate()
-        .filter_map(|(i, m)| {
-            let row = shown.get(&m.id).copied().or_else(|| m.id.parse().ok())?;
-            Some((i, row))
-        })
-        .collect();
+    let rows = shown_rows(msgs, shown);
     if rows.is_empty() {
         return Ok(());
     }
@@ -453,6 +446,98 @@ pub(super) async fn attach_styles(
         }
     }
     Ok(())
+}
+
+/// Each message's index on the page, with the row whose text it shows.
+fn shown_rows(msgs: &[Message], shown: &HashMap<String, i64>) -> Vec<(usize, i64)> {
+    msgs.iter()
+        .enumerate()
+        .filter_map(|(i, m)| {
+            let row = shown.get(&m.id).copied().or_else(|| m.id.parse().ok())?;
+            Some((i, row))
+        })
+        .collect()
+}
+
+/// Name the people this page's Signal messages mention. Signal sends a mention
+/// as U+FFFC in the text; each becomes `@` and the name a sender would get, as
+/// a `mention` run, and the runs after it move with the text. Run after
+/// `attach_styles`, whose offsets it moves.
+pub(super) async fn attach_mentions(
+    pool: &MySqlPool,
+    msgs: &mut [Message],
+    shown: &HashMap<String, i64>,
+) -> Result<()> {
+    let rows = shown_rows(msgs, shown);
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let placeholders = vec!["?"; rows.len()].join(",");
+    // Last first, so naming one leaves the offsets of those before it alone.
+    let sql = format!(
+        "SELECT x.message_id, x.start_utf16, x.length_utf16,
+                COALESCE(ct.display_name, x.uuid) AS who
+           FROM signal_mentions x
+           LEFT JOIN contacts ct ON ct.uuid = x.uuid
+          WHERE x.message_id IN ({placeholders})
+          ORDER BY x.message_id, x.start_utf16 DESC",
+    );
+    let mut q = sqlx::query(AssertSqlSafe(sql));
+    for (_, row) in &rows {
+        q = q.bind(row);
+    }
+    for r in q.fetch_all(pool).await? {
+        let row: i64 = r.try_get("message_id")?;
+        let start: i32 = r.try_get("start_utf16")?;
+        let length: i32 = r.try_get("length_utf16")?;
+        let who: String = r.try_get("who")?;
+        for (i, _) in rows.iter().filter(|(_, rr)| *rr == row) {
+            name_mention(&mut msgs[*i], start.into(), length.into(), &who);
+        }
+    }
+    Ok(())
+}
+
+/// Replace the placeholder at `start..start + length` (UTF-16) with `@who`.
+/// Anything else there is left alone: the text has moved, and a name in the
+/// wrong place is worse than a placeholder.
+fn name_mention(m: &mut Message, start: i64, length: i64, who: &str) {
+    let Some(body) = m.body.as_mut() else { return };
+    let (Some(a), Some(b)) = (byte_at(body, start), byte_at(body, start + length)) else {
+        return;
+    };
+    if a == b || body[a..b].chars().any(|c| c != '\u{FFFC}') {
+        return;
+    }
+    let name = format!("@{who}");
+    let named = name.encode_utf16().count() as i64;
+    body.replace_range(a..b, &name);
+    let (end, moved) = (start + length, named - length);
+    for e in &mut m.entities {
+        if e.offset >= end {
+            e.offset += moved;
+        } else if e.offset + e.length >= end && e.offset <= start {
+            e.length += moved;
+        }
+    }
+    m.entities.push(Entity {
+        kind: "mention".to_string(),
+        offset: start,
+        length: named,
+        url: None,
+    });
+}
+
+/// The byte index of UTF-16 offset `at` in `s`, if one falls there.
+fn byte_at(s: &str, at: i64) -> Option<usize> {
+    let mut units = 0i64;
+    for (i, c) in s.char_indices() {
+        if units == at {
+            return Some(i);
+        }
+        units += c.len_utf16() as i64;
+    }
+    (units == at).then_some(s.len())
 }
 
 /// Link previews for this page's Signal messages, in the order sent.

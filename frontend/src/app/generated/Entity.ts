@@ -10,7 +10,8 @@
 export type Entity = { 
 /**
  * Telegram's own name: `bold`, `italic`, `url`, `textUrl`, `strike`,
- * `code`, `spoiler`, … A string, so an unknown kind renders as plain text.
+ * `code`, `spoiler`, `mention`, … A string, so an unknown kind renders as
+ * plain text. Signal's styles and mentions are mapped onto these.
  */
 kind: string, offset: number, length: number, 
 /**
