@@ -728,7 +728,7 @@ describe('Thread copy — saying what was left out', () => {
   async function opened3(total: number): Promise<ComponentFixture<Thread>> {
     const f = await threeRendered();
     TestBed.inject(MessagesStore).conversations.set([
-      { origin: 'irc', id: '7', name: '#linux', kind: 'group', network: 'xinutec', message_count: total, last_ts: 1 },
+      { origin: 'irc', id: '7', name: '#linux', kind: 'group', network: 'xinutec', message_count: total, last_ts: 1, last: null },
     ]);
     f.detectChanges();
     return f;
@@ -1094,7 +1094,7 @@ describe('the delivery tag', () => {
 
   const dm: Conversation = {
     origin: 'signal', id: 'dm:a', name: 'Alice', kind: 'dm',
-    network: null, message_count: 1, last_ts: 1000,
+    network: null, message_count: 1, last_ts: 1000, last: null,
   };
 
   it('says nothing at all when the archive cannot tell', async () => {

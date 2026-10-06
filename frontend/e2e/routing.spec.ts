@@ -11,8 +11,8 @@ import { testMessage } from "../src/app/test-message";
 
 const ME = { user_id: "u1", display_name: "Test User" } satisfies Me;
 const CONVERSATIONS = [
-  { origin: "signal", id: "dm:a", name: "Alice", kind: "dm", network: null, message_count: 5, last_ts: 1_717_000_000_000 },
-  { origin: "gchat", id: "gc1", name: "Bob", kind: "dm", network: null, message_count: 3, last_ts: 1_717_100_000_000 },
+  { origin: "signal", id: "dm:a", name: "Alice", kind: "dm", network: null, message_count: 5, last_ts: 1_717_000_000_000, last: null },
+  { origin: "gchat", id: "gc1", name: "Bob", kind: "dm", network: null, message_count: 3, last_ts: 1_717_100_000_000, last: null },
 ] satisfies Conversation[];
 const MESSAGES_PAGE = {
   messages: [
@@ -187,22 +187,27 @@ test("the bar's arrow goes up to the list, keeping the origin filter", async ({ 
 });
 
 /**
- * A visibility event refetches the list and the changed count reaches the
- * screen.
+ * A visibility event refetches the list and the changed last message reaches
+ * the screen.
  */
 test("returning to the foreground re-reads the list", async ({ page }) => {
   await page.route("**/api/**", (r) => r.fulfill({ status: 204, body: "" }));
   await page.route("**/api/me", (r) => r.fulfill({ json: ME }));
   let calls = 0;
   await page.route("**/api/conversations", (r) =>
-    r.fulfill({ json: [{ ...CONVERSATIONS[0], message_count: ++calls === 1 ? 5 : 9 }] satisfies Conversation[] }),
+    r.fulfill({
+      json: [{
+        ...CONVERSATIONS[0],
+        last: { sender: "Alice", is_outgoing: false, deleted: false, text: ++calls === 1 ? "before" : "after" },
+      }] satisfies Conversation[],
+    }),
   );
 
   await page.goto("/");
-  await expect(page.getByText(/5 msgs/)).toBeVisible();
+  await expect(page.getByText("before")).toBeVisible();
 
   // As Chrome does on resume: already visible, and this event the only signal.
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
 
-  await expect(page.getByText(/9 msgs/)).toBeVisible();
+  await expect(page.getByText("after")).toBeVisible();
 });

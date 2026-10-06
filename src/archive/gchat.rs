@@ -12,14 +12,24 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
     let mut out = Vec::new();
     let gchat = sqlx::query(
         r"SELECT g.group_id AS id, g.name AS name, g.is_dm AS is_dm,
-                 COUNT(m.id) AS cnt, MAX(m.ts_us) AS last_ts_us
+                 COALESCE(s.cnt, 0) AS cnt, s.last_ts_us AS last_ts_us,
+                 CASE WHEN l.id IS NOT NULL THEN COALESCE(l.sender_name, '') END AS last_sender,
+                 l.is_self AS last_out, l.text AS last_text
           FROM gchat_conversations g
-          LEFT JOIN gchat_messages m ON m.group_id = g.group_id
-          GROUP BY g.group_id, g.name, g.is_dm",
+          LEFT JOIN (
+              SELECT group_id, COUNT(*) AS cnt, MAX(ts_us) AS last_ts_us
+              FROM gchat_messages GROUP BY group_id
+          ) s ON s.group_id = g.group_id
+          LEFT JOIN gchat_messages l ON l.group_id = g.group_id AND l.ts_us = s.last_ts_us
+          ORDER BY l.id DESC",
     )
     .fetch_all(pool)
     .await?;
+    let mut seen = std::collections::HashSet::new();
     for r in gchat {
+        if !seen.insert(r.try_get::<String, _>("id")?) {
+            continue;
+        }
         let is_dm: i8 = r.try_get("is_dm")?;
         let last_us: Option<i64> = r.try_get("last_ts_us")?;
         out.push(Conversation {
@@ -30,6 +40,7 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
             network: None,
             message_count: r.try_get("cnt")?,
             last_ts: last_us.map(us_to_ms),
+            last: LastMessage::from_row(&r, false)?,
         });
     }
     Ok(out)

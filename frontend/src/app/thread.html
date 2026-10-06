@@ -19,7 +19,7 @@
   @if (searchOpen()) {
     <div class="thread-search">
       <form (ngSubmit)="runThreadSearch()">
-        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-form-field class="slim-search" appearance="outline" subscriptSizing="dynamic">
           <mat-icon matPrefix>search</mat-icon>
           <input matInput name="tq" placeholder="Search this conversation"
                  [ngModel]="searchQuery()" (ngModelChange)="searchQuery.set($event)" />

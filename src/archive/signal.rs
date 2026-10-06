@@ -12,31 +12,63 @@ use super::*;
 pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
     let mut out = Vec::new();
     // An edit's revision rows are versions, not messages: the page leaves them
-    // out, so the count does too.
+    // out, so the count and the last message do too.
     let signal = sqlx::query(
         r"SELECT c.thread_id AS id, c.type AS kind, c.name AS name,
-                 COUNT(CASE WHEN m.edit_of_ts IS NULL THEN m.id END) AS cnt,
-                 MAX(m.server_ts) AS last_ts
+                 COALESCE(s.cnt, 0) AS cnt, s.last_ts AS last_ts,
+                 l.id AS last_id, l.deleted AS last_deleted, l.is_outgoing AS last_out,
+                 l.body AS last_text, COALESCE(ct.display_name, l.sender_uuid) AS last_sender
           FROM conversations c
-          LEFT JOIN messages m ON m.thread_id = c.thread_id
-          GROUP BY c.thread_id, c.type, c.name",
+          LEFT JOIN (
+              SELECT thread_id, COUNT(CASE WHEN edit_of_ts IS NULL THEN id END) AS cnt,
+                     MAX(server_ts) AS last_ts,
+                     MAX(CASE WHEN edit_of_ts IS NULL THEN server_ts END) AS last_msg_ts
+              FROM messages GROUP BY thread_id
+          ) s ON s.thread_id = c.thread_id
+          LEFT JOIN messages l
+                 ON l.thread_id = c.thread_id AND l.server_ts = s.last_msg_ts
+                AND l.edit_of_ts IS NULL
+          LEFT JOIN contacts ct ON ct.uuid = l.sender_uuid
+          ORDER BY l.id DESC",
     )
     .fetch_all(pool)
     .await?;
+    let mut seen = std::collections::HashSet::new();
+    let mut bodies: HashMap<i64, String> = HashMap::new();
+    let mut last_rows = Vec::new();
     for r in signal {
+        let id: String = r.try_get("id")?;
+        if !seen.insert(id.clone()) {
+            continue;
+        }
         let kind: String = r.try_get("kind")?;
         let Some(kind) = ConversationKind::parse(&kind) else {
             bail!("conversations.type holds an unknown kind: {kind:?}");
         };
+        let deleted: Option<i8> = r.try_get("last_deleted")?;
+        let last_id: Option<i64> = r.try_get("last_id")?;
+        let last = LastMessage::from_row(&r, deleted.unwrap_or(0) != 0)?;
+        if let (Some(row), Some(text)) = (last_id, r.try_get::<Option<String>, _>("last_text")?) {
+            bodies.insert(row, text);
+            last_rows.push((out.len(), row));
+        }
         out.push(Conversation {
             origin: Origin::Signal,
-            id: r.try_get("id")?,
+            id,
             name: r.try_get("name")?,
             kind,
             network: None,
             message_count: r.try_get("cnt")?,
             last_ts: r.try_get("last_ts")?,
+            last,
         });
+    }
+    // Mentions named, as in the thread.
+    with_names(pool, &mut bodies).await?;
+    for (i, row) in last_rows {
+        if let Some(last) = out[i].last.as_mut().filter(|l| l.text.is_some()) {
+            last.text = excerpt(bodies.get(&row).map(String::as_str));
+        }
     }
     Ok(out)
 }

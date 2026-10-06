@@ -22,15 +22,15 @@ const ME = { user_id: "test", display_name: "Test User" } satisfies Me;
 
 /** A busy conversation list: every origin, a group, and a long name. */
 const CONVERSATIONS = [
-  { origin: "signal", id: "dm:a", name: "Alice Andersson", kind: "dm", network: null, message_count: 128, last_ts: Date.UTC(2026, 0, 2, 9, 14) },
-  { origin: "signal", id: "grp:x", name: "Saturday climbing & bouldering logistics crew", kind: "group", network: null, message_count: 4210, last_ts: Date.UTC(2026, 0, 1, 20, 2) },
-  { origin: "gchat", id: "gc1", name: "Bob Bytecode", kind: "dm", network: null, message_count: 37, last_ts: Date.UTC(2025, 11, 30, 16, 40) },
-  { origin: "gchat", id: "gc2", name: "Platform on-call", kind: "group", network: null, message_count: 902, last_ts: Date.UTC(2025, 11, 29, 8, 5) },
+  { origin: "signal", id: "dm:a", name: "Alice Andersson", kind: "dm", network: null, message_count: 128, last_ts: Date.UTC(2026, 0, 2, 9, 14), last: { sender: "Alice Andersson", is_outgoing: false, deleted: false, text: "From the climbing wall on Saturday, the three of us at the top of the orange route" } },
+  { origin: "signal", id: "grp:x", name: "Saturday climbing & bouldering logistics crew", kind: "group", network: null, message_count: 4210, last_ts: Date.UTC(2026, 0, 1, 20, 2), last: { sender: "Dana", is_outgoing: false, deleted: false, text: "Six of us are in." } },
+  { origin: "gchat", id: "gc1", name: "Bob Bytecode", kind: "dm", network: null, message_count: 37, last_ts: Date.UTC(2025, 11, 30, 16, 40), last: { sender: "Me", is_outgoing: true, deleted: false, text: "Sounds good, see you then" } },
+  { origin: "gchat", id: "gc2", name: "Platform on-call", kind: "group", network: null, message_count: 902, last_ts: Date.UTC(2025, 11, 29, 8, 5), last: { sender: "Erin Example", is_outgoing: false, deleted: true, text: null } },
   // IRC, the only origin with a composer.
-  { origin: "irc", id: "7", name: "#a-channel-with-a-long-name", kind: "group", network: "xinutec", message_count: 5104, last_ts: Date.UTC(2026, 0, 2, 11, 30) },
+  { origin: "irc", id: "7", name: "#a-channel-with-a-long-name", kind: "group", network: "xinutec", message_count: 5104, last_ts: Date.UTC(2026, 0, 2, 11, 30), last: { sender: "s_20", is_outgoing: false, deleted: false, text: "anyone around who knows nix flakes well enough to explain overlays?" } },
   // One target on two networks, the widest subtitle.
-  { origin: "irc", id: "8", name: "s_20", kind: "dm", network: "xinutec", message_count: 14446, last_ts: Date.UTC(2026, 0, 2, 10, 15) },
-  { origin: "irc", id: "9", name: "s_20", kind: "dm", network: "euirc", message_count: 8071, last_ts: Date.UTC(2026, 0, 1, 22, 40) },
+  { origin: "irc", id: "8", name: "s_20", kind: "dm", network: "xinutec", message_count: 14446, last_ts: Date.UTC(2026, 0, 2, 10, 15), last: { sender: "s_20", is_outgoing: false, deleted: false, text: null } },
+  { origin: "irc", id: "9", name: "s_20", kind: "dm", network: "euirc", message_count: 8071, last_ts: Date.UTC(2026, 0, 1, 22, 40), last: null },
 ] satisfies Conversation[];
 
 /** Real bytes for the available attachment, so a revealed image actually
@@ -162,9 +162,20 @@ test("conversation list — filter row + rows: lays out cleanly @ phone width", 
   await page.getByPlaceholder("Search messages").waitFor();
   await page.getByRole("radio", { name: "Google Chat", exact: true }).waitFor(); // widest filter toggle
   await page.getByText("Alice Andersson").waitFor();
+  // By the name alone: a preview can carry another row's name as its sender.
+  const row = (name: string) =>
+    page.locator("button.conv", { has: page.locator("[matlistitemtitle]", { hasText: new RegExp(`^${name}`) }) });
   // Two rows titled `s_20`; only the network separates them.
-  await page.getByText(/IRC xinutec · 14446 msgs/).waitFor();
-  await page.getByText(/IRC euirc · 8071 msgs/).waitFor();
+  await expect(row("s_20").locator(".net")).toHaveText(["xinutec", "euirc"]);
+  // The newest message: the sender in a group, You for mine, none in a DM.
+  // Visible, not only present: Material clips a line its layout has no room for.
+  await expect(row("Saturday climbing").locator("[matlistitemline]")).toBeVisible();
+  await expect(row("Saturday climbing").locator("[matlistitemline]")).toHaveText("Dana: Six of us are in.");
+  await expect(row("Bob Bytecode").locator("[matlistitemline]")).toHaveText("You: Sounds good, see you then");
+  await expect(row("Alice Andersson").locator("[matlistitemline]")).toContainText(/^From the climbing wall/);
+  await expect(row("Platform on-call").locator(".quiet")).toHaveText("Erin Example: Message deleted");
+  await expect(row("Alice Andersson").locator(".avatar")).toContainText("AA");
+  await page.screenshot({ path: testInfo.outputPath("list.png") });
   // An icon-font fallback would show the word "search" over the placeholder.
   await expectIconFontLoaded(page);
   await expectNoTextOverlaps(page, testInfo);

@@ -37,3 +37,20 @@ body {
 mat-icon {
   flex-shrink: 0;
 }
+
+// A search box as a slim pill, not a full form field: the list's and a thread's.
+// Half the 40px height, not a huge radius: Material widens the outline's
+// leading edge to match the radius, and a huge one leaves the input no width.
+.slim-search {
+  @include mat.form-field-density(-4);
+  @include mat.form-field-overrides(
+    (
+      outlined-container-shape: 20px,
+      outlined-outline-color: transparent,
+    )
+  );
+  .mat-mdc-text-field-wrapper {
+    background: var(--mat-sys-surface-container-high);
+    border-radius: 20px;
+  }
+}

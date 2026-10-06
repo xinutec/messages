@@ -18,18 +18,29 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
     //
     // `is_status = 0` drops irssi's server-notice window. A conversation with no
     // counted line has no stats row.
+    //
+    // The last line is the newest row in the last second: many share it.
     let irc = sqlx::query(
         r"SELECT c.id AS id, c.target AS name, c.is_channel AS is_channel,
                  c.network AS network, COALESCE(s.cnt, 0) AS cnt,
-                 TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', s.last_sent_at) AS last_s
+                 TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', s.last_sent_at) AS last_s,
+                 l.nick AS last_sender, l.is_self AS last_out, l.text AS last_text
           FROM irc_conversations c
           LEFT JOIN irc_conversation_stats s ON s.conversation_id = c.id
-          WHERE c.is_status = 0",
+          LEFT JOIN irc_messages l
+                 ON l.conversation_id = c.id AND l.sent_at = s.last_sent_at
+                AND l.kind IN ('message', 'action')
+          WHERE c.is_status = 0
+          ORDER BY l.id DESC",
     )
     .fetch_all(pool)
     .await?;
+    let mut seen = std::collections::HashSet::new();
     for r in irc {
         let id: i32 = r.try_get("id")?;
+        if !seen.insert(id) {
+            continue;
+        }
         let is_channel: i8 = r.try_get("is_channel")?;
         let last_s: Option<i64> = r.try_get("last_s")?;
         out.push(Conversation {
@@ -40,6 +51,7 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
             network: r.try_get("network")?,
             message_count: r.try_get("cnt")?,
             last_ts: last_s.map(s_to_ms),
+            last: LastMessage::from_row(&r, false)?,
         });
     }
     Ok(out)

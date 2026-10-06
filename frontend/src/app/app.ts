@@ -16,6 +16,7 @@ import { Scaffold } from '@xinutec/ui-scaffold';
 import { Subject, catchError, filter, fromEvent, of, switchMap } from 'rxjs';
 
 import { BUILD_INFO } from './build-info';
+import { hue, initials, preview, whenFormat } from './list-row';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
 import { AppSwUpdates } from './sw-updates';
@@ -67,6 +68,12 @@ export class App {
     telegram: 'Telegram',
   };
   readonly origins: readonly Origin[] = ['signal', 'gchat', 'irc', 'telegram'];
+
+  // A row's picture stand-in, time and last message; see list-row.ts.
+  protected readonly hue = hue;
+  protected readonly initials = initials;
+  protected readonly whenFormat = whenFormat;
+  protected readonly preview = preview;
 
   // `?origin` filters the list.
   private params = toSignal(this.route.queryParamMap);

@@ -10,7 +10,7 @@
 
 use anyhow::Result;
 use serde::Serialize;
-use sqlx::MySqlPool;
+use sqlx::{MySqlPool, Row};
 
 pub mod gchat;
 pub mod irc;
@@ -171,6 +171,42 @@ pub struct Conversation {
     /// Epoch milliseconds; None for a conversation with no messages.
     #[cfg_attr(feature = "ts", ts(type = "number | null"))]
     pub last_ts: Option<i64>,
+    /// Its newest message, for the line under the name.
+    pub last: Option<LastMessage>,
+}
+
+/// A conversation's newest message, as the list shows it.
+#[derive(Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct LastMessage {
+    pub sender: String,
+    pub is_outgoing: bool,
+    pub deleted: bool,
+    /// One line of it; `None` when it has no text or was deleted.
+    pub text: Option<String>,
+}
+
+impl LastMessage {
+    /// From a list query's `last_sender`, `last_out` and `last_text` columns,
+    /// `None` when the conversation has no message; a deleted one shows no text.
+    fn from_row(r: &sqlx::mysql::MySqlRow, deleted: bool) -> Result<Option<Self>> {
+        let Some(sender) = r.try_get::<Option<String>, _>("last_sender")? else {
+            return Ok(None);
+        };
+        let out: i8 = r.try_get("last_out")?;
+        let text: Option<String> = r.try_get("last_text")?;
+        Ok(Some(LastMessage {
+            sender,
+            is_outgoing: out != 0,
+            deleted,
+            text: if deleted {
+                None
+            } else {
+                excerpt(text.as_deref())
+            },
+        }))
+    }
 }
 
 #[derive(Serialize)]

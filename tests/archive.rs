@@ -603,6 +603,26 @@ async fn conversations_normalise_and_sort_across_origins() {
         (0, None),
         "empty conv: 0 msgs, no last_ts"
     );
+
+    // The newest message, as the list shows it; a deleted one keeps no text.
+    let last = |id: &str| {
+        by(id)
+            .last
+            .as_ref()
+            .map(|l| (l.sender.as_str(), l.is_outgoing, l.text.as_deref()))
+    };
+    assert_eq!(last("dm:alice"), Some(("Me", true, None)));
+    assert!(by("dm:alice").last.as_ref().is_some_and(|l| l.deleted));
+    assert!(by("group:g1").last.as_ref().is_some_and(|l| !l.deleted));
+    assert_eq!(
+        last("group:g1"),
+        Some(("Alice", false, Some("grp findme msg")))
+    );
+    assert_eq!(
+        last("gc1"),
+        Some(("Bob", false, Some("answering something missing")))
+    );
+    assert_eq!(last("gc2"), None);
 }
 
 #[tokio::test]
@@ -889,6 +909,12 @@ async fn irc_conversations_leave_out_the_status_log_and_count_only_speech() {
     assert_eq!(
         chan.message_count, 3,
         "2 messages + 1 action; the join and the notice are not conversation"
+    );
+    // Three lines share the last second; the newest row is the last.
+    let last = chan.last.as_ref().expect("a last line");
+    assert_eq!(
+        (last.sender.as_str(), last.is_outgoing, last.text.as_deref()),
+        ("alice", false, Some("waves"))
     );
     assert_eq!(
         chan.last_ts,
@@ -1632,11 +1658,17 @@ async fn telegram_conversations_keep_their_kind_and_count_only_speech() {
     assert_eq!(dm.message_count, 6, "the service event must not be counted");
     // The newest speech, in milliseconds; msg 16 follows the service event.
     assert_eq!(dm.last_ts, Some(1_700_000_260_000));
+    let last = dm.last.as_ref().expect("a last message");
+    assert_eq!(
+        (last.sender.as_str(), last.is_outgoing, last.text.as_deref()),
+        ("Me", true, Some("telegram touched this"))
+    );
 
     assert_eq!(tg("-1000000000055").kind, ConversationKind::Channel);
     assert_eq!(tg("-77").kind, ConversationKind::Group);
     assert_eq!(tg("-77").message_count, 0);
     assert_eq!(tg("-77").last_ts, None);
+    assert!(tg("-77").last.is_none());
 }
 
 /// A Telegram page: oldest first, service events as actions, and the two

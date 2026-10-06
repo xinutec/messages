@@ -15,23 +15,34 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
     // then joined, so MariaDB answers from `idx_tg_conv_kind_ts`.
     let telegram = sqlx::query(
         r"SELECT t.id AS id, t.kind AS kind, t.name AS name,
-                 COALESCE(s.cnt, 0) AS cnt, s.last_ts AS last_ts
+                 COALESCE(s.cnt, 0) AS cnt, s.last_ts AS last_ts,
+                 l.deleted AS last_deleted,
+                 CASE WHEN l.id IS NOT NULL THEN COALESCE(l.sender_name, '') END AS last_sender,
+                 l.is_outgoing AS last_out, l.text AS last_text
           FROM telegram_conversations t
           LEFT JOIN (
               SELECT conversation_id, COUNT(*) AS cnt, MAX(sent_at) AS last_ts
               FROM telegram_messages
               WHERE kind = 'message'
               GROUP BY conversation_id
-          ) s ON s.conversation_id = t.id",
+          ) s ON s.conversation_id = t.id
+          LEFT JOIN telegram_messages l
+                 ON l.conversation_id = t.id AND l.kind = 'message' AND l.sent_at = s.last_ts
+          ORDER BY l.id DESC",
     )
     .fetch_all(pool)
     .await?;
+    let mut seen = std::collections::HashSet::new();
     for r in telegram {
+        if !seen.insert(r.try_get::<i64, _>("id")?) {
+            continue;
+        }
         let kind: String = r.try_get("kind")?;
         let Some(kind) = ConversationKind::parse(&kind) else {
             bail!("telegram_conversations.kind holds an unknown kind: {kind:?}");
         };
         let last_s: Option<i64> = r.try_get("last_ts")?;
+        let deleted: Option<i8> = r.try_get("last_deleted")?;
         out.push(Conversation {
             origin: Origin::Telegram,
             id: r.try_get::<i64, _>("id")?.to_string(),
@@ -40,6 +51,7 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
             network: None,
             message_count: r.try_get("cnt")?,
             last_ts: last_s.map(s_to_ms),
+            last: LastMessage::from_row(&r, deleted.unwrap_or(0) != 0)?,
         });
     }
     Ok(out)

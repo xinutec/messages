@@ -11,7 +11,7 @@ import { testMessage } from "../src/app/test-message";
 
 const ME = { user_id: "u1", display_name: "Test User" } satisfies Me;
 const CONVERSATIONS = [
-  { origin: "signal", id: "dm:a", name: "Alice", kind: "dm", network: null, message_count: 1000, last_ts: 1_717_000_000_000 },
+  { origin: "signal", id: "dm:a", name: "Alice", kind: "dm", network: null, message_count: 1000, last_ts: 1_717_000_000_000, last: null },
 ] satisfies Conversation[];
 
 // A real image, served for every /api/attachments/* request.
