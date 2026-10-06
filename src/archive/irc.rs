@@ -52,6 +52,8 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
             message_count: r.try_get("cnt")?,
             last_ts: last_s.map(s_to_ms),
             last: LastMessage::from_row(&r, false)?,
+            // No read state to read.
+            unread: 0,
         });
     }
     Ok(out)

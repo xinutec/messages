@@ -13,11 +13,19 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
     let mut out = Vec::new();
     // An edit's revision rows are versions, not messages: the page leaves them
     // out, so the count and the last message do too.
+    //
+    // Unread: theirs after my newest read. A read receipt on a message someone
+    // else sent can only be mine, synced from the phone. Before the first receipt
+    // was captured nothing can be told, so nothing older counts.
     let signal = sqlx::query(
         r"SELECT c.thread_id AS id, c.type AS kind, c.name AS name,
                  COALESCE(s.cnt, 0) AS cnt, s.last_ts AS last_ts,
                  l.id AS last_id, l.deleted AS last_deleted, l.is_outgoing AS last_out,
-                 l.body AS last_text, COALESCE(ct.display_name, l.sender_uuid) AS last_sender
+                 l.body AS last_text, COALESCE(ct.display_name, l.sender_uuid) AS last_sender,
+                 (SELECT COUNT(*) FROM messages u
+                   WHERE u.thread_id = c.thread_id AND u.is_outgoing = 0
+                     AND u.edit_of_ts IS NULL
+                     AND u.server_ts > GREATEST(COALESCE(rd.read_ts, 0), rs.since_ms)) AS unread
           FROM conversations c
           LEFT JOIN (
               SELECT thread_id, COUNT(CASE WHEN edit_of_ts IS NULL THEN id END) AS cnt,
@@ -29,6 +37,17 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
                  ON l.thread_id = c.thread_id AND l.server_ts = s.last_msg_ts
                 AND l.edit_of_ts IS NULL
           LEFT JOIN contacts ct ON ct.uuid = l.sender_uuid
+          LEFT JOIN (
+              SELECT m.thread_id, MAX(m.server_ts) AS read_ts
+              FROM signal_receipts r
+              JOIN messages m ON m.server_ts = r.target_ts AND m.is_outgoing = 0
+              WHERE r.kind = 'read'
+              GROUP BY m.thread_id
+          ) rd ON rd.thread_id = c.thread_id
+          CROSS JOIN (
+              SELECT COALESCE(UNIX_TIMESTAMP(MIN(observed_at)) * 1000, ~0 >> 1) AS since_ms
+              FROM signal_receipts
+          ) rs
           ORDER BY l.id DESC",
     )
     .fetch_all(pool)
@@ -61,6 +80,7 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
             message_count: r.try_get("cnt")?,
             last_ts: r.try_get("last_ts")?,
             last,
+            unread: r.try_get("unread")?,
         });
     }
     // Mentions named, as in the thread.

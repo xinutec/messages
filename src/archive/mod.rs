@@ -173,6 +173,10 @@ pub struct Conversation {
     pub last_ts: Option<i64>,
     /// Its newest message, for the line under the name.
     pub last: Option<LastMessage>,
+    /// Messages from others that came in after I last read, on the phone; 0 when
+    /// the origin cannot say (Google Chat, IRC) or nothing is unread.
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub unread: i64,
 }
 
 /// A conversation's newest message, as the list shows it.

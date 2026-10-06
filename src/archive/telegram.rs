@@ -18,7 +18,11 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
                  COALESCE(s.cnt, 0) AS cnt, s.last_ts AS last_ts,
                  l.deleted AS last_deleted,
                  CASE WHEN l.id IS NOT NULL THEN COALESCE(l.sender_name, '') END AS last_sender,
-                 l.is_outgoing AS last_out, l.text AS last_text
+                 l.is_outgoing AS last_out, l.text AS last_text,
+                 CASE WHEN rd.read_id IS NULL THEN 0 ELSE (
+                     SELECT COUNT(*) FROM telegram_messages u
+                      WHERE u.conversation_id = t.id AND u.msg_id > rd.read_id
+                        AND u.kind = 'message' AND u.is_outgoing = 0) END AS unread
           FROM telegram_conversations t
           LEFT JOIN (
               SELECT conversation_id, COUNT(*) AS cnt, MAX(sent_at) AS last_ts
@@ -28,6 +32,11 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
           ) s ON s.conversation_id = t.id
           LEFT JOIN telegram_messages l
                  ON l.conversation_id = t.id AND l.kind = 'message' AND l.sent_at = s.last_ts
+          LEFT JOIN (
+              SELECT conversation_id, MAX(max_id) AS read_id
+              FROM telegram_read_marks WHERE direction = 'inbox'
+              GROUP BY conversation_id
+          ) rd ON rd.conversation_id = t.id
           ORDER BY l.id DESC",
     )
     .fetch_all(pool)
@@ -52,6 +61,8 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
             message_count: r.try_get("cnt")?,
             last_ts: last_s.map(s_to_ms),
             last: LastMessage::from_row(&r, deleted.unwrap_or(0) != 0)?,
+            // How far I have read; no mark is unknown, not unread.
+            unread: r.try_get("unread")?,
         });
     }
     Ok(out)

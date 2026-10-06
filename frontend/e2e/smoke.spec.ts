@@ -46,8 +46,8 @@ async function scrollThread(page: Page, top: number | "bottom"): Promise<void> {
 const ME = { user_id: "u1", display_name: "Test User" } satisfies Me;
 
 const CONVERSATIONS = [
-  { origin: "signal", id: "dm:a", name: "Alice", kind: "dm", network: null, message_count: 5, last_ts: 1_717_000_000_000, last: null },
-  { origin: "gchat", id: "gc1", name: "Bob", kind: "dm", network: null, message_count: 3, last_ts: 1_717_100_000_000, last: null },
+  { origin: "signal", id: "dm:a", name: "Alice", kind: "dm", network: null, message_count: 5, last_ts: 1_717_000_000_000, last: null, unread: 0 },
+  { origin: "gchat", id: "gc1", name: "Bob", kind: "dm", network: null, message_count: 3, last_ts: 1_717_100_000_000, last: null, unread: 0 },
 ] satisfies Conversation[];
 
 /** Mock every backend call. The catch-all goes first: Playwright runs handlers

@@ -15,4 +15,9 @@ last_ts: number | null,
 /**
  * Its newest message, for the line under the name.
  */
-last: LastMessage | null, };
+last: LastMessage | null, 
+/**
+ * Messages from others that came in after I last read, on the phone; 0 when
+ * the origin cannot say (Google Chat, IRC) or nothing is unread.
+ */
+unread: number, };

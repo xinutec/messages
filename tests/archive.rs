@@ -2822,3 +2822,66 @@ async fn an_unresolved_signal_quote_shows_what_it_quoted() {
         Some("something from before the archive")
     );
 }
+
+/// Unread is what came in after I last read, on the phone, where the archive
+/// can tell: Signal from my linked devices' read syncs, Telegram from its inbox
+/// mark. What it cannot tell counts as nothing, never as unread.
+#[tokio::test]
+async fn unread_counts_what_came_in_after_i_last_read() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    // A Telegram chat read up to msg 2, with two of theirs after it, one of mine,
+    // and a service event, which is not a message.
+    sqlx::query("INSERT INTO telegram_conversations (id, kind, name) VALUES (5151, 'dm', 'Uma')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO telegram_messages
+            (conversation_id, msg_id, sent_at, sender_id, sender_name, is_outgoing, kind, text, deleted) VALUES
+            (5151, 1, 1700001000, 5151, 'Uma', 0, 'message', 'read', 0),
+            (5151, 2, 1700001010, 5151, 'Uma', 0, 'message', 'read too', 0),
+            (5151, 3, 1700001020, 5151, 'Uma', 0, 'message', 'new', 0),
+            (5151, 4, 1700001030, 777, 'Me', 1, 'message', 'mine', 0),
+            (5151, 5, 1700001040, 5151, 'Uma', 0, 'service', 'joined', 0),
+            (5151, 6, 1700001050, 5151, 'Uma', 0, 'message', 'newer', 0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO telegram_read_marks (conversation_id, direction, max_id) VALUES (5151, 'inbox', 2)")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let convs = archive::list_conversations(&pool).await.unwrap();
+    let unread = |origin: Origin, id: &str| {
+        convs
+            .iter()
+            .find(|c| c.origin == origin && c.id == id)
+            .unwrap_or_else(|| panic!("no {id}"))
+            .unread
+    };
+    // Signal: read up to her 1250; my linked device reading my own 1200 is no
+    // read point.
+    assert_eq!(unread(Origin::Signal, "dm:receipts"), 0);
+    // No read point: what came in after the syncs began, not before.
+    assert_eq!(unread(Origin::Signal, "dm:alice"), 1);
+    assert_eq!(unread(Origin::Signal, "group:g1"), 1);
+    // Telegram: after the inbox mark, theirs and messages only.
+    assert_eq!(unread(Origin::Telegram, "5151"), 2);
+    assert_eq!(unread(Origin::Telegram, "4242"), 0, "read to the end");
+    assert_eq!(
+        unread(Origin::Telegram, "-1000000000055"),
+        0,
+        "no mark: unknown"
+    );
+    // The others cannot say.
+    for c in convs
+        .iter()
+        .filter(|c| matches!(c.origin, Origin::Gchat | Origin::Irc))
+    {
+        assert_eq!(c.unread, 0, "{} cannot say", c.id);
+    }
+}

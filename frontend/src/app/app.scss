@@ -84,6 +84,36 @@ ui-scaffold {
       font: var(--mat-sys-label-small);
       color: var(--mat-sys-on-surface-variant);
     }
+    // Two items, time over count: Material sizes the meta slot for one line of
+    // text, so it is centred on the row and sized by its content instead.
+    .when {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 0.3rem;
+      align-self: center;
+      height: auto;
+      margin-top: 0;
+    }
+    // Unread on the phone: the name bold, the time and a count in the accent.
+    &.unread {
+      @include mat.list-overrides(
+        (
+          list-item-label-text-weight: 600,
+        )
+      );
+      .when {
+        color: var(--mat-sys-primary);
+      }
+    }
+    .badge {
+      min-width: 1.25rem;
+      padding: 0.1rem 0.35rem;
+      border-radius: 0.7rem;
+      background: var(--mat-sys-primary);
+      color: var(--mat-sys-on-primary);
+      text-align: center;
+    }
     .quiet {
       font-style: italic;
     }

@@ -8,10 +8,10 @@ import { MessagesStore } from './messages-store';
 import { Conversation } from './models';
 
 const ONE: Conversation[] = [
-  { origin: 'irc', id: '7', name: '#chan', kind: 'group', network: 'xinutec', message_count: 1, last_ts: 100, last: null },
+  { origin: 'irc', id: '7', name: '#chan', kind: 'group', network: 'xinutec', message_count: 1, last_ts: 100, last: null, unread: 0 },
 ];
 const TWO: Conversation[] = [
-  { origin: 'irc', id: '7', name: '#chan', kind: 'group', network: 'xinutec', message_count: 2, last_ts: 200, last: null },
+  { origin: 'irc', id: '7', name: '#chan', kind: 'group', network: 'xinutec', message_count: 2, last_ts: 200, last: null, unread: 0 },
 ];
 
 function setup(): { store: MessagesStore; api: { conversations: ReturnType<typeof vi.fn> } } {
