@@ -1,0 +1,7 @@
+<!-- Tapping the picture closes it too, as in Signal; a button, so the keyboard can. -->
+<button type="button" class="dismiss" (click)="ref.close()" aria-label="Close picture">
+  <img [src]="data.src" [alt]="data.alt" />
+</button>
+<button mat-icon-button type="button" class="close" (click)="ref.close()" aria-label="Close">
+  <mat-icon>close</mat-icon>
+</button>

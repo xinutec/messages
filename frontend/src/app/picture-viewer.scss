@@ -1,0 +1,34 @@
+// The picture over the thread, filling the screen.
+:host {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100vw;
+  height: 100dvh;
+}
+
+// The picture fills the screen and is itself the way out.
+.dismiss {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-out;
+}
+
+// The whole picture, as large as the screen allows: a small one is scaled up.
+img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+// Over the picture, so in the theme-independent colour for media.
+.close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  color: var(--on-media);
+  background: var(--scrim);
+}

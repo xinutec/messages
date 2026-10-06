@@ -7,11 +7,12 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatListModule } from '@angular/material/list';
 import { FormsModule } from '@angular/forms';
-import { ScaffoldActions, scaffoldTitle } from '@xinutec/ui-scaffold';
+import { Dialogs, ScaffoldActions, scaffoldTitle } from '@xinutec/ui-scaffold';
 
 import { Subject, catchError, firstValueFrom, of, switchMap } from 'rxjs';
 
 import { attachmentName, attachmentNoun } from './attachment';
+import { PictureData, PictureViewer } from './picture-viewer';
 import { FetchRequests } from './fetch-requests';
 import { segments } from './formatting';
 import { LogScope, chatLogHtml, formatChatLog } from './copy-log';
@@ -52,6 +53,23 @@ export class Thread {
 
   // Shared with the clipboard; see attachment.ts.
   protected readonly attachmentName = attachmentName;
+
+  private readonly dialogs = inject(Dialogs);
+
+  /** A picture, full screen over the thread; back closes it. */
+  protected viewPicture(a: Attachment): void {
+    const data: PictureData = { src: this.attachmentUrl(a), alt: attachmentName(a) ?? 'picture' };
+    this.dialogs.open(PictureViewer, {
+      data,
+      panelClass: 'picture-viewer',
+      backdropClass: 'picture-viewer-backdrop',
+      width: '100vw',
+      maxWidth: '100vw',
+      height: '100dvh',
+      maxHeight: '100dvh',
+      autoFocus: false,
+    });
+  }
 
   /** Where an attachment's bytes come from: each origin has its own route, since
    *  attachment ids are per origin. */
