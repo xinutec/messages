@@ -74,6 +74,7 @@ async fn fetch(State(svc): State<Svc>, Json(req): Json<FetchRequest>) -> Respons
     match fetch_picture(&svc.client, &url, svc.limits).await {
         Ok(Some((bytes, content_type))) => {
             tracing::info!("fetched {} bytes of {content_type}", bytes.len());
+            // dev-lint: allow-bytes-uncached a reply to the archiver, which stores the bytes itself; no browser sees it
             ([(header::CONTENT_TYPE, content_type)], bytes).into_response()
         }
         Ok(None) => StatusCode::NO_CONTENT.into_response(),
