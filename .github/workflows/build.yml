@@ -2,8 +2,8 @@
 name: build
 
 # Two images from one workspace: xinutec/messages (the viewer) and
-# dev-lint: allow-pii the repository's name
-# xinutec/signal-archiver (archiver/). Manifests live in pippijn/code/kubes.
+# xinutec/signal-archiver (archiver/). Manifests live in xinutec/pippijn, under
+# code/kubes.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

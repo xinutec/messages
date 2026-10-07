@@ -91,7 +91,6 @@ cd frontend && pnpm install && pnpm start  # http://localhost:4200
 ```
 
 ## Deploy (isis, namespace `signal`)
-<!-- dev-lint: allow-pii the repository's name -->
 Manifests are in the home monorepo (`xinutec/pippijn`): `code/kubes/messages/k8s/`
 for the viewer, `code/kubes/signal/k8s/` for the archiver.
 Push to main, wait for CI to build both images, then run
