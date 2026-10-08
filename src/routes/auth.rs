@@ -5,6 +5,7 @@
 
 use anyhow::anyhow;
 use axum::extract::{Query, State};
+use axum::http::StatusCode;
 use axum::response::Redirect;
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use chrono::Utc;
@@ -114,13 +115,16 @@ pub async fn callback(
     Ok((jar.add(session_cookie(signed)), Redirect::to(&dest)))
 }
 
-/// POST /logout → destroy the session + clear the cookie.
+/// POST /logout → destroy the session + clear the cookie; 204, the page reloads itself.
 pub async fn logout(
     State(app): State<AppState>,
     jar: CookieJar,
-) -> Result<(CookieJar, Redirect), AppError> {
+) -> Result<(CookieJar, StatusCode), AppError> {
     if let Some(c) = jar.get(COOKIE_NAME) {
         destroy_session(&app.pool, &app.cfg.session_secret, c.value()).await?;
     }
-    Ok((jar.remove(Cookie::from(COOKIE_NAME)), Redirect::to("/")))
+    Ok((
+        jar.remove(Cookie::from(COOKIE_NAME)),
+        StatusCode::NO_CONTENT,
+    ))
 }
