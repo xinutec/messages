@@ -3,9 +3,40 @@
 //! raw frames everything is parsed from.
 
 use anyhow::Result;
+use sqlx::{Connection, MySqlConnection};
 
 use super::Db;
 use crate::parse::ThreadId;
+
+/// Close the previous name and open the current one, on the caller's
+/// transaction.
+///
+/// Separate statements because MariaDB refuses an `INSERT … WHERE NOT EXISTS`
+/// whose subquery reads the target table.
+async fn record_contact_name(conn: &mut MySqlConnection, uuid: &str, name: &str) -> Result<()> {
+    sqlx::query(
+        "UPDATE contact_names SET seen_until = CURRENT_TIMESTAMP
+          WHERE uuid = ? AND seen_until IS NULL AND name <> ?",
+    )
+    .bind(uuid)
+    .bind(name)
+    .execute(&mut *conn)
+    .await?;
+    let open: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM contact_names WHERE uuid = ? AND seen_until IS NULL",
+    )
+    .bind(uuid)
+    .fetch_one(&mut *conn)
+    .await?;
+    if open == 0 {
+        sqlx::query("INSERT INTO contact_names (uuid, name) VALUES (?, ?)")
+            .bind(uuid)
+            .bind(name)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
+}
 
 impl Db {
     pub async fn upsert_conversation(&self, thread: &ThreadId) -> Result<()> {
@@ -50,66 +81,43 @@ impl Db {
     ) -> Result<()> {
         let phone = phone.filter(|s| !s.is_empty());
         let name = name.filter(|s| !s.is_empty());
-        // The duplicate branch leaves the name alone, so a rename happens only below.
-        // `rows_affected` is 1 exactly when this inserted.
-        let inserted = sqlx::query(
-            "INSERT INTO contacts (uuid, phone, display_name) VALUES (?, ?, ?)
+        // One transaction: a rename and its history row land together, or
+        // neither does. READ COMMITTED, so closing a previous name that does not
+        // exist locks no gap: under REPEATABLE READ two first sightings deadlock
+        // on each other's gap when they insert.
+        let mut conn = self.pool.acquire().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            .execute(&mut *conn)
+            .await?;
+        let mut tx = conn.begin().await?;
+        sqlx::query(
+            "INSERT INTO contacts (uuid, phone) VALUES (?, ?)
              ON DUPLICATE KEY UPDATE phone = COALESCE(VALUES(phone), phone)",
         )
         .bind(uuid)
         .bind(phone)
-        .bind(name)
-        .execute(&self.pool)
-        .await?
-        .rows_affected()
-            == 1;
-
-        let Some(name) = name else { return Ok(()) };
-
-        // `IS NULL`: a contact first seen nameless gets its first name here.
-        let moved = sqlx::query(
-            "UPDATE contacts SET display_name = ?
-              WHERE uuid = ? AND (display_name IS NULL OR display_name <> ?)",
-        )
-        .bind(name)
-        .bind(uuid)
-        .bind(name)
-        .execute(&self.pool)
-        .await?
-        .rows_affected();
-
-        if !inserted && moved == 0 {
-            return Ok(());
-        }
-        self.record_contact_name(uuid, name).await
-    }
-
-    /// Close the previous name and open the current one.
-    ///
-    /// Separate statements because MariaDB refuses an `INSERT … WHERE NOT EXISTS`
-    /// whose subquery reads the target table.
-    async fn record_contact_name(&self, uuid: &str, name: &str) -> Result<()> {
-        sqlx::query(
-            "UPDATE contact_names SET seen_until = CURRENT_TIMESTAMP
-              WHERE uuid = ? AND seen_until IS NULL AND name <> ?",
-        )
-        .bind(uuid)
-        .bind(name)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
-        let open: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM contact_names WHERE uuid = ? AND seen_until IS NULL",
-        )
-        .bind(uuid)
-        .fetch_one(&self.pool)
-        .await?;
-        if open == 0 {
-            sqlx::query("INSERT INTO contact_names (uuid, name) VALUES (?, ?)")
-                .bind(uuid)
-                .bind(name)
-                .execute(&self.pool)
-                .await?;
+
+        if let Some(name) = name {
+            // The row's name is set here, never by the INSERT, so one count says
+            // the name is new for this contact: its first, or a rename.
+            // `IS NULL`: a contact first seen nameless gets its first name here.
+            let moved = sqlx::query(
+                "UPDATE contacts SET display_name = ?
+                  WHERE uuid = ? AND (display_name IS NULL OR display_name <> ?)",
+            )
+            .bind(name)
+            .bind(uuid)
+            .bind(name)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            if moved > 0 {
+                record_contact_name(&mut tx, uuid, name).await?;
+            }
         }
+        tx.commit().await?;
         Ok(())
     }
 
