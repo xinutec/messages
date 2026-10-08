@@ -5,8 +5,8 @@
 
 use anyhow::anyhow;
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
-use axum::response::Redirect;
+use axum::http::{StatusCode, header};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use chrono::Utc;
 use serde::Deserialize;
@@ -75,12 +75,53 @@ pub struct CallbackQuery {
     state: Option<String>,
 }
 
-/// GET /auth/callback → exchange code, read identity, ENFORCE the allow-list,
-/// then create our session.
+/// The OAuth callback: where Nextcloud sends the browser. A failure is drawn as
+/// a page, because `AppError`'s JSON in its place reads as the app being broken.
 pub async fn callback(
     State(app): State<AppState>,
     jar: CookieJar,
     Query(q): Query<CallbackQuery>,
+) -> Response {
+    match finish_sign_in(app, jar, q).await {
+        Ok(done) => done.into_response(),
+        Err(e) => sign_in_problem(e.into_response().status()),
+    }
+}
+
+/// A sign-in that could not be finished, said in words and with a way back in.
+fn sign_in_problem(status: StatusCode) -> Response {
+    let said = match status {
+        StatusCode::UNAUTHORIZED => "This sign-in did not start here, or it took too long.",
+        StatusCode::FORBIDDEN => "This account may not use this app.",
+        _ => "The sign-in could not be finished.",
+    };
+    let body = format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+         <title>Sign-in did not finish</title><style>\
+         body{{font:16px/1.5 system-ui,-apple-system,sans-serif;margin:0;\
+         min-height:100vh;display:grid;place-items:center;padding:1.5rem;color:#1a1a1a}}\
+         main{{max-width:26rem}}h1{{font-size:1.2rem;margin:0 0 .5rem}}\
+         p{{margin:0 0 1.5rem;color:#555}}\
+         a{{display:inline-block;padding:.65rem 1.1rem;border-radius:.5rem;\
+         background:#1b6ac9;color:#fff;text-decoration:none}}\
+         </style></head><body><main><h1>Sign-in did not finish</h1>\
+         <p>{said}</p><a href=\"/login\">Try again</a></main></body></html>"
+    );
+    (
+        status,
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        body,
+    )
+        .into_response()
+}
+
+/// The callback's work: exchange code, read identity, ENFORCE the allow-list,
+/// then create our session.
+async fn finish_sign_in(
+    app: AppState,
+    jar: CookieJar,
+    q: CallbackQuery,
 ) -> Result<(CookieJar, Redirect), AppError> {
     let pending = pending_login::accept(
         &app.cfg.session_secret,
