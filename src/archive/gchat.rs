@@ -64,7 +64,7 @@ pub(super) async fn page(
     let (cur_ts, cur_id) = (cursor.map(|(ts, _)| ts), cursor.map(|(_, id)| id));
     let sql = match dir {
         PageDir::Older => {
-            r"SELECT m.id AS id, m.ts_us AS ts_us, m.sender_name AS sender,
+            r"SELECT m.id AS id, m.ts_us AS ts_us, m.sender_name AS sender, m.sender_id AS sender_key,
                  m.is_self AS is_self, m.text AS body,
                  m.reply_to_msg_id AS reply_to_msg_id, m.group_id AS group_id
           FROM gchat_messages m
@@ -74,7 +74,7 @@ pub(super) async fn page(
           LIMIT ?"
         }
         PageDir::Newer => {
-            r"SELECT m.id AS id, m.ts_us AS ts_us, m.sender_name AS sender,
+            r"SELECT m.id AS id, m.ts_us AS ts_us, m.sender_name AS sender, m.sender_id AS sender_key,
                  m.is_self AS is_self, m.text AS body,
                  m.reply_to_msg_id AS reply_to_msg_id, m.group_id AS group_id
           FROM gchat_messages m
@@ -84,7 +84,7 @@ pub(super) async fn page(
           LIMIT ?"
         }
         PageDir::AtAndNewer => {
-            r"SELECT m.id AS id, m.ts_us AS ts_us, m.sender_name AS sender,
+            r"SELECT m.id AS id, m.ts_us AS ts_us, m.sender_name AS sender, m.sender_id AS sender_key,
                  m.is_self AS is_self, m.text AS body,
                  m.reply_to_msg_id AS reply_to_msg_id, m.group_id AS group_id
           FROM gchat_messages m
@@ -122,6 +122,7 @@ pub(super) async fn page(
             us_to_ms(ts_us),
             r.try_get::<Option<String>, _>("sender")?
                 .unwrap_or_default(),
+            r.try_get("sender_key")?,
             is_self != 0,
             r.try_get("body")?,
         ));

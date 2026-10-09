@@ -53,6 +53,7 @@ fn msg(body: &str) -> Message {
         id: "1".into(),
         ts: 0,
         sender: "s".into(),
+        sender_key: "s".into(),
         is_outgoing: false,
         kind: MessageKind::Message,
         body: Some(body.into()),

@@ -14,7 +14,13 @@ export type Message = { id: string,
 /**
  * Epoch milliseconds.
  */
-ts: number, sender: string, is_outgoing: boolean, 
+ts: number, sender: string, 
+/**
+ * Who sent it, by what outlasts a rename: Signal's uuid, Telegram's and
+ * Google Chat's user id. The name where there is none: IRC's nick, a
+ * channel post.
+ */
+sender_key: string, is_outgoing: boolean, 
 /**
  * Said or done. Always `message` outside IRC.
  */

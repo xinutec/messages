@@ -148,6 +148,7 @@ pub(super) async fn page(
                 s_to_ms(ts_s),
                 r.try_get::<Option<String>, _>("sender")?
                     .unwrap_or_default(),
+                None,
                 is_self != 0,
                 r.try_get("body")?,
             )

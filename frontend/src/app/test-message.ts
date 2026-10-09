@@ -8,6 +8,8 @@ export function testMessage(over: Partial<Message> = {}): Message {
     id: '1',
     ts: 0,
     sender: 's',
+    // The name unless a test says otherwise, as for an IRC nick.
+    sender_key: over.sender ?? 's',
     is_outgoing: false,
     kind: 'message',
     body: 'b',

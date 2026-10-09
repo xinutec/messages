@@ -14,6 +14,7 @@ import { Subject, catchError, firstValueFrom, of, switchMap } from 'rxjs';
 import { attachmentName, attachmentNoun, isVideo } from './attachment';
 import { FetchRequests } from './fetch-requests';
 import { segments } from './formatting';
+import { hue } from './list-row';
 import { LogScope, chatLogHtml, formatChatLog } from './copy-log';
 import { MAX_RESTORE_PAGES, PAGE, ThreadWindow } from './thread-window';
 import { MessagesApi } from './messages-api';
@@ -78,6 +79,12 @@ export class Thread {
     return origin ? `/api/${route[origin]}/${a.id}` : '';
   }
   protected readonly attachmentNoun = attachmentNoun;
+
+  /** A sender's hue, from `sender_key`: a rename keeps the colour. */
+  protected senderHue(m: Message): number {
+    return hue(m.sender_key);
+  }
+
   protected readonly isVideo = isVideo;
 
   /** Deleted messages the reader chose to see, by id. Screen only (the clipboard

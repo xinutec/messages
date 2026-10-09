@@ -184,7 +184,9 @@
   // Furniture like `.meta`, so a copy is only the words.
   .who {
     font: var(--mat-sys-label-medium);
-    color: var(--mat-sys-primary);
+    // The theme's primary, turned to the sender's own hue (`senderHue`): as legible
+    // in either theme, and told apart in a group.
+    color: oklch(from var(--mat-sys-primary) l c var(--who));
     user-select: none;
   }
   // No `content-visibility: auto`: it renders off-screen rows at a guessed

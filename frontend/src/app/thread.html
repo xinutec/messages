@@ -72,7 +72,8 @@
                 <div class="msg" [class.out]="m.is_outgoing" [class.first]="startsRun().has(m.id)" [class.plain]="isPlain(m)" [class.landed]="landedId() === m.id" [attr.data-id]="m.id" [attr.data-ts]="m.ts">
                   <!-- Who speaks, once per run, and only where the bar does not already say. -->
                   @if (!m.is_outgoing && namesSenders() && startsRun().has(m.id)) {
-                    <div class="who">{{ m.sender }}</div>
+                    <!-- Coloured by who it is, not what they are called: see `senderHue`. -->
+                    <div class="who" [style.--who]="senderHue(m)">{{ m.sender }}</div>
                   }
                   <!-- What this message replied to, above the body and outside the deletion gate:
                        being a reply is not content. Clickable only when the archive holds the

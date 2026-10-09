@@ -20,10 +20,11 @@ export function initials(name: string): string {
   return words.slice(0, 2).map((w) => [...w][0]).join('').toUpperCase() || '?';
 }
 
-/** A hue per conversation, the same on every load. */
-export function hue(origin: Origin, id: string): number {
+/** A hue for what `parts` name, the same on every load: a conversation by origin
+ *  and id, a sender by key. */
+export function hue(...parts: string[]): number {
   let h = 0;
-  for (const ch of origin + id) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  for (const ch of parts.join('')) h = (h * 31 + ch.charCodeAt(0)) % 360;
   return h;
 }
 

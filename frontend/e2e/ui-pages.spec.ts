@@ -265,6 +265,30 @@ test("a link preview and a quoted message from before the archive @ phone width"
 // caption and one meta line under them. Three is the odd case and four the even
 // one; once the captioned member took a row of its own, four came out with two
 // half-empty rows.
+// In a group each sender's name has a colour of its own, keyed by what outlasts
+// a rename: Dana renamed keeps hers.
+test("a sender's name keeps its colour through a rename @ phone width", async ({ page }, testInfo) => {
+  await mockApi(page);
+  const said = (id: string, sender: string, key: string) =>
+    testMessage({ id, ts: Date.UTC(2026, 0, 1, 9, Number(id)), sender, sender_key: key, body: `${sender} speaking` });
+  await page.route("**/api/conversations/signal/grp%3Ax/messages**", (r) =>
+    r.fulfill({
+      json: {
+        messages: [said("1", "Dana", "u-dana"), said("2", "Erin Example", "u-erin"), said("3", "Dana the Bold", "u-dana")],
+        has_more: false, next_cursor: null, prev_cursor: null,
+      } satisfies MessagesPage,
+    }),
+  );
+  await page.goto("/conversation/signal/grp%3Ax");
+  const colour = (name: string) =>
+    page.locator(".msg .who", { hasText: new RegExp(`^${name}$`) }).evaluate((e) => getComputedStyle(e).color);
+  await page.getByText("Dana the Bold speaking").waitFor();
+  expect(await colour("Dana")).toBe(await colour("Dana the Bold"));
+  expect(await colour("Dana")).not.toBe(await colour("Erin Example"));
+  await page.screenshot({ path: testInfo.outputPath("senders.png") });
+  await expectCleanLayout(page, testInfo);
+});
+
 test("an album is one set under one meta line @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
   await page.goto("/conversation/signal/dm:a");

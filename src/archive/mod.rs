@@ -403,6 +403,10 @@ pub struct Message {
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub ts: i64,
     pub sender: String,
+    /// Who sent it, by what outlasts a rename: Signal's uuid, Telegram's and
+    /// Google Chat's user id. The name where there is none: IRC's nick, a
+    /// channel post.
+    pub sender_key: String,
     pub is_outgoing: bool,
     /// Said or done. Always `message` outside IRC.
     pub kind: MessageKind,
@@ -434,10 +438,19 @@ pub struct Message {
 
 impl Message {
     /// A message with nothing attached yet; each origin's page fills in the rest.
-    fn bare(id: i64, ts: i64, sender: String, is_outgoing: bool, body: Option<String>) -> Self {
+    /// `key` is the sender's permanent id, where the origin has one.
+    fn bare(
+        id: i64,
+        ts: i64,
+        sender: String,
+        key: Option<String>,
+        is_outgoing: bool,
+        body: Option<String>,
+    ) -> Self {
         Message {
             id: id.to_string(),
             ts,
+            sender_key: key.unwrap_or_else(|| sender.clone()),
             sender,
             is_outgoing,
             kind: MessageKind::Message,

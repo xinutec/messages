@@ -87,7 +87,7 @@ pub(super) async fn page(
     let sql = match dir {
         PageDir::Older => {
             r"SELECT m.id AS id, m.msg_id AS msg_id, m.sent_at AS sent_at,
-                     m.sender_name AS sender, m.is_outgoing AS is_outgoing,
+                     m.sender_name AS sender, m.is_outgoing AS is_outgoing, CAST(m.sender_id AS CHAR) AS sender_key,
                      m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at,
                      m.edit_hidden AS edit_hidden,
                      m.reply_to_msg_id AS reply_to_msg_id, m.kind AS kind,
@@ -104,7 +104,7 @@ pub(super) async fn page(
         }
         PageDir::Newer => {
             r"SELECT m.id AS id, m.msg_id AS msg_id, m.sent_at AS sent_at,
-                     m.sender_name AS sender, m.is_outgoing AS is_outgoing,
+                     m.sender_name AS sender, m.is_outgoing AS is_outgoing, CAST(m.sender_id AS CHAR) AS sender_key,
                      m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at,
                      m.edit_hidden AS edit_hidden,
                      m.reply_to_msg_id AS reply_to_msg_id, m.kind AS kind,
@@ -121,7 +121,7 @@ pub(super) async fn page(
         }
         PageDir::AtAndNewer => {
             r"SELECT m.id AS id, m.msg_id AS msg_id, m.sent_at AS sent_at,
-                     m.sender_name AS sender, m.is_outgoing AS is_outgoing,
+                     m.sender_name AS sender, m.is_outgoing AS is_outgoing, CAST(m.sender_id AS CHAR) AS sender_key,
                      m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at,
                      m.edit_hidden AS edit_hidden,
                      m.reply_to_msg_id AS reply_to_msg_id, m.kind AS kind,
@@ -193,6 +193,7 @@ pub(super) async fn page(
                 s_to_ms(sent_at),
                 r.try_get::<Option<String>, _>("sender")?
                     .unwrap_or_default(),
+                r.try_get("sender_key")?,
                 is_outgoing != 0,
                 body,
             )

@@ -2976,3 +2976,49 @@ async fn the_last_message_says_what_it_carried() {
     // Words and nothing else carry no type.
     assert_eq!(media(Origin::Gchat, "gc1").1, None);
 }
+
+/// A sender is keyed by what outlasts a rename: Signal's uuid, Google Chat's and
+/// Telegram's user id. IRC has only the nick, so the nick is the key.
+#[tokio::test]
+async fn a_sender_is_keyed_by_what_outlasts_a_rename() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let first = |origin: Origin, id: &'static str| {
+        let pool = pool.clone();
+        async move {
+            let page = archive::messages_page(&pool, origin, id, None, 50, PageDir::Older)
+                .await
+                .unwrap();
+            let m = page
+                .messages
+                .into_iter()
+                .find(|m| !m.is_outgoing)
+                .expect("a message from somebody else");
+            (m.sender, m.sender_key)
+        }
+    };
+    assert_eq!(
+        first(Origin::Signal, "dm:alice").await,
+        ("Alice".to_string(), "alice".to_string())
+    );
+    assert_eq!(
+        first(Origin::Gchat, "gc1").await,
+        ("Bob".to_string(), "g-bob".to_string())
+    );
+    assert_eq!(
+        first(Origin::Telegram, "4242").await,
+        ("Tessa".to_string(), "4242".to_string())
+    );
+    let irc: String = sqlx::query_scalar(
+        "SELECT CAST(id AS CHAR) FROM irc_conversations WHERE network = 'net' AND target = '#chan'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let page = archive::messages_page(&pool, Origin::Irc, &irc, None, 50, PageDir::Older)
+        .await
+        .unwrap();
+    let alice = page.messages.iter().find(|m| m.sender == "alice").unwrap();
+    assert_eq!(alice.sender_key, "alice");
+}

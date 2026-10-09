@@ -110,7 +110,7 @@ pub(super) async fn page(
     let sql = match dir {
         PageDir::Older => {
             r"SELECT m.id AS id, m.server_ts AS ts,
-                 COALESCE(ct.display_name, m.sender_uuid) AS sender,
+                 COALESCE(ct.display_name, m.sender_uuid) AS sender, m.sender_uuid AS sender_key,
                  m.is_outgoing AS is_outgoing, m.body AS body,
                  m.deleted AS deleted, m.edited AS edited,
                  m.quote_target_ts AS quote_target_ts, m.quote_text AS quote_text,
@@ -126,7 +126,7 @@ pub(super) async fn page(
         }
         PageDir::Newer => {
             r"SELECT m.id AS id, m.server_ts AS ts,
-                 COALESCE(ct.display_name, m.sender_uuid) AS sender,
+                 COALESCE(ct.display_name, m.sender_uuid) AS sender, m.sender_uuid AS sender_key,
                  m.is_outgoing AS is_outgoing, m.body AS body,
                  m.deleted AS deleted, m.edited AS edited,
                  m.quote_target_ts AS quote_target_ts, m.quote_text AS quote_text,
@@ -142,7 +142,7 @@ pub(super) async fn page(
         }
         PageDir::AtAndNewer => {
             r"SELECT m.id AS id, m.server_ts AS ts,
-                 COALESCE(ct.display_name, m.sender_uuid) AS sender,
+                 COALESCE(ct.display_name, m.sender_uuid) AS sender, m.sender_uuid AS sender_key,
                  m.is_outgoing AS is_outgoing, m.body AS body,
                  m.deleted AS deleted, m.edited AS edited,
                  m.quote_target_ts AS quote_target_ts, m.quote_text AS quote_text,
@@ -196,6 +196,7 @@ pub(super) async fn page(
                 id,
                 ts,
                 r.try_get("sender")?,
+                r.try_get("sender_key")?,
                 is_outgoing != 0,
                 r.try_get("body")?,
             )
