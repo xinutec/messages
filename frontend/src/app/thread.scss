@@ -185,8 +185,9 @@
   .who {
     font: var(--mat-sys-label-medium);
     // The theme's primary, turned to the sender's own hue (`senderHue`): as legible
-    // in either theme, and told apart in a group.
-    color: oklch(from var(--mat-sys-primary) l c var(--who));
+    // in either theme, and told apart in a group. A quote's name has no hue and
+    // keeps the primary's own.
+    color: oklch(from var(--mat-sys-primary) l c var(--who, h));
     user-select: none;
   }
   // No `content-visibility: auto`: it renders off-screen rows at a guessed

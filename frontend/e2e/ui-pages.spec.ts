@@ -255,6 +255,10 @@ test("a link preview and a quoted message from before the archive @ phone width"
     .poll(() => bubble.locator(".preview img").evaluate((e) => e instanceof HTMLImageElement && e.naturalWidth > 0))
     .toBe(true);
   await expect(bubble.locator(".reply-quote .who")).toHaveText("Bob Bytecode");
+  // In the accent, not the text's colour: the name has no sender hue, and once
+  // lost the accent with it.
+  const quoteName = await bubble.locator(".reply-quote .who").evaluate((e) => getComputedStyle(e).color);
+  expect(quoteName).not.toBe(await bubble.locator(".reply-quote .said").evaluate((e) => getComputedStyle(e).color));
   await expect(bubble.locator(".reply-quote .said")).toContainText("enormous climbing wall");
   await bubble.scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath("preview.png") });
