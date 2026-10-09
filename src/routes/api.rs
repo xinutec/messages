@@ -11,6 +11,7 @@ use tower::ServiceExt;
 use tower_http::services::ServeFile;
 
 use crate::archive;
+use crate::avatars;
 use crate::error::AppError;
 use crate::link_fetch;
 use crate::session::AuthUser;
@@ -40,7 +41,39 @@ pub async fn conversations(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
 ) -> Result<Json<Vec<archive::Conversation>>, AppError> {
-    Ok(Json(archive::list_conversations(&app.pool).await?))
+    let mut list = archive::list_conversations(&app.pool).await?;
+    avatars::attach(&app.cfg, &mut list);
+    Ok(Json(list))
+}
+
+/// GET /api/conversations/{origin}/{id}/avatar → its picture, where the origin
+/// keeps one. The list's `avatar` version goes on the URL, so the picture is
+/// kept like any held file and a new one is a new URL.
+pub async fn avatar(
+    State(app): State<AppState>,
+    AuthUser(_user): AuthUser,
+    asked: HeaderMap,
+    Path((origin, id)): Path<(String, String)>,
+) -> Result<Response, AppError> {
+    let origin = archive::Origin::parse(&origin).ok_or(AppError::NotFound)?;
+    let (path, _) = avatars::find(&app.cfg, origin, &id).ok_or(AppError::NotFound)?;
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+        return Err(AppError::NotFound);
+    };
+    // The type from the bytes: the names carry no extension to trust.
+    let head = tokio::fs::read(&path)
+        .await
+        .map_err(|_| AppError::NotFound)?;
+    let ct = avatars::image_type(&head).to_string();
+    let what = format!("{id}'s picture");
+    serve_held(
+        &what,
+        &dir.to_string_lossy(),
+        &name.to_string_lossy(),
+        Some(ct),
+        asked,
+    )
+    .await
 }
 
 #[derive(Deserialize)]

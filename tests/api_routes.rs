@@ -235,3 +235,48 @@ async fn a_held_file_is_kept_by_the_client_and_served_in_parts() {
     assert_eq!(&body[..], b"really");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// A group's picture is the file the ingester keeps for it, typed by its bytes;
+/// a name that would leave the directory finds nothing.
+#[tokio::test]
+async fn a_conversation_shows_the_picture_its_origin_keeps() {
+    let Some(pool) = pool().await else { return };
+    let dir = std::env::temp_dir().join(format!("messages-avatars-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("avatars")).unwrap();
+    std::fs::write(
+        dir.join("avatars").join("group:ab_cd="),
+        b"\x89PNG\r\n\x1a\nnot really",
+    )
+    .unwrap();
+    let cookie = signed_in(&pool).await;
+    let app = messages::routes::router(AppState::new(
+        pool,
+        messages::config::Config {
+            attachments_dir: dir.to_string_lossy().into_owned(),
+            ..support::config()
+        },
+        reqwest::Client::new(),
+        None,
+    ));
+    let get = |id: &str| {
+        let req = Request::get(format!("/api/conversations/signal/{id}/avatar"))
+            .header("cookie", format!("{}={cookie}", session::COOKIE_NAME))
+            .body(Body::empty())
+            .unwrap();
+        app.clone().oneshot(req)
+    };
+    let res = get("group%3Aab%2Fcd%3D").await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        res.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("image/png")
+    );
+    assert_eq!(
+        get("group%3Anobody").await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(get("..").await.unwrap().status(), StatusCode::NOT_FOUND);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

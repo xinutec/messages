@@ -385,6 +385,12 @@ async fn refresh_contact_names(ctx: Ctx) {
                     } else {
                         named += 1;
                     }
+                    let avatar =
+                        format!("{}/v1/contacts/{}/{uuid}/avatar", ctx.http_base, ctx.number);
+                    let thread = ThreadId::Dm(uuid.to_string()).to_string();
+                    if let Err(e) = keep_avatar(&ctx, &avatar, &thread).await {
+                        tracing::warn!("could not keep {uuid}'s picture: {e:#}");
+                    }
                 }
                 tracing::debug!(
                     "refreshed {named} contact name(s), {skipped} with no name to take"
@@ -413,6 +419,15 @@ async fn refresh_group_names(ctx: Ctx) {
                     if let Err(e) = ctx.db.set_conversation_name(&thread, name).await {
                         tracing::warn!("failed to store group name for {iid}: {e}");
                     }
+                    // The API names a group by its `id`, not the internal one: base64 of
+                    // base64 text, which never holds `/` or `+`, so it goes in the path as is.
+                    if let Some(id) = g.get("id").and_then(Value::as_str) {
+                        let avatar =
+                            format!("{}/v1/groups/{}/{id}/avatar", ctx.http_base, ctx.number);
+                        if let Err(e) = keep_avatar(&ctx, &avatar, &thread).await {
+                            tracing::warn!("could not keep group {iid}'s picture: {e:#}");
+                        }
+                    }
                 }
                 tracing::debug!("refreshed {} group name(s)", groups.len());
             }
@@ -420,6 +435,37 @@ async fn refresh_group_names(ctx: Ctx) {
         }
         tokio::time::sleep(GROUPS_EVERY).await;
     }
+}
+
+/// Keep a conversation's picture where the viewer looks for it:
+/// `avatars/<thread id, / as _>` under the attachments dir (the viewer's
+/// `avatars.rs` names it the same way). Rewritten only when the bytes change, so
+/// the file's time stays the picture's version; removed once Signal has none.
+async fn keep_avatar(ctx: &Ctx, url: &str, thread: &str) -> Result<()> {
+    let dir = std::path::Path::new(&ctx.attach_dir).join("avatars");
+    let path = dir.join(thread.replace('/', "_"));
+    let res = ctx.http.get(url).timeout(GROUPS_TIMEOUT).send().await?;
+    let status = res.status();
+    let bytes = res.bytes().await?;
+    if !status.is_success() {
+        // Signal's way of saying there is none: 400 for a contact, 404 for a group.
+        if String::from_utf8_lossy(&bytes).contains("No avatar found") {
+            match tokio::fs::remove_file(&path).await {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+                _ => return Ok(()),
+            }
+        }
+        anyhow::bail!("{status}");
+    }
+    if tokio::fs::read(&path).await.ok().as_deref() == Some(&bytes[..]) {
+        return Ok(());
+    }
+    // Written aside and renamed, so the viewer never serves half a picture.
+    tokio::fs::create_dir_all(&dir).await?;
+    let part = dir.join(format!("{}.part", thread.replace('/', "_")));
+    tokio::fs::write(&part, &bytes).await?;
+    tokio::fs::rename(&part, &path).await?;
+    Ok(())
 }
 
 fn env_or(key: &str, default: &str) -> String {

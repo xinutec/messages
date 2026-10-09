@@ -14,15 +14,15 @@ import { testMessage } from './test-message';
 const msg = (id: string, ts: number): Message => testMessage({ id, ts });
 
 const CONVS: Conversation[] = [
-  { origin: 'signal', id: 'dm:a', name: 'Alice', kind: 'dm', network: null, message_count: 5, last_ts: 200, last: null, unread: 0 },
-  { origin: 'gchat', id: 'gc1', name: 'Bob', kind: 'dm', network: null, message_count: 3, last_ts: 300, last: null, unread: 0 },
+  { origin: 'signal', id: 'dm:a', name: 'Alice', kind: 'dm', network: null, message_count: 5, last_ts: 200, last: null, unread: 0, avatar: null },
+  { origin: 'gchat', id: 'gc1', name: 'Bob', kind: 'dm', network: null, message_count: 3, last_ts: 300, last: null, unread: 0, avatar: null },
 ];
 
 /** One IRC target on two networks. */
 const TWO_NETWORKS: Conversation[] = [
-  { origin: 'irc', id: '8', name: 's_20', kind: 'dm', network: 'xinutec', message_count: 14446, last_ts: 200, last: null, unread: 0 },
-  { origin: 'irc', id: '9', name: 's_20', kind: 'dm', network: 'euirc', message_count: 8071, last_ts: 100, last: null, unread: 0 },
-  { origin: 'gchat', id: 'gc1', name: 'Bob', kind: 'dm', network: null, message_count: 3, last_ts: 300, last: null, unread: 0 },
+  { origin: 'irc', id: '8', name: 's_20', kind: 'dm', network: 'xinutec', message_count: 14446, last_ts: 200, last: null, unread: 0, avatar: null },
+  { origin: 'irc', id: '9', name: 's_20', kind: 'dm', network: 'euirc', message_count: 8071, last_ts: 100, last: null, unread: 0, avatar: null },
+  { origin: 'gchat', id: 'gc1', name: 'Bob', kind: 'dm', network: null, message_count: 3, last_ts: 300, last: null, unread: 0, avatar: null },
 ];
 
 const ME: Me = { user_id: 'u1', display_name: 'Test User' };

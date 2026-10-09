@@ -14,7 +14,7 @@ test.use({ timezoneId: "UTC", permissions: ["clipboard-read", "clipboard-write"]
 const ME = { user_id: "u1", display_name: "Test User" } satisfies Me;
 /** Matches the four messages served, or every copy would report truncation. */
 const conversations = (total = 4): Conversation[] => [
-  { origin: "irc", id: "7", name: "#chan", kind: "group", network: "xinutec", message_count: total, last_ts: Date.UTC(2026, 7, 14, 9, 5), last: null, unread: 0 },
+  { origin: "irc", id: "7", name: "#chan", kind: "group", network: "xinutec", message_count: total, last_ts: Date.UTC(2026, 7, 14, 9, 5), last: null, unread: 0, avatar: null },
 ];
 const line = (id: string, ts: number, sender: string, body: string, kind: MessageKind = "message") =>
   testMessage({ id, ts, sender, body, kind });

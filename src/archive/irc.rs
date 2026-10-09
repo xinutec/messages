@@ -55,6 +55,8 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
             last: LastMessage::from_row(&r, false)?,
             // No read state to read.
             unread: 0,
+            // Filled by `avatars::attach`, which knows where the files are.
+            avatar: None,
         });
     }
     Ok(out)

@@ -11,8 +11,8 @@ import { testMessage } from "../src/app/test-message";
 
 const ME = { user_id: "u1", display_name: "Test User" } satisfies Me;
 const CONVERSATIONS = [
-  { origin: "signal", id: "dm:a", name: "Alice", kind: "dm", network: null, message_count: 5, last_ts: 1_717_000_000_000, last: null, unread: 0 },
-  { origin: "gchat", id: "gc1", name: "Bob", kind: "dm", network: null, message_count: 3, last_ts: 1_717_100_000_000, last: null, unread: 0 },
+  { origin: "signal", id: "dm:a", name: "Alice", kind: "dm", network: null, message_count: 5, last_ts: 1_717_000_000_000, last: null, unread: 0, avatar: null },
+  { origin: "gchat", id: "gc1", name: "Bob", kind: "dm", network: null, message_count: 3, last_ts: 1_717_100_000_000, last: null, unread: 0, avatar: null },
 ] satisfies Conversation[];
 const MESSAGES_PAGE = {
   messages: [

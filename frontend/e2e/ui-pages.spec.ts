@@ -23,15 +23,15 @@ const ME = { user_id: "test", display_name: "Test User" } satisfies Me;
 
 /** A busy conversation list: every origin, a group, and a long name. */
 const CONVERSATIONS = [
-  { origin: "signal", id: "dm:a", name: "Alice Andersson", kind: "dm", network: null, message_count: 128, last_ts: Date.UTC(2026, 0, 2, 9, 14), last: { sender: "Alice Andersson", is_outgoing: false, deleted: false, text: "From the climbing wall on Saturday, the three of us at the top of the orange route", media: null }, unread: 3 },
-  { origin: "signal", id: "grp:x", name: "Saturday climbing & bouldering logistics crew", kind: "group", network: null, message_count: 4210, last_ts: Date.UTC(2026, 0, 1, 20, 2), last: { sender: "Dana", is_outgoing: false, deleted: false, text: "Six of us are in.", media: null }, unread: 128 },
-  { origin: "gchat", id: "gc1", name: "Bob Bytecode", kind: "dm", network: null, message_count: 37, last_ts: Date.UTC(2025, 11, 30, 16, 40), last: { sender: "Me", is_outgoing: true, deleted: false, text: "Sounds good, see you then", media: null }, unread: 0 },
-  { origin: "gchat", id: "gc2", name: "Platform on-call", kind: "group", network: null, message_count: 902, last_ts: Date.UTC(2025, 11, 29, 8, 5), last: { sender: "Erin Example", is_outgoing: false, deleted: true, text: null, media: null }, unread: 0 },
+  { origin: "signal", id: "dm:a", name: "Alice Andersson", kind: "dm", network: null, message_count: 128, last_ts: Date.UTC(2026, 0, 2, 9, 14), last: { sender: "Alice Andersson", is_outgoing: false, deleted: false, text: "From the climbing wall on Saturday, the three of us at the top of the orange route", media: null }, unread: 3, avatar: 2 },
+  { origin: "signal", id: "grp:x", name: "Saturday climbing & bouldering logistics crew", kind: "group", network: null, message_count: 4210, last_ts: Date.UTC(2026, 0, 1, 20, 2), last: { sender: "Dana", is_outgoing: false, deleted: false, text: "Six of us are in.", media: null }, unread: 128, avatar: 1 },
+  { origin: "gchat", id: "gc1", name: "Bob Bytecode", kind: "dm", network: null, message_count: 37, last_ts: Date.UTC(2025, 11, 30, 16, 40), last: { sender: "Me", is_outgoing: true, deleted: false, text: "Sounds good, see you then", media: null }, unread: 0, avatar: null },
+  { origin: "gchat", id: "gc2", name: "Platform on-call", kind: "group", network: null, message_count: 902, last_ts: Date.UTC(2025, 11, 29, 8, 5), last: { sender: "Erin Example", is_outgoing: false, deleted: true, text: null, media: null }, unread: 0, avatar: null },
   // IRC, the only origin with a composer.
-  { origin: "irc", id: "7", name: "#a-channel-with-a-long-name", kind: "group", network: "xinutec", message_count: 5104, last_ts: Date.UTC(2026, 0, 2, 11, 30), last: { sender: "s_20", is_outgoing: false, deleted: false, text: "anyone around who knows nix flakes well enough to explain overlays?", media: null }, unread: 0 },
+  { origin: "irc", id: "7", name: "#a-channel-with-a-long-name", kind: "group", network: "xinutec", message_count: 5104, last_ts: Date.UTC(2026, 0, 2, 11, 30), last: { sender: "s_20", is_outgoing: false, deleted: false, text: "anyone around who knows nix flakes well enough to explain overlays?", media: null }, unread: 0, avatar: null },
   // One target on two networks, the widest subtitle.
-  { origin: "irc", id: "8", name: "s_20", kind: "dm", network: "xinutec", message_count: 14446, last_ts: Date.UTC(2026, 0, 2, 10, 15), last: { sender: "s_20", is_outgoing: false, deleted: false, text: null, media: null }, unread: 0 },
-  { origin: "irc", id: "9", name: "s_20", kind: "dm", network: "euirc", message_count: 8071, last_ts: Date.UTC(2026, 0, 1, 22, 40), last: null, unread: 0 },
+  { origin: "irc", id: "8", name: "s_20", kind: "dm", network: "xinutec", message_count: 14446, last_ts: Date.UTC(2026, 0, 2, 10, 15), last: { sender: "s_20", is_outgoing: false, deleted: false, text: null, media: null }, unread: 0, avatar: null },
+  { origin: "irc", id: "9", name: "s_20", kind: "dm", network: "euirc", message_count: 8071, last_ts: Date.UTC(2026, 0, 1, 22, 40), last: null, unread: 0, avatar: null },
 ] satisfies Conversation[];
 
 /** Real bytes for the available attachment, so a revealed image actually
@@ -158,6 +158,11 @@ async function mockApi(page: Page): Promise<void> {
   await page.route(/\/api\/(attachments|link-previews)\//, (r) =>
     r.fulfill({ contentType: "image/svg+xml", body: PIXELS }),
   );
+  // The group's picture; Alice's is gone, and the row must fall back to initials.
+  await page.route("**/api/conversations/signal/grp%3Ax/avatar?v=1", (r) =>
+    r.fulfill({ contentType: "image/svg+xml", body: PIXELS }),
+  );
+  await page.route("**/api/conversations/signal/dm%3Aa/avatar?v=2", (r) => r.fulfill({ status: 404 }));
   // A second of test pattern, in WebM: Playwright's Chromium plays no H.264.
   await page.route("**/api/attachments/v24", (r) =>
     r.fulfill({ contentType: "video/webm", path: "e2e/clip.webm" }),
@@ -197,7 +202,16 @@ test("conversation list — filter row + rows: lays out cleanly @ phone width", 
   await expect(row("Bob Bytecode").locator(".preview")).toHaveText("You: Sounds good, see you then");
   await expect(row("Alice Andersson").locator(".preview")).toContainText(/^From the climbing wall/);
   await expect(row("Platform on-call").locator(".quiet")).toHaveText("Erin Example: Message deleted");
+  // A picture where the origin keeps one; initials where it does not, or where
+  // the picture would not load.
+  const picture = row("Saturday climbing").locator(".avatar img");
+  await expect
+    .poll(() => picture.evaluate((e) => e instanceof HTMLImageElement && e.naturalWidth > 0))
+    .toBe(true);
+  await expect(row("Saturday climbing").locator(".avatar")).not.toContainText("SC");
   await expect(row("Alice Andersson").locator(".avatar")).toContainText("AA");
+  await expect(row("Alice Andersson").locator(".avatar img")).toHaveCount(0);
+  await expect(row("Bob Bytecode").locator(".avatar")).toContainText("BB");
   // Unread on the phone: a count, capped; none where nothing is unread.
   await expect(row("Alice Andersson").locator(".badge")).toHaveText("3");
   await expect(row("Saturday climbing").locator(".badge")).toHaveText("99+");

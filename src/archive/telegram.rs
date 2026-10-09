@@ -63,6 +63,8 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
             last: LastMessage::from_row(&r, deleted.unwrap_or(0) != 0)?,
             // How far I have read; no mark is unknown, not unread.
             unread: r.try_get("unread")?,
+            // Filled by `avatars::attach`, which knows where the files are.
+            avatar: None,
         });
     }
     Ok(out)

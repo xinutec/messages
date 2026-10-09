@@ -177,6 +177,10 @@ pub struct Conversation {
     /// the origin cannot say (Google Chat, IRC) or nothing is unread.
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub unread: i64,
+    /// When its picture last changed, in epoch seconds: the version its URL
+    /// carries. `None` without a picture; see `avatars.rs`.
+    #[cfg_attr(feature = "ts", ts(type = "number | null"))]
+    pub avatar: Option<i64>,
 }
 
 /// A conversation's newest message, as the list shows it.

@@ -31,3 +31,10 @@
   &[data-origin='irc'] { background: oklch(from var(--mat-sys-primary) l 0 h); }
   &[data-origin='telegram'] { background: oklch(from var(--mat-sys-primary) l c 230); }
 }
+// The conversation's own picture, filling the circle.
+img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}

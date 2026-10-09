@@ -1,1 +1,9 @@
-{{ initials() }}<span class="origin" [attr.data-origin]="origin()" [title]="service()">{{ service()[0] }}</span>
+@if (picture(); as src) {
+  @if (!failed()) {
+    <img [src]="src" alt="" loading="lazy" (error)="failed.set(true)" />
+  } @else {
+    {{ initials() }}
+  }
+} @else {
+  {{ initials() }}
+}<span class="origin" [attr.data-origin]="origin()" [title]="service()">{{ service()[0] }}</span>

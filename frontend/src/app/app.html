@@ -36,7 +36,8 @@
         <div class="rows">
           @for (h of results(); track $index) {
             <button type="button" class="row" matRipple (click)="openHit(h)">
-              <app-avatar class="avatar" [origin]="h.origin" [id]="h.conversation_id" [name]="hitTitle(h)" />
+              <app-avatar class="avatar" [origin]="h.origin" [id]="h.conversation_id" [name]="hitTitle(h)"
+                          [version]="hitAvatar(h)" />
               <span class="name"
                 >{{ hitTitle(h) }}@if (hitNetwork(h); as net) {<span class="net"> {{ net }}</span>}</span
               >
@@ -74,7 +75,7 @@
           @for (c of visibleConversations(); track c.origin + c.id) {
             <button type="button" class="row" matRipple [class.active]="isActive(c)"
                     [class.unread]="c.unread > 0" (click)="open(c)">
-              <app-avatar class="avatar" [origin]="c.origin" [id]="c.id" [name]="title(c)" />
+              <app-avatar class="avatar" [origin]="c.origin" [id]="c.id" [name]="title(c)" [version]="c.avatar" />
               <span class="name"
                 >{{ title(c) }}@if (c.network) {<span class="net"> {{ c.network }}</span>}</span
               >

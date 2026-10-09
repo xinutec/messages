@@ -6,6 +6,7 @@
 //! [`irc_send`] says what bounds that.
 
 pub mod archive;
+pub mod avatars;
 pub mod config;
 pub mod db;
 pub mod error;

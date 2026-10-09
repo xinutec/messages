@@ -216,6 +216,11 @@ export class App {
     return this.store.find(h.origin, h.conversation_id)?.network ?? null;
   }
 
+  /** The picture of a hit's conversation, as the list has it. */
+  hitAvatar(h: SearchHit): number | null {
+    return this.store.find(h.origin, h.conversation_id)?.avatar ?? null;
+  }
+
   title(c: Conversation): string {
     return this.store.title(c);
   }

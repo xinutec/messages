@@ -4,7 +4,7 @@ import { hue, initials, preview, whenFormat } from './list-row';
 import { Conversation, LastMessage } from './models';
 
 const conv = (kind: Conversation['kind'], last: LastMessage | null): Conversation => ({
-  origin: 'signal', id: 'x', name: 'X', kind, network: null, message_count: 1, last_ts: 1, last, unread: 0,
+  origin: 'signal', id: 'x', name: 'X', kind, network: null, message_count: 1, last_ts: 1, last, unread: 0, avatar: null,
 });
 const msg = (over: Partial<LastMessage>): LastMessage => ({
   sender: 'Alice', is_outgoing: false, deleted: false, text: 'hi', media: null, ...over,

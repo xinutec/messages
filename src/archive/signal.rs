@@ -83,6 +83,8 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
             last_ts: r.try_get("last_ts")?,
             last,
             unread: r.try_get("unread")?,
+            // Filled by `avatars::attach`, which knows where the files are.
+            avatar: None,
         });
     }
     // Mentions named, as in the thread.

@@ -259,7 +259,7 @@ async fn archive(
 
     // Before the update stream: catch-up can close a gap only for peers in the
     // session cache, and listing the dialogs is what fills it.
-    let pending = sweep(client, db).await?;
+    let pending = sweep(client, db, cfg).await?;
     tracing::info!("{} conversation(s) with history to walk", pending.len());
 
     let requests = {
@@ -324,7 +324,7 @@ async fn read_marks(db: &Db, id: i64, dialog: &grammers_client::peer::Dialog) ->
 /// history is unfinished. One `getDialogs` listing per call; listing per page
 /// draws `FLOOD_WAIT`. The peer is in hand here, so `ConvKind::from_peer` can
 /// tell a supergroup from a broadcast.
-async fn sweep(client: &Client, db: &Db) -> Result<Vec<(i64, PeerRef)>> {
+async fn sweep(client: &Client, db: &Db, cfg: &Cfg) -> Result<Vec<(i64, PeerRef)>> {
     let mut dialogs = client.iter_dialogs();
     let mut pending = Vec::new();
     while let Some(dialog) = dialogs.next().await.context("listing dialogs")? {
@@ -343,6 +343,7 @@ async fn sweep(client: &Client, db: &Db) -> Result<Vec<(i64, PeerRef)>> {
         // Before the `complete` skip. Live updates can be missed; the sweep restates
         // the current marks, so a miss costs lateness rather than the mark.
         read_marks(db, id, &dialog).await?;
+        fetch_avatar(client, cfg, id, peer).await;
         if db
             .telegram_backfill_state(id)
             .await?
@@ -1012,10 +1013,54 @@ async fn serve_one(
     }
 }
 
+/// The chat's small picture, as `avatars/<id>.jpg` under the media dir, where the
+/// viewer looks. Its photo id is noted beside it in `<id>.id`, so an unchanged
+/// picture costs no download. A failure is logged and never stops the sweep.
+async fn fetch_avatar(client: &Client, cfg: &Cfg, id: i64, peer: &grammers_client::peer::Peer) {
+    let dir = std::path::Path::new(&cfg.media_dir).join("avatars");
+    let picture = dir.join(format!("{id}.jpg"));
+    let noted = dir.join(format!("{id}.id"));
+    let photo = match peer.photo(false).await {
+        Ok(photo) => photo,
+        Err(e) => {
+            tracing::warn!("conversation {id}'s picture: {e}");
+            return;
+        }
+    };
+    let Some(photo) = photo else {
+        // Taken down: the viewer goes back to initials.
+        let _ = tokio::fs::remove_file(&picture).await;
+        let _ = tokio::fs::remove_file(&noted).await;
+        return;
+    };
+    let grammers_tl_types::enums::InputFileLocation::InputPeerPhotoFileLocation(location) =
+        &photo.raw
+    else {
+        return;
+    };
+    let photo_id = location.photo_id.to_string();
+    if tokio::fs::read_to_string(&noted).await.ok().as_deref() == Some(photo_id.as_str()) {
+        return;
+    }
+    // Written aside and renamed, so the viewer never serves half a picture.
+    let part = dir.join(format!("{id}.part"));
+    let fetched = async {
+        tokio::fs::create_dir_all(&dir).await?;
+        client.download_media(&photo, &part).await?;
+        tokio::fs::rename(&part, &picture).await?;
+        tokio::fs::write(&noted, &photo_id).await?;
+        anyhow::Ok(())
+    };
+    if let Err(e) = fetched.await {
+        let _ = tokio::fs::remove_file(&part).await;
+        tracing::warn!("conversation {id}'s picture: {e}");
+    }
+}
+
 /// Walk every conversation's history backwards, resuming where it left off.
 async fn backfill(client: &Client, db: &Db, cfg: &Cfg, self_id: i64) -> Result<()> {
     loop {
-        let pending = sweep(client, db).await?;
+        let pending = sweep(client, db, cfg).await?;
         if pending.is_empty() {
             // Joining a group can add history older than anything seen.
             tracing::info!("every conversation is archived; sweeping again later");
