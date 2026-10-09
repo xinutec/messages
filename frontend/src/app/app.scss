@@ -120,7 +120,7 @@ ui-scaffold {
     // Unread on the phone: the name bold, the time in the accent.
     &.unread {
       .name {
-        font-weight: 600;
+        font-weight: 700;
       }
       .when {
         color: var(--mat-sys-primary);
