@@ -23,14 +23,14 @@ const ME = { user_id: "test", display_name: "Test User" } satisfies Me;
 
 /** A busy conversation list: every origin, a group, and a long name. */
 const CONVERSATIONS = [
-  { origin: "signal", id: "dm:a", name: "Alice Andersson", kind: "dm", network: null, message_count: 128, last_ts: Date.UTC(2026, 0, 2, 9, 14), last: { sender: "Alice Andersson", is_outgoing: false, deleted: false, text: "From the climbing wall on Saturday, the three of us at the top of the orange route" }, unread: 3 },
-  { origin: "signal", id: "grp:x", name: "Saturday climbing & bouldering logistics crew", kind: "group", network: null, message_count: 4210, last_ts: Date.UTC(2026, 0, 1, 20, 2), last: { sender: "Dana", is_outgoing: false, deleted: false, text: "Six of us are in." }, unread: 128 },
-  { origin: "gchat", id: "gc1", name: "Bob Bytecode", kind: "dm", network: null, message_count: 37, last_ts: Date.UTC(2025, 11, 30, 16, 40), last: { sender: "Me", is_outgoing: true, deleted: false, text: "Sounds good, see you then" }, unread: 0 },
-  { origin: "gchat", id: "gc2", name: "Platform on-call", kind: "group", network: null, message_count: 902, last_ts: Date.UTC(2025, 11, 29, 8, 5), last: { sender: "Erin Example", is_outgoing: false, deleted: true, text: null }, unread: 0 },
+  { origin: "signal", id: "dm:a", name: "Alice Andersson", kind: "dm", network: null, message_count: 128, last_ts: Date.UTC(2026, 0, 2, 9, 14), last: { sender: "Alice Andersson", is_outgoing: false, deleted: false, text: "From the climbing wall on Saturday, the three of us at the top of the orange route", media: null }, unread: 3 },
+  { origin: "signal", id: "grp:x", name: "Saturday climbing & bouldering logistics crew", kind: "group", network: null, message_count: 4210, last_ts: Date.UTC(2026, 0, 1, 20, 2), last: { sender: "Dana", is_outgoing: false, deleted: false, text: "Six of us are in.", media: null }, unread: 128 },
+  { origin: "gchat", id: "gc1", name: "Bob Bytecode", kind: "dm", network: null, message_count: 37, last_ts: Date.UTC(2025, 11, 30, 16, 40), last: { sender: "Me", is_outgoing: true, deleted: false, text: "Sounds good, see you then", media: null }, unread: 0 },
+  { origin: "gchat", id: "gc2", name: "Platform on-call", kind: "group", network: null, message_count: 902, last_ts: Date.UTC(2025, 11, 29, 8, 5), last: { sender: "Erin Example", is_outgoing: false, deleted: true, text: null, media: null }, unread: 0 },
   // IRC, the only origin with a composer.
-  { origin: "irc", id: "7", name: "#a-channel-with-a-long-name", kind: "group", network: "xinutec", message_count: 5104, last_ts: Date.UTC(2026, 0, 2, 11, 30), last: { sender: "s_20", is_outgoing: false, deleted: false, text: "anyone around who knows nix flakes well enough to explain overlays?" }, unread: 0 },
+  { origin: "irc", id: "7", name: "#a-channel-with-a-long-name", kind: "group", network: "xinutec", message_count: 5104, last_ts: Date.UTC(2026, 0, 2, 11, 30), last: { sender: "s_20", is_outgoing: false, deleted: false, text: "anyone around who knows nix flakes well enough to explain overlays?", media: null }, unread: 0 },
   // One target on two networks, the widest subtitle.
-  { origin: "irc", id: "8", name: "s_20", kind: "dm", network: "xinutec", message_count: 14446, last_ts: Date.UTC(2026, 0, 2, 10, 15), last: { sender: "s_20", is_outgoing: false, deleted: false, text: null }, unread: 0 },
+  { origin: "irc", id: "8", name: "s_20", kind: "dm", network: "xinutec", message_count: 14446, last_ts: Date.UTC(2026, 0, 2, 10, 15), last: { sender: "s_20", is_outgoing: false, deleted: false, text: null, media: null }, unread: 0 },
   { origin: "irc", id: "9", name: "s_20", kind: "dm", network: "euirc", message_count: 8071, last_ts: Date.UTC(2026, 0, 1, 22, 40), last: null, unread: 0 },
 ] satisfies Conversation[];
 

@@ -7,4 +7,9 @@ export type LastMessage = { sender: string, is_outgoing: boolean, deleted: boole
 /**
  * One line of it; `None` when it has no text or was deleted.
  */
-text: string | null, };
+text: string | null, 
+/**
+ * The content type of its first attachment, so a message of only a picture
+ * can say so; `None` when it carried none or was deleted.
+ */
+media: string | null, };

@@ -198,7 +198,7 @@ test("returning to the foreground re-reads the list", async ({ page }) => {
     r.fulfill({
       json: [{
         ...CONVERSATIONS[0],
-        last: { sender: "Alice", is_outgoing: false, deleted: false, text: ++calls === 1 ? "before" : "after" },
+        last: { sender: "Alice", is_outgoing: false, deleted: false, text: ++calls === 1 ? "before" : "after", media: null },
       }] satisfies Conversation[],
     }),
   );

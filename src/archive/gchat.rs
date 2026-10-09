@@ -14,7 +14,9 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
         r"SELECT g.group_id AS id, g.name AS name, g.is_dm AS is_dm,
                  COALESCE(s.cnt, 0) AS cnt, s.last_ts_us AS last_ts_us,
                  CASE WHEN l.id IS NOT NULL THEN COALESCE(l.sender_name, '') END AS last_sender,
-                 l.is_self AS last_out, l.text AS last_text
+                 l.is_self AS last_out, l.text AS last_text,
+                 (SELECT a.mime FROM gchat_attachments a
+                   WHERE a.message_id = l.id ORDER BY a.id LIMIT 1) AS last_media
           FROM gchat_conversations g
           LEFT JOIN (
               SELECT group_id, COUNT(*) AS cnt, MAX(ts_us) AS last_ts_us

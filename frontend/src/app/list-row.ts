@@ -56,5 +56,15 @@ export function preview(c: Conversation): Preview | null {
   // A DM's other side needs no name; a group's sender does.
   const who = last.is_outgoing ? 'You' : c.kind === 'dm' ? null : last.sender;
   if (last.deleted) return { who, text: 'Message deleted', quiet: true };
-  return { who, text: last.text ?? 'No text', quiet: last.text === null };
+  if (last.text !== null) return { who, text: last.text, quiet: false };
+  if (last.media !== null) return { who, text: carried(last.media), quiet: false };
+  return { who, text: 'No text', quiet: true };
+}
+
+/** What an attachment is, by its content type, as Signal's list names it. */
+function carried(type: string): string {
+  if (type.startsWith('image/')) return 'Photo';
+  if (type.startsWith('video/')) return 'Video';
+  if (type.startsWith('audio/')) return 'Audio';
+  return 'File';
 }

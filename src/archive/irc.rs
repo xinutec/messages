@@ -24,7 +24,8 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
         r"SELECT c.id AS id, c.target AS name, c.is_channel AS is_channel,
                  c.network AS network, COALESCE(s.cnt, 0) AS cnt,
                  TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', s.last_sent_at) AS last_s,
-                 l.nick AS last_sender, l.is_self AS last_out, l.text AS last_text
+                 l.nick AS last_sender, l.is_self AS last_out, l.text AS last_text,
+                 CAST(NULL AS CHAR) AS last_media
           FROM irc_conversations c
           LEFT JOIN irc_conversation_stats s ON s.conversation_id = c.id
           LEFT JOIN irc_messages l

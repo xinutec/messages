@@ -7,7 +7,7 @@ const conv = (kind: Conversation['kind'], last: LastMessage | null): Conversatio
   origin: 'signal', id: 'x', name: 'X', kind, network: null, message_count: 1, last_ts: 1, last, unread: 0,
 });
 const msg = (over: Partial<LastMessage>): LastMessage => ({
-  sender: 'Alice', is_outgoing: false, deleted: false, text: 'hi', ...over,
+  sender: 'Alice', is_outgoing: false, deleted: false, text: 'hi', media: null, ...over,
 });
 
 describe('initials', () => {
@@ -53,6 +53,16 @@ describe('preview', () => {
       who: null, text: 'Message deleted', quiet: true,
     });
     expect(preview(conv('dm', msg({ text: null })))?.text).toBe('No text');
+  });
+  it('says what a message without words carried', () => {
+    expect(preview(conv('dm', msg({ text: null, media: 'image/jpeg' })))).toEqual({
+      who: null, text: 'Photo', quiet: false,
+    });
+    expect(preview(conv('dm', msg({ text: null, media: 'video/mp4' })))?.text).toBe('Video');
+    expect(preview(conv('dm', msg({ text: null, media: 'audio/aac' })))?.text).toBe('Audio');
+    expect(preview(conv('dm', msg({ text: null, media: 'application/pdf' })))?.text).toBe('File');
+    // Words win: a captioned picture shows its caption.
+    expect(preview(conv('dm', msg({ media: 'image/jpeg' })))?.text).toBe('hi');
   });
   it('has nothing for an empty conversation', () => expect(preview(conv('dm', null))).toBeNull());
 });

@@ -189,10 +189,13 @@ pub struct LastMessage {
     pub deleted: bool,
     /// One line of it; `None` when it has no text or was deleted.
     pub text: Option<String>,
+    /// The content type of its first attachment, so a message of only a picture
+    /// can say so; `None` when it carried none or was deleted.
+    pub media: Option<String>,
 }
 
 impl LastMessage {
-    /// From a list query's `last_sender`, `last_out` and `last_text` columns,
+    /// From a list query's `last_sender`, `last_out`, `last_text` and `last_media` columns,
     /// `None` when the conversation has no message; a deleted one shows no text.
     fn from_row(r: &sqlx::mysql::MySqlRow, deleted: bool) -> Result<Option<Self>> {
         let Some(sender) = r.try_get::<Option<String>, _>("last_sender")? else {
@@ -200,6 +203,7 @@ impl LastMessage {
         };
         let out: i8 = r.try_get("last_out")?;
         let text: Option<String> = r.try_get("last_text")?;
+        let media: Option<String> = r.try_get("last_media")?;
         Ok(Some(LastMessage {
             sender,
             is_outgoing: out != 0,
@@ -209,6 +213,7 @@ impl LastMessage {
             } else {
                 excerpt(text.as_deref())
             },
+            media: if deleted { None } else { media },
         }))
     }
 }

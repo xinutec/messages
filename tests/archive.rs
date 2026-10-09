@@ -2885,3 +2885,94 @@ async fn unread_counts_what_came_in_after_i_last_read() {
         assert_eq!(c.unread, 0, "{} cannot say", c.id);
     }
 }
+
+/// A newest message with no words says what it carried: the type of its first
+/// attachment, so the list can say "Photo" where it said "No text".
+#[tokio::test]
+async fn the_last_message_says_what_it_carried() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    sqlx::query(
+        "INSERT INTO conversations (thread_id, type, name) VALUES ('dm:media-last','dm','Vera')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO messages (thread_id, sender_uuid, server_ts, body, is_outgoing, deleted, edited) VALUES
+         ('dm:media-last','vera',1000,'words first',0,0,0),
+         ('dm:media-last','vera',2000,NULL,0,0,0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO attachments (message_id, content_type, file_name, size_bytes, stored_path)
+         SELECT id, 'video/mp4', NULL, 1, NULL FROM messages
+          WHERE thread_id = 'dm:media-last' AND server_ts = 2000",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO gchat_conversations (group_id, name, is_dm) VALUES ('gc-media','Wim',1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO gchat_messages (group_id, msg_id, sender_id, sender_name, is_self, ts_us, text)
+         VALUES ('gc-media','w1','g-wim','Wim',0,9000000,NULL)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO gchat_attachments (message_id, name, mime, uuid)
+         SELECT id, 'x.jpg', 'image/jpeg', 'u-media' FROM gchat_messages
+          WHERE group_id = 'gc-media' AND msg_id = 'w1'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query("INSERT INTO telegram_conversations (id, kind, name) VALUES (6161, 'dm', 'Xena')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO telegram_messages
+            (conversation_id, msg_id, sent_at, sender_id, sender_name, is_outgoing, kind, text, deleted,
+             media_kind, media_mime) VALUES
+            (6161, 1, 1700002000, 6161, 'Xena', 0, 'message', NULL, 0, 'photo', 'image/jpeg')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let convs = archive::list_conversations(&pool).await.unwrap();
+    let media = |origin: Origin, id: &str| {
+        let c = convs
+            .iter()
+            .find(|c| c.origin == origin && c.id == id)
+            .unwrap_or_else(|| panic!("no conversation {id}"));
+        let last = c.last.as_ref().expect("a last message");
+        (last.text.clone(), last.media.clone())
+    };
+    assert_eq!(
+        media(Origin::Signal, "dm:media-last"),
+        (None, Some("video/mp4".to_string()))
+    );
+    assert_eq!(
+        media(Origin::Gchat, "gc-media"),
+        (None, Some("image/jpeg".to_string()))
+    );
+    assert_eq!(
+        media(Origin::Telegram, "6161"),
+        (None, Some("image/jpeg".to_string()))
+    );
+    // Words and nothing else carry no type.
+    assert_eq!(media(Origin::Gchat, "gc1").1, None);
+}

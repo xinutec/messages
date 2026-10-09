@@ -18,7 +18,7 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
                  COALESCE(s.cnt, 0) AS cnt, s.last_ts AS last_ts,
                  l.deleted AS last_deleted,
                  CASE WHEN l.id IS NOT NULL THEN COALESCE(l.sender_name, '') END AS last_sender,
-                 l.is_outgoing AS last_out, l.text AS last_text,
+                 l.is_outgoing AS last_out, l.text AS last_text, l.media_mime AS last_media,
                  CASE WHEN rd.read_id IS NULL THEN 0 ELSE (
                      SELECT COUNT(*) FROM telegram_messages u
                       WHERE u.conversation_id = t.id AND u.msg_id > rd.read_id

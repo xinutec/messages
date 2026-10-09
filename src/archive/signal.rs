@@ -22,6 +22,8 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
                  COALESCE(s.cnt, 0) AS cnt, s.last_ts AS last_ts,
                  l.id AS last_id, l.deleted AS last_deleted, l.is_outgoing AS last_out,
                  l.body AS last_text, COALESCE(ct.display_name, l.sender_uuid) AS last_sender,
+                 (SELECT a.content_type FROM attachments a
+                   WHERE a.message_id = l.id ORDER BY a.id LIMIT 1) AS last_media,
                  (SELECT COUNT(*) FROM messages u
                    WHERE u.thread_id = c.thread_id AND u.is_outgoing = 0
                      AND u.edit_of_ts IS NULL
