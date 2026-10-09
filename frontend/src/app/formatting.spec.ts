@@ -63,6 +63,39 @@ describe('formatted message bodies', () => {
     ]);
   });
 
+  it('finds an address in plain text, as Signal, IRC and Google Chat send it', () => {
+    const m = withEntities('look at https://xinutec.org/a?b=1. ok', []);
+    expect(segments(m)).toEqual([
+      { text: 'look at ', cls: '', href: null },
+      { text: 'https://xinutec.org/a?b=1', cls: 'fmt-url', href: 'https://xinutec.org/a?b=1' },
+      { text: '. ok', cls: '', href: null },
+    ]);
+  });
+
+  it('takes www. without a scheme, over https', () => {
+    expect(segments(withEntities('www.example.org!', []))[0]).toEqual({
+      text: 'www.example.org', cls: 'fmt-url', href: 'https://www.example.org',
+    });
+  });
+
+  it('keeps a bracket the address opened, drops one the sentence did', () => {
+    const m = withEntities('(see https://en.wikipedia.org/wiki/Foo_(bar))', []);
+    expect(segments(m).find((s) => s.href)?.href).toBe('https://en.wikipedia.org/wiki/Foo_(bar)');
+  });
+
+  it('adds nothing where the sender already marked the link', () => {
+    const m = withEntities('see https://x.org now', [{ kind: 'url', offset: 4, length: 13, url: null }]);
+    expect(segments(m).filter((s) => s.href)).toEqual([
+      { text: 'https://x.org', cls: 'fmt-url', href: 'https://x.org' },
+    ]);
+  });
+
+  it('is no link without a scheme or www', () => {
+    expect(segments(withEntities('mail me at x.org or ftp://y', []))).toEqual([
+      { text: 'mail me at x.org or ftp://y', cls: '', href: null },
+    ]);
+  });
+
   it('is exactly the body when nothing is formatted', () => {
     const m = withEntities('just words', []);
     expect(segments(m)).toEqual([{ text: 'just words', cls: '', href: null }]);

@@ -50,6 +50,12 @@
 // Formatting runs, Telegram's and Signal's. Kinds without a rule render as
 // plain text.
 .body {
+  // A link in the words' own colour, underlined, as Signal draws it: legible on
+  // either bubble, where the browser's blue is not.
+  a {
+    color: inherit;
+    text-decoration: underline;
+  }
   .fmt-bold { font-weight: 700; }
   .fmt-italic { font-style: italic; }
   .fmt-strike { text-decoration: line-through; }

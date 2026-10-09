@@ -247,6 +247,10 @@ test("a link preview and a quoted message from before the archive @ phone width"
   await page.goto("/conversation/signal/dm:a");
   const bubble = page.locator('.msg[data-id="10"]');
   await expect(bubble.locator(".body .fmt-mention")).toHaveText("@Dana");
+  // The address Signal sent as plain text is a link, opened outside the app.
+  const link = bubble.locator(".body a");
+  await expect(link).toHaveAttribute("href", "https://xinutec.org/a/rather/long/path/that/keeps/going/and/going");
+  await expect(link).toHaveAttribute("target", "_blank");
   await expect(bubble.locator(".preview .title")).toHaveText(
     "A page with a title long enough to need wrapping on a phone screen");
   await expect(bubble.locator(".preview .host")).toHaveText("xinutec.org");
