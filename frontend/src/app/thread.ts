@@ -18,7 +18,8 @@ import { Avatar } from './avatar';
 import { FetchRequests } from './fetch-requests';
 import { segments } from './formatting';
 import { hue } from './list-row';
-import { LogScope, chatLogHtml, formatChatLog } from './copy-log';
+import { chatLogHtml, formatChatLog } from './copy-log';
+import { selectedMessages } from './selection';
 import {
   attachmentUrl,
   dayGroups,
@@ -474,40 +475,15 @@ export class Thread {
   onCopy(e: ClipboardEvent): void {
     const data = e.clipboardData;
     if (data == null) return;
-    const picked = this.selectedMessages();
+    const picked = selectedMessages(this.messagesEl()?.nativeElement, document.getSelection(), this.rendered());
     if (picked.length < 2) return;
-    const text = formatChatLog(picked, this.copyScope(picked));
+    // The conversation's size, only when the selection is the whole rendered
+    // window (a truncated select-all). Absent before the list loads.
+    const total = picked.length === this.rendered().length ? this.conversation()?.message_count : undefined;
+    const text = formatChatLog(picked, total != null ? { total } : undefined);
     data.setData('text/plain', text);
     data.setData('text/html', chatLogHtml(text));
     e.preventDefault();
-  }
-
-  /** The conversation's size, only when the selection is the whole rendered
-   *  window (a truncated select-all). Absent before the list loads. */
-  private copyScope(picked: Message[]): LogScope | undefined {
-    if (picked.length !== this.rendered().length) return undefined;
-    const total = this.conversation()?.message_count;
-    return total != null ? { total } : undefined;
-  }
-
-  /** The rendered messages the selection touches, in order: `data-id` says which,
-   *  the model says what. Only the rendered window can be selected. */
-  private selectedMessages(): Message[] {
-    const el = this.messagesEl()?.nativeElement;
-    const sel = document.getSelection();
-    if (el == null || sel == null || sel.isCollapsed) return [];
-    // Firefox allows several ranges.
-    const ranges = Array.from({ length: sel.rangeCount }, (_, i) => sel.getRangeAt(i));
-    const ids = new Set<string>();
-    for (const node of el.querySelectorAll<HTMLElement>('.msg[data-id]')) {
-      // `intersectsNode`, not `containsNode`: a selection inside one bubble
-      // selects that message. jsdom gets both wrong; e2e/copy.spec.ts covers it.
-      if (ranges.some((r) => r.intersectsNode(node))) {
-        const id = node.dataset['id'];
-        if (id != null) ids.add(id);
-      }
-    }
-    return this.rendered().filter((m) => ids.has(m.id));
   }
 
   // ---- keeping up with what arrives ---------------------------------------
