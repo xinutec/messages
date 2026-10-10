@@ -57,3 +57,11 @@ fn recalls_reply_shape_reads() {
     let h: Heard = serde_json::from_str(reply).unwrap();
     assert_eq!(words(&h).as_deref(), Some("hello there"));
 }
+
+/// A word the model gave no probability for is left out, not counted as wrong.
+#[test]
+fn a_word_without_a_probability_is_left_out() {
+    let reply = r#"{"language":"nl","segments":[{"text":" Ja, prima.","words":[{"probability":0.9},{"probability":null},{}]}]}"#;
+    let h: Heard = serde_json::from_str(reply).unwrap();
+    assert_eq!(words(&h).as_deref(), Some("Ja, prima."));
+}

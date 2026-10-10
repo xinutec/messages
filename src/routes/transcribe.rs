@@ -102,7 +102,8 @@ pub async fn done(
 }
 
 /// GET /sync/vocabulary/prompt → no vocabulary: messages biases the model with
-/// nothing. The runner refuses to start without an answer here.
+/// nothing. recall's runner does not ask (it serves this queue unbiased); the
+/// answer is here for any runner that does.
 pub async fn prompt(State(app): State<AppState>, headers: HeaderMap) -> Result<Response, AppError> {
     authorised(&app, &headers)?;
     Ok(Json(json!({ "prompt": null })).into_response())

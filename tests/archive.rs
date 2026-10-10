@@ -3125,4 +3125,41 @@ async fn a_voice_message_is_leased_once_and_its_words_shown() {
     };
     assert_eq!(said(&first.filename).as_deref(), Some("hoi, ben je thuis?"));
     assert_eq!(said(&second.filename), None);
+
+    // A clip that never gets an answer (it kills the shim, say) is leased three
+    // times and then retired, never handed out again.
+    sqlx::query(
+        "INSERT INTO attachments (message_id, content_type, file_name, size_bytes, stored_path)
+         VALUES (?, 'audio/aac', 'd.m4a', 1, 'voice_d')",
+    )
+    .bind(msg)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let expire = || {
+        sqlx::query(
+            "UPDATE transcripts SET leased_at = NOW() - INTERVAL 20 MINUTE WHERE done_at IS NULL",
+        )
+        .execute(&pool)
+    };
+    let mut leased = Vec::new();
+    for _ in 0..3 {
+        let job = messages::transcribe::lease(&pool)
+            .await
+            .unwrap()
+            .expect("leased again");
+        leased.push(job.id);
+        expire().await.unwrap();
+    }
+    assert!(
+        leased.windows(2).all(|w| w[0] == w[1]),
+        "one job, leased three times"
+    );
+    assert_eq!(messages::transcribe::lease(&pool).await.unwrap(), None);
+    let error: Option<String> = sqlx::query_scalar("SELECT error FROM transcripts WHERE id = ?")
+        .bind(leased[0])
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(error.is_some(), "retired with a reason");
 }

@@ -69,6 +69,7 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
             origin        VARCHAR(16)  NOT NULL,
             attachment_id VARCHAR(255) NOT NULL,
             leased_at     DATETIME     NULL,
+            leases        INT          NOT NULL DEFAULT 0,
             done_at       DATETIME     NULL,
             language      VARCHAR(16)  NULL,
             error         VARCHAR(255) NULL,
@@ -79,9 +80,11 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
     .execute(pool)
     .await
     .context("creating transcripts table")?;
-    // Its first shape stored words, and had no `heard`; this brings it here.
+    // Its first shape stored words, and had neither `heard` nor `leases`; this
+    // brings it here.
     sqlx::query(
-        "ALTER TABLE transcripts ADD COLUMN IF NOT EXISTS heard LONGTEXT NULL, DROP COLUMN IF EXISTS text",
+        "ALTER TABLE transcripts ADD COLUMN IF NOT EXISTS heard LONGTEXT NULL,
+           ADD COLUMN IF NOT EXISTS leases INT NOT NULL DEFAULT 0, DROP COLUMN IF EXISTS text",
     )
     .execute(pool)
     .await

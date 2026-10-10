@@ -2,13 +2,14 @@
 //!
 //! The Mac only ever calls out, so this is a queue it polls, in the shape
 //! recall's `runner` already speaks (recall `runner/src/client.rs`): lease a
-//! job, fetch its audio, hand back what the model heard. A second runner,
-//! pointed here with its own token, does the work; nothing reaches recall's own
-//! archive.
+//! job, fetch its audio, hand back what the model heard. recall's one runner
+//! process serves this queue with messages' own token whenever its own queue is
+//! empty (`--messages-url`, recall 28d31d2); nothing reaches recall's archive.
 //!
 //! One row per audio attachment in `transcripts`: its id is the job id, and it
-//! holds the lease, then the words or the model's refusal. A row whose lease ran
-//! out without an answer is leased again.
+//! holds the lease, then the model's reply or its refusal. A row whose lease ran
+//! out without an answer is leased again, up to `MAX_LEASES` times: a clip that
+//! kills the shim would otherwise restart the shared Whisper process forever.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,10 @@ use crate::archive::Origin;
 /// How long a lease holds before the job is offered again: a transcription
 /// takes seconds, so this only matters when the runner died mid-job.
 const LEASE_MINUTES: i64 = 15;
+
+/// How many leases a clip gets before it is retired unanswered, as recalld
+/// retires a job.
+const MAX_LEASES: i64 = 3;
 
 /// The least average word confidence a clip needs for its words to be shown.
 /// Whisper invents words over music and noise ("Thank you.", a mix of scripts),
@@ -40,7 +45,18 @@ pub struct Job {
 
 /// Lease the next audio attachment that has no words yet and no live lease.
 pub async fn lease(pool: &MySqlPool) -> Result<Option<Job>> {
-    // The held audio of every origin, less what is done or leased.
+    // A clip leased `MAX_LEASES` times without an answer is retired: whatever
+    // it does to the shim, it is not handed out again.
+    sqlx::query(
+        r"UPDATE transcripts SET done_at = NOW(), error = 'no answer after the last lease'
+          WHERE done_at IS NULL AND leases >= ? AND leased_at < NOW() - INTERVAL ? MINUTE",
+    )
+    .bind(MAX_LEASES)
+    .bind(LEASE_MINUTES)
+    .execute(pool)
+    .await?;
+    // The held audio of every origin, less what is done or leased; the newest of
+    // each origin first, so a message just received is not behind the backlog.
     let next: Option<(String, String)> = sqlx::query_as(
         r"SELECT a.origin, a.id FROM (
               SELECT 'signal' AS origin, CAST(id AS CHAR) AS id FROM attachments
@@ -56,6 +72,7 @@ pub async fn lease(pool: &MySqlPool) -> Result<Option<Job>> {
           LEFT JOIN transcripts t ON t.origin = a.origin AND t.attachment_id = a.id
           WHERE t.id IS NULL
              OR (t.done_at IS NULL AND t.leased_at < NOW() - INTERVAL ? MINUTE)
+          ORDER BY CAST(a.id AS UNSIGNED) DESC
           LIMIT 1",
     )
     .bind(LEASE_MINUTES)
@@ -66,8 +83,8 @@ pub async fn lease(pool: &MySqlPool) -> Result<Option<Job>> {
     };
     // `LAST_INSERT_ID(id)` hands back the existing row's id on a re-lease too.
     let job_id = sqlx::query(
-        r"INSERT INTO transcripts (origin, attachment_id, leased_at) VALUES (?, ?, NOW())
-          ON DUPLICATE KEY UPDATE leased_at = NOW(), id = LAST_INSERT_ID(id)",
+        r"INSERT INTO transcripts (origin, attachment_id, leased_at, leases) VALUES (?, ?, NOW(), 1)
+          ON DUPLICATE KEY UPDATE leased_at = NOW(), leases = leases + 1, id = LAST_INSERT_ID(id)",
     )
     .bind(&origin)
     .bind(&id)
@@ -123,7 +140,8 @@ pub fn words(heard: &Heard) -> Option<String> {
         .segments
         .iter()
         .flat_map(|s| &s.words)
-        .map(|w| w.probability.unwrap_or(0.0))
+        // A word without a probability says nothing either way.
+        .filter_map(|w| w.probability)
         .collect();
     if probs.is_empty() || probs.iter().sum::<f64>() / (probs.len() as f64) < CONFIDENT {
         return None;
