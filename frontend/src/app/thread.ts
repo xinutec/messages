@@ -11,7 +11,7 @@ import { MatCalendar } from '@angular/material/datepicker';
 import { FormsModule } from '@angular/forms';
 import { Pictures, ScaffoldActions, ScaffoldLeading, scaffoldTitle } from '@xinutec/ui-scaffold';
 
-import { Subject, catchError, firstValueFrom, of, switchMap } from 'rxjs';
+import { firstValueFrom } from 'rxjs';
 
 import { attachmentName, attachmentNoun, isVideo } from './attachment';
 import { Avatar } from './avatar';
@@ -32,6 +32,7 @@ import {
   runStarts,
 } from './message-view';
 import { MAX_RESTORE_PAGES, PAGE, ThreadWindow } from './thread-window';
+import { ThreadSearch } from './thread-search';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
 import { Attachment, Conversation, Delivery, Message, Origin, ReplyTo, SearchHit } from './models';
@@ -155,15 +156,8 @@ export class Thread {
     return c ? this.store.title(c) : { text: 'Conversation', provisional: true };
   });
 
-  /** Search within this conversation. On a phone the shell's search box is
-   *  hidden while a thread is open. */
-  readonly searchOpen = signal(false);
-  readonly searchQuery = signal('');
-  readonly searchHits = signal<SearchHit[] | null>(null);
-  readonly searchBusy = signal(false);
-  /** A failed search, distinct from no hits. */
-  readonly searchFailed = signal(false);
-  private threadSearch$ = new Subject<string>();
+  /** Search within this conversation; see thread-search.ts. */
+  protected readonly search = new ThreadSearch(this.api, this.origin, this.id);
 
   /** All fetched messages, ascending by ts; only a window is rendered. */
   // dev-lint: allow-component-list — `messages` is an infinite-scroll pagination
@@ -215,27 +209,6 @@ export class Thread {
 
   constructor() {
     scaffoldTitle(this.barTitle);
-    // `switchMap`, so a slow answer cannot land after a newer one.
-    this.threadSearch$
-      .pipe(
-        switchMap((q) => {
-          const o = this.origin();
-          const id = this.id();
-          // Offered only on a routed conversation; never widened to global.
-          if (o == null || id == null) return of<SearchHit[]>([]);
-          return this.api.search(q, { origin: o, id }).pipe(
-            catchError(() => {
-              this.searchFailed.set(true);
-              return of<SearchHit[]>([]);
-            }),
-          );
-        }),
-        takeUntilDestroyed(),
-      )
-      .subscribe((hits) => {
-        this.searchHits.set(hits);
-        this.searchBusy.set(false);
-      });
 
     // Reload when the routed conversation changes; Angular reuses this instance.
     let loadedKey: string | null = null;
@@ -386,32 +359,10 @@ export class Thread {
     });
   }
 
-  /** Open or close the in-thread search, clearing what it found. */
-  protected toggleSearch(): void {
-    const open = !this.searchOpen();
-    this.searchOpen.set(open);
-    if (!open) {
-      this.searchQuery.set('');
-      this.searchHits.set(null);
-      this.searchFailed.set(false);
-    }
-  }
-
-  protected runThreadSearch(): void {
-    const q = this.searchQuery().trim();
-    if (!q) {
-      this.searchHits.set(null);
-      return;
-    }
-    this.searchBusy.set(true);
-    this.searchFailed.set(false);
-    this.threadSearch$.next(q);
-  }
-
   /** Go to a hit via `?at`, as a global search result does: it may be outside
    *  the rendered window. */
   protected openHit(h: SearchHit): void {
-    this.toggleSearch();
+    this.search.toggle();
     void this.router.navigate(['/conversation', h.origin, h.conversation_id], {
       queryParams: { at: h.cursor, from: null, on: null },
       queryParamsHandling: 'merge',

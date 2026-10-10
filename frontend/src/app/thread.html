@@ -18,23 +18,23 @@
       <mat-calendar [maxDate]="today" (click)="$event.stopPropagation()"
                     (selectedChange)="daysTrigger.closeMenu(); jumpToDate($event)" />
     </mat-menu>
-    <button matIconButton (click)="toggleSearch()"
-            [attr.aria-label]="searchOpen() ? 'Close search' : 'Search this conversation'">
-      <mat-icon>{{ searchOpen() ? 'close' : 'search' }}</mat-icon>
+    <button matIconButton (click)="search.toggle()"
+            [attr.aria-label]="search.open() ? 'Close search' : 'Search this conversation'">
+      <mat-icon>{{ search.open() ? 'close' : 'search' }}</mat-icon>
     </button>
   </ng-template>
 
-  @if (searchOpen()) {
+  @if (search.open()) {
     <div class="thread-search">
-      <form class="search-pill" role="search" (ngSubmit)="runThreadSearch()">
+      <form class="search-pill" role="search" (ngSubmit)="search.run()">
         <mat-icon aria-hidden="true">search</mat-icon>
         <input name="tq" placeholder="Search this conversation" aria-label="Search this conversation"
-               [ngModel]="searchQuery()" (ngModelChange)="searchQuery.set($event)" />
+               [ngModel]="search.query()" (ngModelChange)="search.query.set($event)" />
       </form>
-      @if (searchBusy()) {
+      @if (search.busy()) {
         <mat-progress-bar mode="indeterminate" />
       }
-      @if (searchHits(); as hits) {
+      @if (search.hits(); as hits) {
         <mat-action-list>
           <!-- Tracked by index; see app.html. -->
           @for (h of hits; track $index) {
@@ -47,9 +47,9 @@
             </button>
           } @empty {
             <!-- Only when the search ran: "No matches" is a claim. -->
-            @if (searchFailed()) {
-              <p class="error">Couldn't search. <button mat-button (click)="runThreadSearch()">Retry</button></p>
-            } @else if (!searchBusy()) {
+            @if (search.failed()) {
+              <p class="error">Couldn't search. <button mat-button (click)="search.run()">Retry</button></p>
+            } @else if (!search.busy()) {
               <p class="empty">No matches in this conversation.</p>
             }
           }
