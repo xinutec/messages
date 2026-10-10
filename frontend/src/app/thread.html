@@ -8,15 +8,23 @@
   <!-- In the bar, beside the conversation's name. Its own search, since the shell's
        box is hidden at phone width while a conversation is open (app.scss). -->
   <ng-template scaffoldActions>
-    <!-- A native date input: no adapter, and the phone's own picker. Labelled, since an
-         empty `type=date` shows only `dd/mm/yyyy`. -->
-    <label class="go-to-date">
-      <mat-icon aria-hidden="true">event</mat-icon>
-      <!-- Over the icon, invisible (thread.scss). A tap opens the picker: on a desktop
-           a click on the field itself would only focus its day. -->
-      <input type="date" aria-label="Jump to a date" (click)="$any($event.target).showPicker()"
-             (change)="jumpToDate($any($event.target))" />
-    </label>
+    <!-- A day to go to, on Material's calendar. -->
+    <button matIconButton [matMenuTriggerFor]="days" #daysTrigger="matMenuTrigger" aria-label="Jump to a date">
+      <mat-icon>event</mat-icon>
+    </button>
+    <mat-menu #days="matMenu">
+      <!-- Built when the menu opens, and loaded then too: most readers never ask. -->
+      <ng-template matMenuContent>
+        @defer {
+          <!-- A click inside a menu closes it, so the calendar keeps its own: paging
+               a month would otherwise close it before a day is picked. -->
+          <mat-calendar [maxDate]="today" (click)="$event.stopPropagation()"
+                        (selectedChange)="daysTrigger.closeMenu(); jumpToDate($event)" />
+        } @placeholder {
+          <mat-progress-bar mode="indeterminate" />
+        }
+      </ng-template>
+    </mat-menu>
     <button matIconButton (click)="toggleSearch()"
             [attr.aria-label]="searchOpen() ? 'Close search' : 'Search this conversation'">
       <mat-icon>{{ searchOpen() ? 'close' : 'search' }}</mat-icon>

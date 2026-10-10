@@ -24,32 +24,6 @@
   flex: none;
 }
 
-// The date control in the bar, before the search button. Kept narrow: at its
-// intrinsic width it leaves a long title no room on a phone.
-.go-to-date {
-  position: relative;
-  flex: 0 0 auto;
-  // As big a target as the search button beside it.
-  width: 48px;
-  height: 48px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  // The field lies over the icon, invisible, so the icon is all there is to see
-  // and to tap. Hiding the field's parts one by one left Android's own box.
-  input[type='date'] {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    margin: 0;
-    padding: 0;
-    border: 0;
-    opacity: 0;
-    cursor: pointer;
-  }
-}
-
 // Formatting runs, Telegram's and Signal's. Kinds without a rule render as
 // plain text.
 .body {

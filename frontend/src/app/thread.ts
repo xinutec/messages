@@ -6,6 +6,8 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatListModule } from '@angular/material/list';
+import { MatMenuModule } from '@angular/material/menu';
+import { MatCalendar } from '@angular/material/datepicker';
 import { FormsModule } from '@angular/forms';
 import { Pictures, ScaffoldActions, ScaffoldLeading, scaffoldTitle } from '@xinutec/ui-scaffold';
 
@@ -52,6 +54,8 @@ const POLL_MS = 5000;
     ScaffoldActions,
     ScaffoldLeading,
     Avatar,
+    MatMenuModule,
+    MatCalendar,
   ],
 })
 export class Thread {
@@ -286,22 +290,13 @@ export class Thread {
     // not a navigation.
     let landedAt: string | null = this.route.snapshot.queryParamMap.get('at');
     let landedOn: string | null = this.route.snapshot.queryParamMap.get('on');
-    let landedFrom: string | null = this.route.snapshot.queryParamMap.get('from');
     this.route.queryParamMap.pipe(takeUntilDestroyed()).subscribe((pm) => {
       const at = pm.get('at');
       const on = pm.get('on');
       const movedTo = (at != null && at !== landedAt) || (on != null && on !== landedOn);
-      // Back (or forward) to another place in this thread: that entry says where
-      // the reader was, by `?at`, `?on`, `?from` or by saying nothing, which is
-      // the latest. Our own rewriting in `commitFromParam` is no history step.
-      const from = pm.get('from');
-      const popped =
-        this.router.currentNavigation()?.trigger === 'popstate' &&
-        (at !== landedAt || on !== landedOn || from !== landedFrom);
-      landedFrom = from;
       landedAt = at;
       landedOn = on;
-      if (!movedTo && !popped) return;
+      if (!movedTo) return;
       this.reload();
     });
 
@@ -439,20 +434,19 @@ export class Thread {
     }
   }
 
-  /** Jump to a date: local midnight, not `Date.parse`, which reads a bare date as
-   *  UTC. The server converts `?on` to the origin's unit. The field is emptied:
-   *  still holding the day, picking it again would change nothing and fire no
-   *  `change`. */
-  protected jumpToDate(field: HTMLInputElement): void {
-    const value = field.value;
-    field.value = '';
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-    if (!m) return;
-    const ms = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
+  /** The last day the calendar offers. */
+  protected readonly today = new Date();
+
+  /** Jump to a day, which the calendar gives as local midnight; the server
+   *  converts `?on` to the origin's unit. In place of where the reader was, so
+   *  back leaves the conversation, as from anywhere in it. */
+  protected jumpToDate(day: Date | null): void {
+    if (!day) return;
     void this.router.navigate([], {
       relativeTo: this.route,
-      queryParams: { on: String(ms), at: null, from: null },
+      queryParams: { on: String(day.getTime()), at: null, from: null },
       queryParamsHandling: 'merge',
+      replaceUrl: true,
     });
   }
 
@@ -483,8 +477,10 @@ export class Thread {
   protected openHit(h: SearchHit): void {
     this.toggleSearch();
     void this.router.navigate(['/conversation', h.origin, h.conversation_id], {
-      queryParams: { at: h.cursor, from: null },
+      queryParams: { at: h.cursor, from: null, on: null },
       queryParamsHandling: 'merge',
+      // A move within the conversation, as every jump in it is: back leaves it.
+      replaceUrl: true,
     });
   }
 
@@ -503,8 +499,9 @@ export class Thread {
     void this.router.navigate([], {
       relativeTo: this.route,
       // `from` goes too; it would name a different place.
-      queryParams: { at: r.cursor, from: null },
+      queryParams: { at: r.cursor, from: null, on: null },
       queryParamsHandling: 'merge',
+      replaceUrl: true,
     });
   }
 

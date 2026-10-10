@@ -2,6 +2,7 @@ import { ErrorHandler, ApplicationConfig, LOCALE_ID, isDevMode, provideBrowserGl
 import { provideServiceWorker } from '@angular/service-worker';
 import { provideHttpClient, withFetch, withInterceptors } from '@angular/common/http';
 import { provideRouter, withComponentInputBinding } from '@angular/router';
+import { provideNativeDateAdapter } from '@angular/material/core';
 
 import { registerLocaleData } from '@angular/common';
 import localeEnGb from '@angular/common/locales/en-GB';
@@ -19,6 +20,8 @@ export const appConfig: ApplicationConfig = {
     { provide: ErrorHandler, useClass: TelemetryErrorHandler },
     provideBrowserGlobalErrorListeners(),
     { provide: LOCALE_ID, useValue: 'en-GB' },
+    // The calendar's dates, as plain `Date`s in the same locale.
+    provideNativeDateAdapter(),
     provideZonelessChangeDetection(),
     provideHttpClient(withFetch(), withInterceptors([failedRequestInterceptor])),
     // Route params bind to the Thread's inputs; the URL is the source of truth.

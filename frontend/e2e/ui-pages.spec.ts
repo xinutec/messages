@@ -450,7 +450,18 @@ test("a failed conversation search says so rather than \"no matches\" @ phone wi
   await expect(page.getByText("No matches in this conversation.")).toHaveCount(0);
 });
 
-// The date goes to the server as local midnight in milliseconds; the server
+/** Pick the first day of this month on the bar's calendar: on the calendar as
+ *  it opens, and never after today. */
+async function pickFirstOfMonth(page: Page): Promise<number> {
+  const now = new Date();
+  const day = new Date(now.getFullYear(), now.getMonth(), 1);
+  await page.getByRole("button", { name: "Jump to a date" }).click();
+  const label = day.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+  await page.locator("mat-calendar").getByRole("button", { name: label, exact: true }).click();
+  return day.getTime();
+}
+
+// The day goes to the server as local midnight in milliseconds; the server
 // converts it to the origin's unit.
 test("picking a date asks the server for that day @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);
@@ -462,11 +473,16 @@ test("picking a date asks the server for that day @ phone width", async ({ page 
   await page.goto("/conversation/signal/dm:a");
   await page.locator(".msg .body").first().waitFor();
 
-  await page.locator('ui-scaffold input[type="date"]').fill("2025-03-04");
-  await page.waitForFunction(() => location.search.includes("on="));
-
-  const expected = String(new Date(2025, 2, 4).getTime());
-  expect(page.url()).toContain(`on=${expected}`);
+  await page.getByRole("button", { name: "Jump to a date" }).click();
+  await expect(page.locator("mat-calendar")).toBeVisible();
+  // Once the menu has faded in.
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: testInfo.outputPath("calendar.png") });
+  await page.keyboard.press("Escape");
+  const expected = String(await pickFirstOfMonth(page));
+  // A pick closes the calendar.
+  await expect(page.locator("mat-calendar")).toHaveCount(0);
+  await expect.poll(() => page.url()).toContain(`on=${expected}`);
   // Both halves of the landing carry it.
   const withOn = asked.filter((u) => u.includes(`on=${expected}`));
   expect(withOn.some((u) => u.includes("dir=older"))).toBe(true);
@@ -475,7 +491,7 @@ test("picking a date asks the server for that day @ phone width", async ({ page 
   await expectCleanLayout(page, testInfo);
 });
 
-/** A page from a picked day: one message, which no other page holds. */
+/** A page from a picked day: thirty messages, which no other page holds. */
 async function mockDay(page: Page): Promise<void> {
   await page.route("**/messages**", (r) => {
     const url = r.request().url();
@@ -489,82 +505,35 @@ async function mockDay(page: Page): Promise<void> {
   });
 }
 
-// The control is the calendar icon and nothing else: the field lies over it,
-// invisible, in a button-sized target. Beside it, Android drew the field's own box.
-test("the date control is the calendar icon alone @ phone width", async ({ page }) => {
-  await mockApi(page);
-  await page.goto("/conversation/signal/dm:a");
-  await page.locator(".msg .body").first().waitFor();
-  const control = (await page.locator(".go-to-date").boundingBox())!;
-  const icon = (await page.locator(".go-to-date mat-icon").boundingBox())!;
-  const field = page.locator('ui-scaffold input[type="date"]');
-  const box = (await field.boundingBox())!;
-  expect(control.width).toBeLessThanOrEqual(48);
-  expect(box.x).toBeGreaterThanOrEqual(control.x);
-  expect(box.x + box.width).toBeLessThanOrEqual(control.x + control.width);
-  // The icon centred in it, as in an icon button.
-  expect(Math.abs(icon.x + icon.width / 2 - (control.x + control.width / 2))).toBeLessThan(1);
-  expect(await field.evaluate((e) => getComputedStyle(e).opacity)).toBe("0");
-});
-
-// The field is emptied after each jump: holding the day, picking that day again
-// (after going back, say) changed nothing, so no `change`, and the tap did nothing.
-test("the same day can be picked twice @ phone width", async ({ page }) => {
+// A jump is a move within the conversation, so it takes the place of where the
+// reader was: back leaves the conversation, as it would from anywhere in it.
+test("back after picking a date leaves the conversation @ phone width", async ({ page }) => {
   await mockApi(page);
   await mockDay(page);
-  await page.goto("/conversation/signal/dm:a");
+  await page.goto("/");
+  await page.getByText("Alice Andersson").first().click();
   await page.locator(".msg .body").first().waitFor();
-  const field = page.locator('ui-scaffold input[type="date"]');
-  await field.fill("2025-03-04");
-  await page.getByText("a message from that day").waitFor();
-  await expect(field).toHaveValue("");
-});
-
-// Back after a jump goes back to where the reader was, not one entry nowhere.
-test("back after picking a date returns to where you were @ phone width", async ({ page }) => {
-  await mockApi(page);
-  await mockDay(page);
-  await page.goto("/conversation/signal/dm:a");
-  const latest = page.locator(".msg .body", { hasText: "Six of us are in." });
-  await latest.waitFor();
-  await page.locator('ui-scaffold input[type="date"]').fill("2025-03-04");
+  await pickFirstOfMonth(page);
   await page.getByText("a message from that day").waitFor();
   await page.goBack();
-  await expect(latest).toBeVisible();
-  await expect(page.getByText("a message from that day")).toHaveCount(0);
+  await expect.poll(() => new URL(page.url()).pathname).toBe("/");
 });
 
 // Once the reader moves on from a picked day, the address says where they are,
-// not the day: a reload or a reopen must not land there again.
-test("scrolling after picking a date drops it from the address @ phone width", async ({ page }) => {
+// not the day: a reload or a reopen must not land there again. And the same day
+// can be picked again.
+test("scrolling after picking a date drops it, and it can be picked again @ phone width", async ({ page }) => {
   await mockApi(page);
   await mockDay(page);
   await page.goto("/conversation/signal/dm:a");
   await page.locator(".msg .body").first().waitFor();
-  await page.locator('ui-scaffold input[type="date"]').fill("2025-03-04");
+  const day = await pickFirstOfMonth(page);
   await page.getByText("a message from that day").waitFor();
   await page.locator("app-thread").hover();
   await page.mouse.wheel(0, -400);
   await expect.poll(() => page.url(), { timeout: 5000 }).not.toContain("on=");
-});
-
-// The phone's case: the reader scrolls after the jump, so `?from` replaces the
-// day, and back must still go back.
-test("back after picking a date and scrolling returns to where you were @ phone width", async ({ page }) => {
-  await mockApi(page);
-  await mockDay(page);
-  await page.goto("/conversation/signal/dm:a");
-  const latest = page.locator(".msg .body", { hasText: "Six of us are in." });
-  await latest.waitFor();
-  await page.locator('ui-scaffold input[type="date"]').fill("2025-03-04");
-  await page.getByText("a message from that day").waitFor();
-  await page.locator("app-thread").hover();
-  await page.mouse.wheel(0, -400);
-  await expect.poll(() => page.url(), { timeout: 5000 }).toContain("from=");
-  await page.goBack();
-  await expect(latest).toBeVisible();
-  // Not merely scrolled into: the newer pages hold the latest too.
-  await expect(page.getByText("a message from that day")).toHaveCount(0);
+  await pickFirstOfMonth(page);
+  await expect.poll(() => page.url(), { timeout: 5000 }).toContain(`on=${day}`);
 });
 
 // Pages the app loads around a landing by itself are not the reader moving: the
@@ -587,15 +556,11 @@ test("a picked day stays picked while the app loads around it @ phone width", as
   });
   await page.goto("/conversation/signal/dm:a");
   await page.locator(".msg .body").first().waitFor();
-  await page.locator('ui-scaffold input[type="date"]').fill("2025-03-04");
+  await pickFirstOfMonth(page);
   await page.getByText("earlier 0", { exact: true }).waitFor();
   await page.waitForTimeout(800);
   expect(page.url()).toContain("on=");
   await expect(page.locator(".msg.landed")).toHaveCount(1);
-  // And back, with nothing touched, goes back: on the phone it did nothing.
-  await page.goBack();
-  await expect(page.locator(".msg .body", { hasText: "Six of us are in." })).toBeVisible();
-  await expect(page.getByText("a message from that day")).toHaveCount(0);
 });
 
 // Formatting renders from the body: the visible text is exactly what was sent.
