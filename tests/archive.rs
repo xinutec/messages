@@ -540,26 +540,29 @@ async fn conversations_normalise_and_sort_across_origins() {
             .id
             .clone()
     };
-    let ids: Vec<_> = convs.iter().map(|c| c.id.clone()).collect();
-    assert_eq!(
-        ids,
-        [
-            "-1000000000055".to_string(),
-            "4242".to_string(),
-            irc_id("net", "carol"),
-            irc_id("net", "#chan"),
-            irc_id("xinutec", "s_20"),
-            irc_id("euirc", "s_20"),
-            "gc1".to_string(),
-            "group:g1".to_string(),
-            "dm:alice".to_string(),
-            "dm:tie".to_string(),
-            "dm:receipts".to_string(),
-            "gc2".to_string(),
-            "-77".to_string(),
-        ],
-        "sort by last_ts desc"
-    );
+    let seeded = [
+        "-1000000000055".to_string(),
+        "4242".to_string(),
+        irc_id("net", "carol"),
+        irc_id("net", "#chan"),
+        irc_id("xinutec", "s_20"),
+        irc_id("euirc", "s_20"),
+        "gc1".to_string(),
+        "group:g1".to_string(),
+        "dm:alice".to_string(),
+        "dm:tie".to_string(),
+        "dm:receipts".to_string(),
+        "gc2".to_string(),
+        "-77".to_string(),
+    ];
+    // The seed's conversations, in the list's order: other tests add their own
+    // to the shared database, whenever they happen to run.
+    let ids: Vec<_> = convs
+        .iter()
+        .map(|c| c.id.clone())
+        .filter(|id| seeded.contains(id))
+        .collect();
+    assert_eq!(ids, seeded, "sort by last_ts desc");
 
     // Two rows differing only by network.
     let s20: Vec<_> = convs
@@ -3027,4 +3030,98 @@ async fn a_sender_is_keyed_by_what_outlasts_a_rename() {
         .unwrap();
     let alice = page.messages.iter().find(|m| m.sender == "alice").unwrap();
     assert_eq!(alice.sender_key, "alice");
+}
+
+/// Recall's transcriber leases each held voice message once, and what it heard
+/// shows under the audio; a refusal is recorded, not retried, and shows nothing.
+#[tokio::test]
+async fn a_voice_message_is_leased_once_and_its_words_shown() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    sqlx::query("INSERT INTO conversations (thread_id, type, name) VALUES ('dm:voice','dm','Vic')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO messages (thread_id, sender_uuid, server_ts, body, is_outgoing, deleted, edited) VALUES
+         ('dm:voice','vic',5000,NULL,0,0,0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let msg: i64 = sqlx::query_scalar("SELECT id FROM messages WHERE thread_id = 'dm:voice'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    // Two held voice messages, and one never fetched, which is no job.
+    sqlx::query(
+        "INSERT INTO attachments (message_id, content_type, file_name, size_bytes, stored_path) VALUES
+         (?, 'audio/aac', 'a.m4a', 1, 'voice_a'), (?, 'audio/aac', 'b.m4a', 1, 'voice_b'),
+         (?, 'audio/aac', 'c.m4a', 1, NULL)",
+    )
+    .bind(msg)
+    .bind(msg)
+    .bind(msg)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let first = messages::transcribe::lease(&pool)
+        .await
+        .unwrap()
+        .expect("a job");
+    let second = messages::transcribe::lease(&pool)
+        .await
+        .unwrap()
+        .expect("another job");
+    assert_ne!(first.filename, second.filename);
+    assert_eq!(
+        (first.source.as_str(), first.kind),
+        ("signal", "transcribe-segment")
+    );
+    // Both leased, the third never fetched: nothing more to do.
+    assert_eq!(messages::transcribe::lease(&pool).await.unwrap(), None);
+
+    let heard: messages::transcribe::Finished = serde_json::from_value(serde_json::json!({
+        "ok": true,
+        "result": { "language": "nl", "segments": [{ "text": " hoi, ben je thuis?", "no_speech_prob": 0.02 }] }
+    }))
+    .unwrap();
+    assert!(
+        messages::transcribe::finish(&pool, first.id, &heard)
+            .await
+            .unwrap()
+    );
+    let refused: messages::transcribe::Finished =
+        serde_json::from_value(serde_json::json!({ "ok": false, "error": "no audio stream" }))
+            .unwrap();
+    assert!(
+        messages::transcribe::finish(&pool, second.id, &refused)
+            .await
+            .unwrap()
+    );
+    // A job this queue never handed out.
+    assert!(
+        !messages::transcribe::finish(&pool, 999_999, &heard)
+            .await
+            .unwrap()
+    );
+    // Done and refused alike are not leased again.
+    assert_eq!(messages::transcribe::lease(&pool).await.unwrap(), None);
+
+    let page = archive::messages_page(&pool, Origin::Signal, "dm:voice", None, 50, PageDir::Older)
+        .await
+        .unwrap();
+    let said = |id: &str| {
+        page.messages[0]
+            .attachments
+            .iter()
+            .find(|a| a.id == id)
+            .unwrap()
+            .transcript
+            .clone()
+    };
+    assert_eq!(said(&first.filename).as_deref(), Some("hoi, ben je thuis?"));
+    assert_eq!(said(&second.filename), None);
 }

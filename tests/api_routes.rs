@@ -280,3 +280,61 @@ async fn a_conversation_shows_the_picture_its_origin_keeps() {
     assert_eq!(get("..").await.unwrap().status(), StatusCode::NOT_FOUND);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Recall's transcriber reaches its routes with its token alone; unconfigured,
+/// they do not exist.
+#[tokio::test]
+async fn the_transcriber_routes_take_its_token_and_nothing_else() {
+    let Some(pool) = pool().await else { return };
+    let ask = |app: axum::Router, token: Option<&str>| {
+        let mut req = Request::get("/sync/vocabulary/prompt");
+        if let Some(t) = token {
+            req = req.header("authorization", format!("Bearer {t}"));
+        }
+        app.oneshot(req.body(Body::empty()).unwrap())
+    };
+    let unconfigured = app(pool.clone());
+    assert_eq!(
+        ask(unconfigured, Some("anything")).await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    let configured = messages::routes::router(AppState::new(
+        pool.clone(),
+        messages::config::Config {
+            transcriber_token: Some("the-right-token".into()),
+            ..support::config()
+        },
+        reqwest::Client::new(),
+        None,
+    ));
+    assert_eq!(
+        ask(configured.clone(), None).await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        ask(configured.clone(), Some("the-wrong-token"))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    // A reader's session is no transcriber.
+    let cookie = signed_in(&pool).await;
+    let as_reader = Request::get("/sync/vocabulary/prompt")
+        .header("cookie", format!("{}={cookie}", session::COOKIE_NAME))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        configured
+            .clone()
+            .oneshot(as_reader)
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let res = ask(configured, Some("the-right-token")).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(res.into_body(), 64).await.unwrap();
+    assert_eq!(&body[..], br#"{"prompt":null}"#);
+}

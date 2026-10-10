@@ -57,11 +57,12 @@ const THREAD = {
       reply_to: { id: "1", cursor: "1_1", ts: Date.UTC(2026, 0, 1, 12, 0), sender: "Alice Andersson",
         excerpt: "Morning! Did the referral letter come through yet? The clinic said they'd post it but it's been almost two weeks n…",
         deleted: false },
-      attachments: [{ id: "a1", content_type: "application/pdf", file_name: "referral-scan-2026-final-v2.pdf", size: 91234, available: false, fetch: null },
+      attachments: [{ id: "a1", content_type: "application/pdf", file_name: "referral-scan-2026-final-v2.pdf", size: 91234, available: false, fetch: null, transcript: null },
         // Too big to fetch unasked: offered, with a long name and a size.
-        { id: "a3", content_type: "video/mp4", file_name: "climbing-wall-ascent-saturday.mp4", size: 14950323, available: false, fetch: "offered" },
+        { id: "a3", content_type: "video/mp4", file_name: "climbing-wall-ascent-saturday.mp4", size: 14950323, available: false, fetch: "offered", transcript: null },
         // A voice message, as Signal labels one.
-        { id: "au1", content_type: "audio/aac", file_name: "signal-2026-10-10-21-27-55-970.m4a", size: 295210, available: true, fetch: null }],
+        { id: "au1", content_type: "audio/aac", file_name: "signal-2026-10-10-21-27-55-970.m4a", size: 295210, available: true, fetch: null,
+          transcript: "Hoi! Ben je vanavond thuis? Dan kom ik even langs met die boeken die ik nog van je heb." }],
       link_images: [], link_offers: [{ url: "https://cloud.example.org/s/holiday", id: "lo1" }], edits: [] }),
     // An unresolved quote, the longer wording.
     testMessage({ id: "3", ts: Date.UTC(2026, 0, 1, 12, 9), sender: "Alice Andersson", is_outgoing: false,
@@ -71,7 +72,7 @@ const THREAD = {
     // Deleted, with words and a stored image behind the reveal.
     testMessage({ id: "4", ts: Date.UTC(2026, 0, 1, 12, 11), sender: "Alice Andersson", is_outgoing: false,
       body: "something said and then taken back", deleted: true, edited: false, reactions: [], reply_to: null, delivery: null, entities: [], album: null, previews: [],
-      attachments: [{ id: "a2", content_type: "image/jpeg", file_name: null, size: 4096, available: true, fetch: null }], link_images: [], link_offers: [], edits: [] }),
+      attachments: [{ id: "a2", content_type: "image/jpeg", file_name: null, size: 4096, available: true, fetch: null, transcript: null }], link_images: [], link_offers: [], edits: [] }),
     // A Telegram service event, rendered as an action.
     testMessage({ id: "5", ts: Date.UTC(2026, 0, 1, 12, 20), sender: "Alice Andersson", is_outgoing: false,
       kind: "action", body: "made a 55-minute video call", deleted: false, edited: false,
@@ -99,33 +100,33 @@ const THREAD = {
     testMessage({ id: "7", ts: Date.UTC(2026, 0, 1, 12, 30), sender: "Test User", is_outgoing: true,
       body: "From the climbing wall on Saturday, the three of us at the top of the orange route", deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740993", previews: [],
       delivery: { state: "delivered", read_by: [] },
-      attachments: [{ id: "p7", content_type: "image/jpeg", file_name: null, size: 4096, available: true, fetch: null }], link_images: [], link_offers: [], edits: [] }),
+      attachments: [{ id: "p7", content_type: "image/jpeg", file_name: null, size: 4096, available: true, fetch: null, transcript: null }], link_images: [], link_offers: [], edits: [] }),
     testMessage({ id: "8", ts: Date.UTC(2026, 0, 1, 12, 30), sender: "Test User", is_outgoing: true,
       body: null, deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740993", previews: [],
       delivery: { state: "delivered", read_by: [] },
-      attachments: [{ id: "p8", content_type: "image/jpeg", file_name: null, size: 4096, available: true, fetch: null }], link_images: [], link_offers: [], edits: [] }),
+      attachments: [{ id: "p8", content_type: "image/jpeg", file_name: null, size: 4096, available: true, fetch: null, transcript: null }], link_images: [], link_offers: [], edits: [] }),
     testMessage({ id: "9", ts: Date.UTC(2026, 0, 1, 12, 30), sender: "Test User", is_outgoing: true,
       body: null, deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740993", previews: [],
       delivery: { state: "delivered", read_by: [] },
-      attachments: [{ id: "p9", content_type: "image/jpeg", file_name: null, size: 4096, available: true, fetch: null }], link_images: [], link_offers: [], edits: [] }),
+      attachments: [{ id: "p9", content_type: "image/jpeg", file_name: null, size: 4096, available: true, fetch: null, transcript: null }], link_images: [], link_offers: [], edits: [] }),
     // An incoming album of four, captioned by its second member: the even case,
     // where every row of the grid is full. The last is a video, as albums from a phone mix them.
     testMessage({ id: "21", ts: Date.UTC(2026, 0, 1, 12, 35), sender: "Alice Andersson", is_outgoing: false,
       body: null, deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740994", previews: [],
       delivery: null,
-      attachments: [{ id: "p21", content_type: "image/jpeg", file_name: null, size: 4096, available: true, fetch: null }], link_images: [], link_offers: [], edits: [] }),
+      attachments: [{ id: "p21", content_type: "image/jpeg", file_name: null, size: 4096, available: true, fetch: null, transcript: null }], link_images: [], link_offers: [], edits: [] }),
     testMessage({ id: "22", ts: Date.UTC(2026, 0, 1, 12, 35), sender: "Alice Andersson", is_outgoing: false,
       body: "Four from the summit, before the rain came in", deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740994", previews: [],
       delivery: null,
-      attachments: [{ id: "p22", content_type: "image/jpeg", file_name: null, size: 4096, available: true, fetch: null }], link_images: [], link_offers: [], edits: [] }),
+      attachments: [{ id: "p22", content_type: "image/jpeg", file_name: null, size: 4096, available: true, fetch: null, transcript: null }], link_images: [], link_offers: [], edits: [] }),
     testMessage({ id: "23", ts: Date.UTC(2026, 0, 1, 12, 35), sender: "Alice Andersson", is_outgoing: false,
       body: null, deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740994", previews: [],
       delivery: null,
-      attachments: [{ id: "p23", content_type: "image/jpeg", file_name: null, size: 4096, available: true, fetch: null }], link_images: [], link_offers: [], edits: [] }),
+      attachments: [{ id: "p23", content_type: "image/jpeg", file_name: null, size: 4096, available: true, fetch: null, transcript: null }], link_images: [], link_offers: [], edits: [] }),
     testMessage({ id: "24", ts: Date.UTC(2026, 0, 1, 12, 35), sender: "Alice Andersson", is_outgoing: false,
       body: null, deleted: false, edited: false, reactions: [], reply_to: null, entities: [], album: "9007199254740994", previews: [],
       delivery: null,
-      attachments: [{ id: "v24", content_type: "video/webm", file_name: null, size: 10832, available: true, fetch: null }], link_images: [], link_offers: [], edits: [] }),
+      attachments: [{ id: "v24", content_type: "video/webm", file_name: null, size: 10832, available: true, fetch: null, transcript: null }], link_images: [], link_offers: [], edits: [] }),
   ],
   has_more: false,
   next_cursor: null,
@@ -257,6 +258,9 @@ test("open thread — meta + reactions + attachment: lays out cleanly @ phone wi
   await expect
     .poll(() => voice.evaluate((e) => e instanceof HTMLAudioElement && e.readyState >= 1))
     .toBe(true);
+  // What the transcriber heard, under it and marked as such.
+  await expect(page.locator(".msg .transcript")).toContainText("Transcribed");
+  await expect(page.locator(".msg .transcript")).toContainText("Ben je vanavond thuis?");
   await offers.first().scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath("offers.png") });
   await expectCleanLayout(page, testInfo);

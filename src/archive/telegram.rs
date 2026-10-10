@@ -234,6 +234,8 @@ pub(super) async fn page(
                 size: mr.try_get("media_size")?,
                 available: state == "stored",
                 fetch: FetchState::parse(&state),
+                // Filled by `attach_transcripts`.
+                transcript: None,
             });
         }
     }

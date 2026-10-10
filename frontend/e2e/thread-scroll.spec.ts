@@ -23,7 +23,7 @@ const LOREM =
   "quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo.";
 
 function imageAttachment(k: number): Attachment {
-  return { id: `att${k}`, content_type: "image/svg+xml", file_name: `pic${k}.svg`, size: 12_345, available: true, fetch: null };
+  return { id: `att${k}`, content_type: "image/svg+xml", file_name: `pic${k}.svg`, size: 12_345, available: true, fetch: null, transcript: null };
 }
 
 // One full page of the newest messages, far taller than the viewport, with

@@ -18,3 +18,4 @@ pub mod pending_login;
 pub mod routes;
 pub mod session;
 pub mod state;
+pub mod transcribe;

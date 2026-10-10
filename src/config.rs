@@ -57,6 +57,10 @@ pub struct Config {
 
     /// Where irssi is. `None` disables sending; see [`IrcSend`].
     pub irc_send: Option<IrcSend>,
+
+    /// The bearer token recall's transcriber presents (`TRANSCRIBER_TOKEN`).
+    /// Unset, its routes answer 404, as if absent; see `routes/transcribe.rs`.
+    pub transcriber_token: Option<String>,
 }
 
 /// How to reach the irssi that holds the user's IRC connections.
@@ -118,6 +122,9 @@ impl Config {
             telegram_media_dir: env_or("TELEGRAM_MEDIA_DIR", "/telegram-media"),
             link_fetcher_url: env_or("LINK_FETCHER_URL", "http://messages-link-fetch:8080"),
             irc_send: Self::irc_send_from_env()?,
+            transcriber_token: std::env::var("TRANSCRIBER_TOKEN")
+                .ok()
+                .filter(|t| !t.is_empty()),
         })
     }
 

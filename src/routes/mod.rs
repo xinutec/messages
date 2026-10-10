@@ -4,10 +4,11 @@ pub mod api;
 pub mod auth;
 pub mod health;
 pub mod telemetry;
+pub mod transcribe;
 
 use axum::Router;
 use axum::http::{HeaderValue, Response, header};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use tower::ServiceBuilder;
 use tower_http::services::ServeDir;
 use tower_http::services::fs::ServeFileSystemResponseBody;
@@ -97,6 +98,14 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/callback", get(auth::callback))
         .route("/logout", post(auth::logout))
         .nest("/api", api);
+
+    // recall's transcriber, at the paths its runner uses. Every one answers 404
+    // while no token is configured, as if absent; see `routes/transcribe.rs`.
+    let app = app
+        .route("/work/v1/lease", put(transcribe::lease))
+        .route("/work/v1/jobs/{id}/done", put(transcribe::done))
+        .route("/ingest/v1/blob/{source}/{filename}", get(transcribe::blob))
+        .route("/sync/vocabulary/prompt", get(transcribe::prompt));
 
     // The Angular bundle, with SPA fallback to index.html. API-only when
     // STATIC_DIR is unset (`ng serve` proxies in dev).

@@ -326,6 +326,9 @@ pub struct Attachment {
     pub available: bool,
     /// Whether these bytes can be asked for.
     pub fetch: Option<FetchState>,
+    /// What recall's transcriber heard, for audio it has done; see
+    /// `transcribe.rs`. `None` until then, and for silence.
+    pub transcript: Option<String>,
 }
 
 /// An earlier version of an edited message. The current text is the message's
@@ -713,6 +716,7 @@ pub async fn messages_page(
         Origin::Gchat | Origin::Irc => {}
     }
     links::attach(pool, &mut page.msgs).await?;
+    attach_transcripts(pool, origin, &mut page.msgs).await?;
     let has_more = page.msgs.len() as i64 == limit;
     Ok(MessagesPage {
         messages: page.msgs,
@@ -720,6 +724,25 @@ pub async fn messages_page(
         next_cursor: page.oldest.map(|(ts, id)| encode_cursor(ts, id)),
         prev_cursor: page.newest.map(|(ts, id)| encode_cursor(ts, id)),
     })
+}
+
+/// Fill in what the transcriber heard, for the page's audio.
+async fn attach_transcripts(pool: &MySqlPool, origin: Origin, msgs: &mut [Message]) -> Result<()> {
+    let ids: Vec<String> = msgs
+        .iter()
+        .flat_map(|m| &m.attachments)
+        .filter(|a| {
+            a.content_type
+                .as_deref()
+                .is_some_and(|c| c.starts_with("audio/"))
+        })
+        .map(|a| a.id.clone())
+        .collect();
+    let texts = crate::transcribe::texts(pool, origin, &ids).await?;
+    for a in msgs.iter_mut().flat_map(|m| m.attachments.iter_mut()) {
+        a.transcript = texts.get(&a.id).cloned();
+    }
+    Ok(())
 }
 
 /// Substring search across all origins, newest first. Retracted messages match;

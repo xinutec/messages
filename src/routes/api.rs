@@ -141,7 +141,7 @@ pub struct LinkImageState {
 /// escape the mount. The row claims the bytes exist, so a missing file means the
 /// mount and the archive disagree: logged, and a 404 for the client. Through
 /// `ServeFile`, which streams and answers `Range`: a video player asks in parts.
-async fn serve_held(
+pub(super) async fn serve_held(
     what: &str,
     dir: &str,
     stored: &str,

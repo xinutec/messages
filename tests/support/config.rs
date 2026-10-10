@@ -20,5 +20,6 @@ pub fn config() -> Config {
         telegram_media_dir: "/telegram-media".into(),
         link_fetcher_url: "http://link-fetch.invalid".into(),
         irc_send: None,
+        transcriber_token: None,
     }
 }

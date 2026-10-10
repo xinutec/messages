@@ -225,6 +225,8 @@ pub(super) async fn page(
                 size: ar.try_get("size_bytes")?,
                 available: stored_path.is_some(),
                 fetch: None,
+                // Filled by `attach_transcripts`.
+                transcript: None,
             };
             if let Some(m) = msgs.iter_mut().find(|m| m.id == mid) {
                 m.attachments.push(att);

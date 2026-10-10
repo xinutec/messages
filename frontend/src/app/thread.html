@@ -183,6 +183,11 @@
                           <!-- Played in place, a voice message most often. -->
                           <audio controls preload="metadata" [src]="attachmentUrl(a)"
                                  [attr.aria-label]="attachmentName(a) ?? 'audio'"></audio>
+                          <!-- What recall's transcriber heard: a machine's words, set apart from
+                               what anybody wrote. -->
+                          @if (a.transcript; as words) {
+                            <p class="transcript"><span class="label">Transcribed</span>{{ words }}</p>
+                          }
                         } @else if (a.available) {
                           <a [href]="attachmentUrl(a)" target="_blank" rel="noopener">
                             <mat-icon>attach_file</mat-icon>{{ attachmentName(a) ?? attachmentNoun(a) }}

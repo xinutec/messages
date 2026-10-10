@@ -264,6 +264,8 @@ async fn attach_attachments(pool: &MySqlPool, msgs: &mut [Message], ids: &[i64])
             available: stored_path.is_some(),
             // Fetching needs a URL the client mints while rendering.
             fetch: None,
+            // Filled by `attach_transcripts`.
+            transcript: None,
         };
         if let Some(m) = msgs.iter_mut().find(|m| m.id == mid) {
             m.attachments.push(att);

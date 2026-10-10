@@ -23,6 +23,7 @@ function file(over: Partial<Attachment>): Attachment {
     // Signal: nothing to ask for. Telegram's states are tested in
     // tests/archive.rs.
     fetch: null,
+    transcript: null,
     ...over,
   };
 }
@@ -142,13 +143,13 @@ describe('formatChatLog', () => {
         attachments: [
           file({ file_name: 'shot.png', content_type: 'image/png' }),
           file({ file_name: 'notes.pdf' }),
-          file({ file_name: 'old.jpg', content_type: 'image/jpeg', available: false, fetch: null }),
+          file({ file_name: 'old.jpg', content_type: 'image/jpeg', available: false, fetch: null, transcript: null }),
           file({ content_type: 'audio/ogg' }),
           file({ file_name: '', content_type: 'text/plain' }),
           // A Signal photo has no filename; `[image: image/jpeg]` would say
           // image twice.
           file({ content_type: 'image/jpeg' }),
-          file({ content_type: 'image/png', available: false, fetch: null }),
+          file({ content_type: 'image/png', available: false, fetch: null, transcript: null }),
           file({}),
         ],
       }),

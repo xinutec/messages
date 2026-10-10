@@ -130,6 +130,21 @@
       display: block;
       width: min(320px, 100%);
     }
+    // A voice message's words, quieter than a message's own, and labelled as a
+    // machine's: it can mishear.
+    .transcript {
+      margin: 0.3rem 0 0;
+      font: var(--mat-sys-body-medium);
+      font-style: italic;
+      opacity: 0.8;
+      overflow-wrap: anywhere;
+      .label {
+        display: block;
+        font: var(--mat-sys-label-small);
+        font-style: normal;
+        opacity: 0.8;
+      }
+    }
     a,
     .unavailable {
       display: inline-flex;

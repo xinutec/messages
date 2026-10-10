@@ -9,4 +9,9 @@ available: boolean,
 /**
  * Whether these bytes can be asked for.
  */
-fetch: FetchState | null, };
+fetch: FetchState | null, 
+/**
+ * What recall's transcriber heard, for audio it has done; see
+ * `transcribe.rs`. `None` until then, and for silence.
+ */
+transcript: string | null, };

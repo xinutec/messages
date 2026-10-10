@@ -1,6 +1,6 @@
 //! MariaDB pool. This app reads the shared `signal` database, whose tables the
 //! archiver's migrations and import_gchat.py own. It creates only its own
-//! `sessions` and `link_images`, here on boot.
+//! `sessions`, `link_images` and `transcripts`, here on boot.
 
 use anyhow::{Context, Result};
 use sqlx::MySqlPool;
@@ -59,6 +59,26 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
     .execute(pool)
     .await
     .context("creating link_images table")?;
+
+    // What recall's transcriber heard in an audio attachment; see `transcribe.rs`.
+    // The id is the job id its runner leases. `text` is NULL until done, and
+    // after a refusal (`error`) or a clip of silence.
+    sqlx::query(
+        r"CREATE TABLE IF NOT EXISTS transcripts (
+            id            BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            origin        VARCHAR(16)  NOT NULL,
+            attachment_id VARCHAR(255) NOT NULL,
+            leased_at     DATETIME     NULL,
+            done_at       DATETIME     NULL,
+            text          TEXT         NULL,
+            language      VARCHAR(16)  NULL,
+            error         VARCHAR(255) NULL,
+            UNIQUE KEY uniq_transcript (origin, attachment_id)
+        ) DEFAULT CHARSET=utf8mb4",
+    )
+    .execute(pool)
+    .await
+    .context("creating transcripts table")?;
 
     // The live table's enum still names `wanted`, which is no longer written
     // and held by no row; this brings it to the shape above, and is then a no-op.
