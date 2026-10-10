@@ -1,6 +1,6 @@
 import { ApplicationRef, Component, DestroyRef, ElementRef, LOCALE_ID, computed, effect, inject, input, signal, viewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { DatePipe, formatDate, NgTemplateOutlet } from '@angular/common';
+import { DatePipe, NgTemplateOutlet } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -19,10 +19,22 @@ import { FetchRequests } from './fetch-requests';
 import { segments } from './formatting';
 import { hue } from './list-row';
 import { LogScope, chatLogHtml, formatChatLog } from './copy-log';
+import {
+  attachmentUrl,
+  dayGroups,
+  deliveryLabel,
+  deliveryPending,
+  hostOf,
+  isPlain,
+  mib,
+  reactors,
+  readers,
+  runStarts,
+} from './message-view';
 import { MAX_RESTORE_PAGES, PAGE, ThreadWindow } from './thread-window';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
-import { Attachment, Conversation, Delivery, Message, Origin, Reaction, ReplyTo, SearchHit } from './models';
+import { Attachment, Conversation, Delivery, Message, Origin, ReplyTo, SearchHit } from './models';
 
 /** How often an open, visible thread checks for newer messages. */
 const POLL_MS = 5000;
@@ -78,21 +90,11 @@ export class Thread {
     this.pictures.open({ label: attachmentName(a) ?? 'picture', source: this.attachmentUrl(a) });
   }
 
-  /** Where an attachment's bytes come from: each origin has its own route, since
-   *  attachment ids are per origin. */
+  /** Where an attachment's bytes come from; see message-view.ts. */
   protected attachmentUrl(a: Attachment): string {
-    // A Record, so a new origin is a type error rather than another origin's
-    // endpoint.
-    const route: Record<Origin, string> = {
-      signal: 'attachments',
-      gchat: 'gchat-attachments',
-      telegram: 'telegram-media',
-      // IRC has no attachments.
-      irc: 'attachments',
-    };
     const origin = this.origin();
     // Unreachable while routed; an empty src fails visibly.
-    return origin ? `/api/${route[origin]}/${a.id}` : '';
+    return origin ? attachmentUrl(origin, a) : '';
   }
   protected readonly attachmentNoun = attachmentNoun;
 
@@ -203,49 +205,12 @@ export class Thread {
    *  belongs to a conversation the reader has left, and is dropped. */
   private generation = 0;
 
-  /** Rendered messages grouped by day, each with a sticky date header. Within a
-   *  day, adjacent members of one album (same `album`, same sender) form a run,
-   *  drawn as one set; every other message is a run of one. */
-  readonly dayGroups = computed(() => {
-    const groups: { key: string; ts: number; runs: Message[][] }[] = [];
-    let lastKey: string | null = null;
-    for (const m of this.rendered()) {
-      const key = new Date(m.ts).toDateString();
-      if (key !== lastKey) {
-        groups.push({ key, ts: m.ts, runs: [] });
-        lastKey = key;
-      }
-      const runs = groups[groups.length - 1].runs;
-      const prev = runs.at(-1)?.at(-1);
-      if (m.album != null && prev?.album === m.album && prev.sender === m.sender) {
-        runs[runs.length - 1].push(m);
-      } else {
-        runs.push([m]);
-      }
-    }
-    return groups;
-  });
+  /** The rendered window by day and run, and where runs start; see message-view.ts. */
+  readonly dayGroups = computed(() => dayGroups(this.rendered()));
+  readonly startsRun = computed(() => runStarts(this.rendered()));
+  protected readonly isPlain = isPlain;
 
-  /** Messages that start a run by one sender on one day: where a bubble names
-   *  who speaks, and where the gap between bubbles widens. */
-  readonly startsRun = computed(() => {
-    const starts = new Set<string>();
-    let prev: Message | undefined;
-    for (const m of this.rendered()) {
-      const sameDay = prev && new Date(prev.ts).toDateString() === new Date(m.ts).toDateString();
-      if (!sameDay || prev?.sender !== m.sender || prev.is_outgoing !== m.is_outgoing) starts.add(m.id);
-      prev = m;
-    }
-    return starts;
-  });
-
-  /** Words and nothing after them, so the time can share their last line. */
-  protected isPlain(m: Message): boolean {
-    return !!m.body && !m.deleted && !m.previews.length && !m.attachments.length
-      && !m.link_images.length && !m.link_offers.length;
-  }
-
-    /** Others are named, except in a DM, whose bar already says who. */
+  /** Others are named, except in a DM, whose bar already says who. */
   readonly namesSenders = computed(() => this.conversation()?.kind !== 'dm');
 
   constructor() {
@@ -392,47 +357,18 @@ export class Thread {
     return true;
   }
 
-  /** Hover text naming who reacted. `who` can be shorter than `count`; the rest
-   *  are counted, never invented. */
-  reactors(r: Reaction): string {
-    if (!r.who.length) return '';
-    const named = r.who.join(', ');
-    const unnamed = r.count - r.who.length;
-    return unnamed > 0 ? `${named} and ${unnamed} more` : named;
-  }
-
-  /** The tag on an outgoing message. Plain "read" only where it covers everyone
-   *  (a DM, or Telegram's position); where people are named, "read by 2". An
-   *  unloaded conversation kind gets the counted form. */
+  // How a message is shown; see message-view.ts.
+  protected readonly reactors = reactors;
   protected deliveryLabel(d: Delivery): string {
-    if (d.state !== 'read' && d.state !== 'viewed') return d.state;
-    if (!d.read_by.length || this.conversation()?.kind === 'dm') return d.state;
-    return `${d.state} by ${d.read_by.length}`;
+    return deliveryLabel(d, this.conversation()?.kind);
   }
-
-  /** Who read it and when; empty for Telegram. `formatDate` with LOCALE_ID, to
-   *  match the `| date` beside it. */
   protected readers(d: Delivery): string {
-    return d.read_by
-      .map((r) => `${r.who} ${formatDate(r.at, 'short', this.locale)}`)
-      .join(', ');
+    return readers(d, this.locale);
   }
-
-  /** Dimmed until somebody has actually read it. */
-  protected deliveryPending(d: Delivery): boolean {
-    return d.state === 'sent' || d.state === 'delivered';
-  }
-
+  protected readonly deliveryPending = deliveryPending;
   protected readonly segments = segments;
-
-  /** A preview's host, or its whole url if that does not parse. */
-  protected hostOf(url: string): string {
-    try {
-      return new URL(url).host;
-    } catch {
-      return url;
-    }
-  }
+  protected readonly hostOf = hostOf;
+  protected readonly mib = mib;
 
   /** The last day the calendar offers. */
   protected readonly today = new Date();
@@ -727,12 +663,6 @@ export class Thread {
 
   /** What the reader asked to be fetched; see fetch-requests.ts. */
   protected readonly fetches = new FetchRequests(this.api, this.messages);
-
-  /** A size for something not yet fetched. */
-  protected mib(bytes: number): string {
-    const mib = bytes / (1024 * 1024);
-    return mib >= 10 ? `${Math.round(mib)} MB` : `${mib.toFixed(1)} MB`;
-  }
 
   // ---- scrolling ----------------------------------------------------------
 

@@ -578,6 +578,45 @@ test("a picked day stays picked while the app loads around it @ phone width", as
   await expect(page.locator(".msg.landed")).toHaveCount(1);
 });
 
+// A hit in the open conversation is a landing like a picked day: it stays landed
+// while the app loads around it, and as a move within the conversation it takes
+// the reader's place, so back leaves the conversation.
+test("a hit in the open conversation lands, stays landed, and back leaves @ phone width", async ({ page }) => {
+  await mockApi(page);
+  await page.route("**/api/search**", (r) =>
+    r.fulfill({
+      json: [{ origin: "signal", conversation_id: "dm:a", conversation_name: "Alice Andersson",
+        ts: Date.UTC(2025, 2, 4, 9, 0), sender: "Alice Andersson",
+        snippet: "the hit itself", deleted: false, cursor: "c1" }] satisfies SearchHit[],
+    }),
+  );
+  const said = (id: string, minute: number, body: string) =>
+    testMessage({ id, ts: Date.UTC(2025, 2, 4, 8, minute), sender: "Alice Andersson", body });
+  await page.route("**/messages**", (r) => {
+    const url = r.request().url();
+    const pageOf = (messages: ReturnType<typeof said>[], more: boolean, next: string | null) =>
+      r.fulfill({ json: { messages, has_more: more, next_cursor: next, prev_cursor: null } satisfies MessagesPage });
+    if (url.includes("cursor=c0")) return pageOf(Array.from({ length: 30 }, (_, n) => said(`o${n}`, n, `earlier ${n}`)), false, null);
+    if (!url.includes("cursor=c1")) return r.fulfill({ json: THREAD });
+    // The landing: the hit, with older pages the window will want at once.
+    return url.includes("dir=at") ? pageOf([said("h1", 59, "the hit itself")], false, null) : pageOf([], true, "c0");
+  });
+  await page.goto("/");
+  await page.getByText("Alice Andersson").first().click();
+  await page.locator(".msg .body").first().waitFor();
+  await page.getByRole("button", { name: "Search this conversation" }).click();
+  const box = page.getByPlaceholder("Search this conversation");
+  await box.fill("hit");
+  await box.press("Enter");
+  await page.locator(".thread-search").getByText("the hit itself").click();
+  await page.getByText("earlier 0", { exact: true }).waitFor();
+  await page.waitForTimeout(800);
+  expect(page.url()).toContain("at=c1");
+  await expect(page.locator(".msg.landed")).toHaveCount(1);
+  await page.goBack();
+  await expect.poll(() => new URL(page.url()).pathname).toBe("/");
+});
+
 // Formatting renders from the body: the visible text is exactly what was sent.
 test("telegram formatting renders from the body, never from the entity @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);

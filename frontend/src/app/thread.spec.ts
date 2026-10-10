@@ -354,10 +354,14 @@ describe('Thread reply jump', () => {
 
   it('lands by cursor when the message is not in the rendered window', async () => {
     const { thread, router } = await routedAt('/conversation/irc/7?origin=irc', [msg('5', 500)]);
+    const navigate = vi.spyOn(router, 'navigate');
 
     expect(await urlAfter(router, () => thread.jumpToReply(replyTo({ id: '1', cursor: '100_1' })))).toBe(
       '/conversation/irc/7?origin=irc&at=100_1',
     );
+    // In place of where the reader was, as every jump within a conversation is:
+    // back leaves the conversation.
+    expect(navigate).toHaveBeenCalledWith([], expect.objectContaining({ replaceUrl: true }));
   });
 
   it('does nothing for a reply the archive cannot resolve', async () => {
