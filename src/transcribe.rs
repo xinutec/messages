@@ -85,7 +85,9 @@ pub async fn lease(pool: &MySqlPool) -> Result<Option<Job>> {
 #[derive(Deserialize)]
 pub struct Finished {
     pub ok: bool,
-    pub result: Option<Heard>,
+    /// The shim's reply, kept whole beside the words taken from it (`heard`), so
+    /// what counts as speech can be measured and retuned without asking again.
+    pub result: Option<serde_json::Value>,
     pub error: Option<String>,
 }
 
@@ -121,20 +123,24 @@ pub fn words(heard: &Heard) -> Option<String> {
 
 /// Record a job's outcome. `false` for a job this queue never handed out.
 pub async fn finish(pool: &MySqlPool, id: i64, done: &Finished) -> Result<bool> {
-    let heard = done.result.as_ref().filter(|_| done.ok);
-    let text = heard.and_then(words);
-    let language = heard.and_then(|h| h.language.clone());
+    let raw = done.result.as_ref().filter(|_| done.ok);
+    let heard = raw
+        .map(|r| serde_json::from_value::<Heard>(r.clone()))
+        .transpose()?;
+    let text = heard.as_ref().and_then(words);
+    let language = heard.as_ref().and_then(|h| h.language.clone());
     let error = if done.ok {
         None
     } else {
         Some(done.error.clone().unwrap_or_else(|| "refused".to_owned()))
     };
     let updated = sqlx::query(
-        "UPDATE transcripts SET done_at = NOW(), text = ?, language = ?, error = ? WHERE id = ?",
+        "UPDATE transcripts SET done_at = NOW(), text = ?, language = ?, error = ?, heard = ? WHERE id = ?",
     )
     .bind(text)
     .bind(language)
     .bind(error.map(|e| e.chars().take(255).collect::<String>()))
+    .bind(raw.map(serde_json::Value::to_string))
     .bind(id)
     .execute(pool)
     .await?

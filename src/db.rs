@@ -79,6 +79,11 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
     .execute(pool)
     .await
     .context("creating transcripts table")?;
+    // The shim's whole reply, for measuring what counts as speech.
+    sqlx::query("ALTER TABLE transcripts ADD COLUMN IF NOT EXISTS heard LONGTEXT NULL")
+        .execute(pool)
+        .await
+        .context("adding transcripts.heard")?;
 
     // The live table's enum still names `wanted`, which is no longer written
     // and held by no row; this brings it to the shape above, and is then a no-op.
