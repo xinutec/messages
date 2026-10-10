@@ -127,7 +127,8 @@ pub async fn finish(pool: &MySqlPool, id: i64, done: &Finished) -> Result<bool> 
     let heard = raw
         .map(|r| serde_json::from_value::<Heard>(r.clone()))
         .transpose()?;
-    let text = heard.as_ref().and_then(words);
+    // No words are stored or shown yet: what counts as speech is being measured
+    // on the kept replies first (music came back as "Thank you.").
     let language = heard.as_ref().and_then(|h| h.language.clone());
     let error = if done.ok {
         None
@@ -135,9 +136,8 @@ pub async fn finish(pool: &MySqlPool, id: i64, done: &Finished) -> Result<bool> 
         Some(done.error.clone().unwrap_or_else(|| "refused".to_owned()))
     };
     let updated = sqlx::query(
-        "UPDATE transcripts SET done_at = NOW(), text = ?, language = ?, error = ?, heard = ? WHERE id = ?",
+        "UPDATE transcripts SET done_at = NOW(), language = ?, error = ?, heard = ? WHERE id = ?",
     )
-    .bind(text)
     .bind(language)
     .bind(error.map(|e| e.chars().take(255).collect::<String>()))
     .bind(raw.map(serde_json::Value::to_string))
