@@ -475,6 +475,64 @@ test("picking a date asks the server for that day @ phone width", async ({ page 
   await expectCleanLayout(page, testInfo);
 });
 
+/** A page from a picked day: one message, which no other page holds. */
+async function mockDay(page: Page): Promise<void> {
+  await page.route("**/messages**", (r) => {
+    const url = r.request().url();
+    if (!url.includes("on=")) return r.fulfill({ json: THREAD });
+    const day = url.includes("dir=at")
+      ? [testMessage({ id: "d1", ts: Date.UTC(2025, 2, 4, 9, 0), sender: "Alice Andersson", body: "a message from that day" })]
+      : [];
+    return r.fulfill({ json: { messages: day, has_more: false, next_cursor: null, prev_cursor: null } satisfies MessagesPage });
+  });
+}
+
+// The control is the calendar icon and nothing else: the field lies over it,
+// invisible, in a button-sized target. Beside it, Android drew the field's own box.
+test("the date control is the calendar icon alone @ phone width", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/conversation/signal/dm:a");
+  await page.locator(".msg .body").first().waitFor();
+  const control = (await page.locator(".go-to-date").boundingBox())!;
+  const icon = (await page.locator(".go-to-date mat-icon").boundingBox())!;
+  const field = page.locator('ui-scaffold input[type="date"]');
+  const box = (await field.boundingBox())!;
+  expect(control.width).toBeLessThanOrEqual(48);
+  expect(box.x).toBeGreaterThanOrEqual(control.x);
+  expect(box.x + box.width).toBeLessThanOrEqual(control.x + control.width);
+  // The icon centred in it, as in an icon button.
+  expect(Math.abs(icon.x + icon.width / 2 - (control.x + control.width / 2))).toBeLessThan(1);
+  expect(await field.evaluate((e) => getComputedStyle(e).opacity)).toBe("0");
+});
+
+// Back after a jump goes back to where the reader was, not one entry nowhere.
+test("back after picking a date returns to where you were @ phone width", async ({ page }) => {
+  await mockApi(page);
+  await mockDay(page);
+  await page.goto("/conversation/signal/dm:a");
+  const latest = page.locator(".msg .body", { hasText: "Six of us are in." });
+  await latest.waitFor();
+  await page.locator('ui-scaffold input[type="date"]').fill("2025-03-04");
+  await page.getByText("a message from that day").waitFor();
+  await page.goBack();
+  await expect(latest).toBeVisible();
+  await expect(page.getByText("a message from that day")).toHaveCount(0);
+});
+
+// Once the reader moves on from a picked day, the address says where they are,
+// not the day: a reload or a reopen must not land there again.
+test("scrolling after picking a date drops it from the address @ phone width", async ({ page }) => {
+  await mockApi(page);
+  await mockDay(page);
+  await page.goto("/conversation/signal/dm:a");
+  await page.locator(".msg .body").first().waitFor();
+  await page.locator('ui-scaffold input[type="date"]').fill("2025-03-04");
+  await page.getByText("a message from that day").waitFor();
+  await page.locator("app-thread").hover();
+  await page.mouse.wheel(0, -400);
+  await expect.poll(() => page.url(), { timeout: 5000 }).not.toContain("on=");
+});
+
 // Formatting renders from the body: the visible text is exactly what was sent.
 test("telegram formatting renders from the body, never from the entity @ phone width", async ({ page }, testInfo) => {
   await mockApi(page);

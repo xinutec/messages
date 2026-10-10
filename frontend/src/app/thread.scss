@@ -27,30 +27,26 @@
 // The date control in the bar, before the search button. Kept narrow: at its
 // intrinsic width it leaves a long title no room on a phone.
 .go-to-date {
+  position: relative;
   flex: 0 0 auto;
+  // As big a target as the search button beside it.
+  width: 48px;
+  height: 48px;
   display: inline-flex;
   align-items: center;
-  gap: 0.15rem;
-  cursor: pointer;
+  justify-content: center;
+  // The field lies over the icon, invisible, so the icon is all there is to see
+  // and to tap. Hiding the field's parts one by one left Android's own box.
   input[type='date'] {
-    width: 1.6rem;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
     border: 0;
-    background: none;
-    color: transparent;
-    font: inherit;
+    opacity: 0;
     cursor: pointer;
-    // Hide the text and keep Chromium's picker indicator, making the control
-    // icon-sized; Firefox and Safari draw their own.
-    &::-webkit-datetime-edit,
-    &::-webkit-inner-spin-button,
-    &::-webkit-clear-button {
-      display: none;
-    }
-    &::-webkit-calendar-picker-indicator {
-      opacity: 0;
-      width: 1.6rem;
-      cursor: pointer;
-    }
   }
 }
 

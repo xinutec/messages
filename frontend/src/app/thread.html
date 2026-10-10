@@ -12,7 +12,9 @@
          empty `type=date` shows only `dd/mm/yyyy`. -->
     <label class="go-to-date">
       <mat-icon aria-hidden="true">event</mat-icon>
-      <input type="date" aria-label="Jump to a date"
+      <!-- Over the icon, invisible (thread.scss). A tap opens the picker: on a desktop
+           a click on the field itself would only focus its day. -->
+      <input type="date" aria-label="Jump to a date" (click)="$any($event.target).showPicker()"
              (change)="jumpToDate($any($event.target).value)" />
     </label>
     <button matIconButton (click)="toggleSearch()"

@@ -277,9 +277,14 @@ export class Thread {
       const at = pm.get('at');
       const on = pm.get('on');
       const movedTo = (at != null && at !== landedAt) || (on != null && on !== landedOn);
+      // Back (or forward) across a jump: that entry says where the reader was,
+      // by `?from` or by saying nothing, which is the latest. Our own clearing in
+      // `commitFromParam` is no history step.
+      const popped =
+        this.router.currentNavigation()?.trigger === 'popstate' && (at !== landedAt || on !== landedOn);
       landedAt = at;
       landedOn = on;
-      if (!movedTo) return;
+      if (!movedTo && !popped) return;
       this.reload();
     });
 
@@ -800,7 +805,7 @@ export class Thread {
   }
 
   commitFromParam(): void {
-    // The reader has moved; the landing marker and `?at` go.
+    // The reader has moved; the landing marker, `?at` and a picked day go.
     this.landedId.set(null);
     const o = this.origin();
     const i = this.id();
@@ -809,7 +814,7 @@ export class Thread {
     const ts = from ? this.messages().find((m) => m.id === from)?.ts : null;
     void this.router.navigate([], {
       relativeTo: this.route,
-      queryParams: { from: ts != null ? String(ts) : null, at: null },
+      queryParams: { from: ts != null ? String(ts) : null, at: null, on: null },
       queryParamsHandling: 'merge',
       replaceUrl: true,
     });
