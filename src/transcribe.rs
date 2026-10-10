@@ -20,10 +20,12 @@ use crate::archive::Origin;
 /// takes seconds, so this only matters when the runner died mid-job.
 const LEASE_MINUTES: i64 = 15;
 
-/// A segment the model itself rates likelier silence than speech is dropped:
-/// Whisper invents words over quiet ("Thank you."), and recall's rule is that
-/// silence is transcribed as nothing.
-const NO_SPEECH: f64 = 0.6;
+/// The least average word confidence a clip needs for its words to be shown.
+/// Whisper invents words over music and noise ("Thank you.", a mix of scripts),
+/// and its `no_speech_prob` came back near zero for those too. Measured on the
+/// first 31 clips: real speech averaged 0.77 and up (one at 0.98), inventions
+/// 0.53 and down, two unclear clips 0.64 and 0.66. Below this, nothing is shown.
+const CONFIDENT: f64 = 0.75;
 
 /// One job, as recall's runner reads it (`runner::client::Job`).
 #[derive(Serialize, Debug, PartialEq, Eq)]
@@ -91,7 +93,7 @@ pub struct Finished {
     pub error: Option<String>,
 }
 
-/// The parts of the `asr` shim's reply kept here (recall `audiocore::shim`).
+/// The parts of the `asr` shim's reply read here (recall `audiocore::shim`).
 #[derive(Deserialize)]
 pub struct Heard {
     pub language: Option<String>,
@@ -104,16 +106,31 @@ pub struct Heard {
 pub struct HeardSegment {
     #[serde(default)]
     pub text: String,
-    pub no_speech_prob: Option<f64>,
+    #[serde(default)]
+    pub words: Vec<HeardWord>,
 }
 
-/// The words heard, less what the model rated as likely silence; `None` when
-/// that leaves nothing.
+/// One word, and how sure the model was of it.
+#[derive(Deserialize)]
+pub struct HeardWord {
+    pub probability: Option<f64>,
+}
+
+/// The clip's words, or `None` when the model was not sure enough of them on
+/// average (`CONFIDENT`): all of them, or none, never a pick of segments.
 pub fn words(heard: &Heard) -> Option<String> {
+    let probs: Vec<f64> = heard
+        .segments
+        .iter()
+        .flat_map(|s| &s.words)
+        .map(|w| w.probability.unwrap_or(0.0))
+        .collect();
+    if probs.is_empty() || probs.iter().sum::<f64>() / (probs.len() as f64) < CONFIDENT {
+        return None;
+    }
     let text = heard
         .segments
         .iter()
-        .filter(|s| s.no_speech_prob.is_none_or(|p| p < NO_SPEECH))
         .map(|s| s.text.trim())
         .filter(|t| !t.is_empty())
         .collect::<Vec<_>>()
@@ -127,8 +144,7 @@ pub async fn finish(pool: &MySqlPool, id: i64, done: &Finished) -> Result<bool> 
     let heard = raw
         .map(|r| serde_json::from_value::<Heard>(r.clone()))
         .transpose()?;
-    // No words are stored or shown yet: what counts as speech is being measured
-    // on the kept replies first (music came back as "Thank you.").
+    // Only the reply is stored; its words are read from it when shown (`texts`).
     let language = heard.as_ref().and_then(|h| h.language.clone());
     let error = if done.ok {
         None
@@ -148,7 +164,9 @@ pub async fn finish(pool: &MySqlPool, id: i64, done: &Finished) -> Result<bool> 
     Ok(updated == 1)
 }
 
-/// The words of each transcribed attachment among `ids`, for one origin.
+/// The words of each transcribed attachment among `ids`, for one origin: read
+/// from the kept reply each time, so changing what counts as sure enough needs
+/// no transcription again.
 pub async fn texts(
     pool: &MySqlPool,
     origin: Origin,
@@ -159,15 +177,30 @@ pub async fn texts(
     }
     let placeholders = vec!["?"; ids.len()].join(",");
     let sql = format!(
-        "SELECT attachment_id, text FROM transcripts
-          WHERE origin = ? AND text IS NOT NULL AND attachment_id IN ({placeholders})"
+        "SELECT attachment_id, heard FROM transcripts
+          WHERE origin = ? AND heard IS NOT NULL AND attachment_id IN ({placeholders})"
     );
     // Only `?` placeholders are spliced in; every value is bound.
     let mut q = sqlx::query_as::<_, (String, String)>(AssertSqlSafe(sql)).bind(origin_name(origin));
     for id in ids {
         q = q.bind(id);
     }
-    Ok(q.fetch_all(pool).await?.into_iter().collect())
+    let mut out = std::collections::HashMap::new();
+    for (id, heard) in q.fetch_all(pool).await? {
+        // A reply that no longer reads is shown as nothing, and logged.
+        match serde_json::from_str::<Heard>(&heard) {
+            Ok(h) => {
+                if let Some(text) = words(&h) {
+                    out.insert(id, text);
+                }
+            }
+            Err(e) => tracing::warn!(
+                "transcript of {origin_name} {id} does not read: {e}",
+                origin_name = origin_name(origin)
+            ),
+        }
+    }
+    Ok(out)
 }
 
 /// An origin as `transcripts.origin` spells it, which is how the API does.

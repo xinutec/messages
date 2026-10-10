@@ -61,8 +61,8 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
     .context("creating link_images table")?;
 
     // What recall's transcriber heard in an audio attachment; see `transcribe.rs`.
-    // The id is the job id its runner leases. `text` is NULL until done, and
-    // after a refusal (`error`) or a clip of silence.
+    // The id is the job id its runner leases. `heard` is the shim's reply, NULL
+    // until done and after a refusal (`error`); the words shown are read from it.
     sqlx::query(
         r"CREATE TABLE IF NOT EXISTS transcripts (
             id            BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -70,20 +70,22 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
             attachment_id VARCHAR(255) NOT NULL,
             leased_at     DATETIME     NULL,
             done_at       DATETIME     NULL,
-            text          TEXT         NULL,
             language      VARCHAR(16)  NULL,
             error         VARCHAR(255) NULL,
+            heard         LONGTEXT     NULL,
             UNIQUE KEY uniq_transcript (origin, attachment_id)
         ) DEFAULT CHARSET=utf8mb4",
     )
     .execute(pool)
     .await
     .context("creating transcripts table")?;
-    // The shim's whole reply, for measuring what counts as speech.
-    sqlx::query("ALTER TABLE transcripts ADD COLUMN IF NOT EXISTS heard LONGTEXT NULL")
-        .execute(pool)
-        .await
-        .context("adding transcripts.heard")?;
+    // Its first shape stored words, and had no `heard`; this brings it here.
+    sqlx::query(
+        "ALTER TABLE transcripts ADD COLUMN IF NOT EXISTS heard LONGTEXT NULL, DROP COLUMN IF EXISTS text",
+    )
+    .execute(pool)
+    .await
+    .context("bringing transcripts up to date")?;
 
     // The live table's enum still names `wanted`, which is no longer written
     // and held by no row; this brings it to the shape above, and is then a no-op.

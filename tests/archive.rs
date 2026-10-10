@@ -3032,8 +3032,8 @@ async fn a_sender_is_keyed_by_what_outlasts_a_rename() {
     assert_eq!(alice.sender_key, "alice");
 }
 
-/// Recall's transcriber leases each held voice message once, and its reply is
-/// kept; a refusal is recorded, not retried.
+/// Recall's transcriber leases each held voice message once, and what it heard
+/// shows under the audio; a refusal is recorded, not retried, and shows nothing.
 #[tokio::test]
 async fn a_voice_message_is_leased_once_and_its_words_shown() {
     let Some(pool) = seeded_pool().await else {
@@ -3085,7 +3085,8 @@ async fn a_voice_message_is_leased_once_and_its_words_shown() {
 
     let heard: messages::transcribe::Finished = serde_json::from_value(serde_json::json!({
         "ok": true,
-        "result": { "language": "nl", "segments": [{ "text": " hoi, ben je thuis?", "no_speech_prob": 0.02 }] }
+        "result": { "language": "nl", "segments": [{ "text": " hoi, ben je thuis?", "no_speech_prob": 0.02,
+            "words": [{ "probability": 0.92 }, { "probability": 0.88 }, { "probability": 0.95 }] }] }
     }))
     .unwrap();
     assert!(
@@ -3122,7 +3123,6 @@ async fn a_voice_message_is_leased_once_and_its_words_shown() {
             .transcript
             .clone()
     };
-    // Nothing is shown until what counts as speech is measured on kept replies.
-    assert_eq!(said(&first.filename), None);
+    assert_eq!(said(&first.filename).as_deref(), Some("hoi, ben je thuis?"));
     assert_eq!(said(&second.filename), None);
 }
