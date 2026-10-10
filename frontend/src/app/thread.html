@@ -274,26 +274,26 @@
   <!-- IRC only. Outside the loading branch, so it stays put while a send reloads the
        thread. -->
   @if (canSend() && !threadError()) {
-    <form class="composer" (submit)="$event.preventDefault(); send()">
+    <form class="composer" (submit)="$event.preventDefault(); composer.send()">
       <input
         type="text"
         name="draft"
-        [value]="draft()"
-        (input)="draft.set($any($event.target).value)"
-        (keydown)="onComposerKey($event)"
-        (compositionstart)="composing.set(true)"
-        (compositionend)="composing.set(false)"
-        [disabled]="sending()"
+        [value]="composer.draft()"
+        (input)="composer.draft.set($any($event.target).value)"
+        (keydown)="composer.onKey($event)"
+        (compositionstart)="composer.composing.set(true)"
+        (compositionend)="composer.composing.set(false)"
+        [disabled]="composer.sending()"
         placeholder="Message"
         aria-label="Message"
         autocomplete="off"
       />
-      <button mat-icon-button type="submit" [disabled]="sending() || !draft().trim()" aria-label="Send">
+      <button mat-icon-button type="submit" [disabled]="composer.sending() || !composer.draft().trim()" aria-label="Send">
         <mat-icon>send</mat-icon>
       </button>
     </form>
-    @if (sendError()) {
-      <p class="send-error">{{ sendError() }}</p>
+    @if (composer.error()) {
+      <p class="send-error">{{ composer.error() }}</p>
     }
   }
 } @else {

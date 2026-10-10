@@ -33,6 +33,7 @@ import {
 } from './message-view';
 import { MAX_RESTORE_PAGES, PAGE, ThreadWindow } from './thread-window';
 import { ThreadSearch } from './thread-search';
+import { Composer } from './composer';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
 import { Attachment, Conversation, Delivery, Message, Origin, ReplyTo, SearchHit } from './models';
@@ -455,9 +456,13 @@ export class Thread {
   }
 
   reload(): void {
+    void this.reloadNow();
+  }
+
+  private async reloadNow(): Promise<void> {
     const o = this.origin();
     const i = this.id();
-    if (o != null && i != null) void this.loadThread(o, i);
+    if (o != null && i != null) await this.loadThread(o, i);
   }
 
   // ---- copying a selection as a chat log -----------------------------------
@@ -518,7 +523,7 @@ export class Thread {
     const i = this.id();
     if (o == null || i == null) return;
     // Not during a load or a send, while floating (see `floating`), or while hidden.
-    if (this.polling || this.loadingThread() || this.loadingOlder() || this.sending()) return;
+    if (this.polling || this.loadingThread() || this.loadingOlder() || this.composer.sending()) return;
     if (this.floating()) return;
     if (document.visibilityState !== 'visible') return;
     if (this.messages().length === 0) return;
@@ -562,53 +567,9 @@ export class Thread {
 
   /** Only IRC has a client to send with. */
   readonly canSend = computed(() => this.origin() === 'irc' && this.routed());
-  readonly draft = signal('');
-  /** An IME candidate is in flight. `send` refuses then, since Enter in a form
-   *  submits even when the keydown handler returned early. */
-  readonly composing = signal(false);
-  readonly sending = signal(false);
-  /** irssi's refusal, shown as-is. */
-  readonly sendError = signal<string | null>(null);
-
-  async send(): Promise<void> {
-    const o = this.origin();
-    const i = this.id();
-    const text = this.draft().trim();
-    if (o == null || i == null || !text || this.sending() || this.composing()) return;
-
-    this.sending.set(true);
-    this.sendError.set(null);
-    try {
-      const res = await firstValueFrom(this.api.send(o, i, text));
-      if (!res.sent) {
-        this.sendError.set(res.error ?? 'Not sent.');
-        return;
-      }
-      // Cleared only once sent, so a failure keeps what was typed.
-      this.draft.set('');
-      if (res.archived) {
-        // Reload to show the line irssi logged.
-        await this.loadThread(o, i);
-      } else {
-        this.sendError.set('Sent. It will appear here after the next import.');
-      }
-    } catch {
-      this.sendError.set('Could not reach the server.');
-    } finally {
-      this.sending.set(false);
-    }
-  }
-
-  /** Enter sends. The box is single-line: IRC cannot carry a newline. */
-  onComposerKey(e: KeyboardEvent): void {
-    // An IME is composing: Enter accepts its candidate. `keyCode 229` is how
-    // older Android WebViews report it.
-    if (e.isComposing || e.keyCode === 229) return;
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      void this.send();
-    }
-  }
+  /** The draft and its sending; see composer.ts. A line irssi logged reloads the
+   *  thread, to show it. */
+  readonly composer = new Composer(this.api, this.origin, this.id, () => this.reloadNow());
 
   // ---- what the reader asks to be fetched ----------------------------------
 

@@ -160,15 +160,15 @@ describe('Thread', () => {
 
     // irssi refuses, usually for want of an open tab.
     api.send.mockReturnValueOnce(of({ sent: false, error: 'refused: no conversation open with that target', archived: false }));
-    thread.draft.set('please keep me');
-    await thread.send();
-    expect(thread.draft()).toBe('please keep me');
-    expect(thread.sendError()).toContain('no conversation open');
+    thread.composer.draft.set('please keep me');
+    await thread.composer.send();
+    expect(thread.composer.draft()).toBe('please keep me');
+    expect(thread.composer.error()).toContain('no conversation open');
 
     // The box empties only on a real send.
     api.send.mockReturnValueOnce(of({ sent: true, error: null, archived: true }));
-    await thread.send();
-    expect(thread.draft()).toBe('');
+    await thread.composer.send();
+    expect(thread.composer.draft()).toBe('');
   });
 
   it('says so when a message went but is not in the archive yet', async () => {
@@ -180,10 +180,10 @@ describe('Thread', () => {
 
     // Sent, but the echo was not in irssi's log.
     api.send.mockReturnValueOnce(of({ sent: true, error: null, archived: false }));
-    thread.draft.set('gone, but not seen');
-    await thread.send();
-    expect(thread.draft()).toBe('');
-    expect(thread.sendError()).toContain('after the next import');
+    thread.composer.draft.set('gone, but not seen');
+    await thread.composer.send();
+    expect(thread.composer.draft()).toBe('');
+    expect(thread.composer.error()).toContain('after the next import');
   });
 
   it('drops an older page that arrives after the reader switched conversations', async () => {
@@ -251,8 +251,8 @@ describe('Thread', () => {
     ref.setInput('id', '7');
     fixture.detectChanges();
 
-    thread.draft.set('   ');
-    await thread.send();
+    thread.composer.draft.set('   ');
+    await thread.composer.send();
     expect(api.send).not.toHaveBeenCalled();
   });
 });
@@ -782,9 +782,9 @@ describe('Thread composer — typing with an IME', () => {
   /** While an IME is composing, Enter accepts the candidate rather than sending. */
   it('leaves a composing Enter to the IME rather than answering it', async () => {
     const { thread, api } = await composer();
-    thread.draft.set('hello wor');
+    thread.composer.draft.set('hello wor');
     const e = enter({ isComposing: true });
-    thread.onComposerKey(e);
+    thread.composer.onKey(e);
     expect(api.send).not.toHaveBeenCalled();
     expect(e.defaultPrevented).toBe(false);
   });
@@ -793,21 +793,21 @@ describe('Thread composer — typing with an IME', () => {
    *  submits the form. The real composition is driven in e2e/ui-pages.spec.ts. */
   it('refuses to send while composing, whatever route reached send', async () => {
     const { thread, api } = await composer();
-    thread.draft.set('hello wor');
-    thread.composing.set(true);
-    await thread.send();
+    thread.composer.draft.set('hello wor');
+    thread.composer.composing.set(true);
+    await thread.composer.send();
     expect(api.send).not.toHaveBeenCalled();
 
-    thread.composing.set(false);
-    await thread.send();
+    thread.composer.composing.set(false);
+    await thread.composer.send();
     expect(api.send).toHaveBeenCalledTimes(1);
   });
 
   it('sends on a plain Enter', async () => {
     const { thread, api } = await composer();
-    thread.draft.set('hello world');
+    thread.composer.draft.set('hello world');
     const e = enter();
-    thread.onComposerKey(e);
+    thread.composer.onKey(e);
     expect(api.send).toHaveBeenCalledTimes(1);
     expect(e.defaultPrevented).toBe(true);
   });
