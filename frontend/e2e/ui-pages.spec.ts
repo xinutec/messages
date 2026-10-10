@@ -480,8 +480,10 @@ async function mockDay(page: Page): Promise<void> {
   await page.route("**/messages**", (r) => {
     const url = r.request().url();
     if (!url.includes("on=")) return r.fulfill({ json: THREAD });
+    // Enough to scroll within, so a scroll leaves a `?from`.
     const day = url.includes("dir=at")
-      ? [testMessage({ id: "d1", ts: Date.UTC(2025, 2, 4, 9, 0), sender: "Alice Andersson", body: "a message from that day" })]
+      ? Array.from({ length: 30 }, (_, n) =>
+          testMessage({ id: `d${n}`, ts: Date.UTC(2025, 2, 4, 9, n), sender: "Alice Andersson", body: n === 0 ? "a message from that day" : `later that day ${n}` }))
       : [];
     return r.fulfill({ json: { messages: day, has_more: false, next_cursor: null, prev_cursor: null } satisfies MessagesPage });
   });
@@ -531,6 +533,56 @@ test("scrolling after picking a date drops it from the address @ phone width", a
   await page.locator("app-thread").hover();
   await page.mouse.wheel(0, -400);
   await expect.poll(() => page.url(), { timeout: 5000 }).not.toContain("on=");
+});
+
+// The phone's case: the reader scrolls after the jump, so `?from` replaces the
+// day, and back must still go back.
+test("back after picking a date and scrolling returns to where you were @ phone width", async ({ page }) => {
+  await mockApi(page);
+  await mockDay(page);
+  await page.goto("/conversation/signal/dm:a");
+  const latest = page.locator(".msg .body", { hasText: "Six of us are in." });
+  await latest.waitFor();
+  await page.locator('ui-scaffold input[type="date"]').fill("2025-03-04");
+  await page.getByText("a message from that day").waitFor();
+  await page.locator("app-thread").hover();
+  await page.mouse.wheel(0, -400);
+  await expect.poll(() => page.url(), { timeout: 5000 }).toContain("from=");
+  await page.goBack();
+  await expect(latest).toBeVisible();
+  // Not merely scrolled into: the newer pages hold the latest too.
+  await expect(page.getByText("a message from that day")).toHaveCount(0);
+});
+
+// Pages the app loads around a landing by itself are not the reader moving: the
+// day and its marker stay until the reader scrolls. On a phone the landing
+// loads them at once, and the marker was gone before it was seen.
+test("a picked day stays picked while the app loads around it @ phone width", async ({ page }) => {
+  await mockApi(page);
+  const around = (id: string, minute: number, body: string) =>
+    testMessage({ id, ts: Date.UTC(2025, 2, 4, 8, minute), sender: "Alice Andersson", body });
+  await page.route("**/messages**", (r) => {
+    const url = r.request().url();
+    if (url.includes("cursor=c1")) {
+      return r.fulfill({ json: { messages: Array.from({ length: 30 }, (_, n) => around(`o${n}`, n, `earlier ${n}`)), has_more: false, next_cursor: null, prev_cursor: null } satisfies MessagesPage });
+    }
+    if (!url.includes("on=")) return r.fulfill({ json: THREAD });
+    // The landing: the day's message, with older ones the window will want.
+    return url.includes("dir=at")
+      ? r.fulfill({ json: { messages: [around("d1", 59, "a message from that day")], has_more: false, next_cursor: null, prev_cursor: null } satisfies MessagesPage })
+      : r.fulfill({ json: { messages: [], has_more: true, next_cursor: "c1", prev_cursor: null } satisfies MessagesPage });
+  });
+  await page.goto("/conversation/signal/dm:a");
+  await page.locator(".msg .body").first().waitFor();
+  await page.locator('ui-scaffold input[type="date"]').fill("2025-03-04");
+  await page.getByText("earlier 0", { exact: true }).waitFor();
+  await page.waitForTimeout(800);
+  expect(page.url()).toContain("on=");
+  await expect(page.locator(".msg.landed")).toHaveCount(1);
+  // And back, with nothing touched, goes back: on the phone it did nothing.
+  await page.goBack();
+  await expect(page.locator(".msg .body", { hasText: "Six of us are in." })).toBeVisible();
+  await expect(page.getByText("a message from that day")).toHaveCount(0);
 });
 
 // Formatting renders from the body: the visible text is exactly what was sent.

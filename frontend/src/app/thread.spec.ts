@@ -1031,7 +1031,7 @@ describe('landing with a cursor the server could not read', () => {
 /** The landed message is marked, and the mark clears with `?at` on the first
  *  scroll. */
 describe('marking the message that was landed on', () => {
-  async function land(): Promise<Thread> {
+  async function land(): Promise<{ thread: Thread; host: HTMLElement }> {
     const fixture = setupWithQuery({ at: '5000_9' });
     const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
     api.messages.mockImplementation(
@@ -1045,19 +1045,28 @@ describe('marking the message that was landed on', () => {
     fixture.detectChanges();
     const thread = fixture.componentInstance;
     await settle(thread);
-    return thread;
+    return { thread, host: fixture.nativeElement as HTMLElement };
   }
 
   it('names the hit, and not the message beside it', async () => {
-    const thread = await land();
+    const { thread } = await land();
     expect(thread.landedId()).toBe('h');
   });
 
   it('stops naming it once the reader has moved', async () => {
-    const thread = await land();
+    const { thread, host } = await land();
     expect(thread.landedId()).toBe('h');
+    host.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
     thread.commitFromParam();
     expect(thread.landedId()).toBeNull();
+  });
+
+  // The pages loaded around a landing scroll too, with nobody's hand on it: on a
+  // phone at once, and the marker was gone before it was seen.
+  it('keeps naming it while only the app has scrolled', async () => {
+    const { thread } = await land();
+    thread.commitFromParam();
+    expect(thread.landedId()).toBe('h');
   });
 
   /** An ordinary open marks nothing. */

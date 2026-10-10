@@ -31,7 +31,16 @@ const POLL_MS = 5000;
   styleUrls: ['./thread.scss', './thread-media.scss', './thread-message.scss'],
   // The host is the scroll container the sticky headers pin against. `copy`
   // bubbles here from wherever the selection is.
-  host: { class: 'thread', '(scroll)': 'onScroll()', '(copy)': 'onCopy($event)' },
+  host: {
+    class: 'thread',
+    '(scroll)': 'onScroll()',
+    '(copy)': 'onCopy($event)',
+    // The reader's own hand on the thread; see `readerMoved`.
+    '(wheel)': 'readerMoved = true',
+    '(touchmove)': 'readerMoved = true',
+    '(pointerdown)': 'readerMoved = true',
+    '(keydown)': 'readerMoved = true',
+  },
   imports: [
     NgTemplateOutlet,
     DatePipe,
@@ -179,6 +188,10 @@ export class Thread {
   private newerCursor: string | null = null;
 
   private fromTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Whether the reader has scrolled, tapped or typed since the thread loaded.
+   *  Until then a scroll is the app's own (a landing, the pages loaded around it),
+   *  and the place the URL names is still where the reader is. */
+  protected readerMoved = false;
   /** Pending re-check for a scroll whose work was deferred — see `deferScrollCheck`. */
   private recheck: ReturnType<typeof setTimeout> | null = null;
 
@@ -273,15 +286,19 @@ export class Thread {
     // not a navigation.
     let landedAt: string | null = this.route.snapshot.queryParamMap.get('at');
     let landedOn: string | null = this.route.snapshot.queryParamMap.get('on');
+    let landedFrom: string | null = this.route.snapshot.queryParamMap.get('from');
     this.route.queryParamMap.pipe(takeUntilDestroyed()).subscribe((pm) => {
       const at = pm.get('at');
       const on = pm.get('on');
       const movedTo = (at != null && at !== landedAt) || (on != null && on !== landedOn);
-      // Back (or forward) across a jump: that entry says where the reader was,
-      // by `?from` or by saying nothing, which is the latest. Our own clearing in
-      // `commitFromParam` is no history step.
+      // Back (or forward) to another place in this thread: that entry says where
+      // the reader was, by `?at`, `?on`, `?from` or by saying nothing, which is
+      // the latest. Our own rewriting in `commitFromParam` is no history step.
+      const from = pm.get('from');
       const popped =
-        this.router.currentNavigation()?.trigger === 'popstate' && (at !== landedAt || on !== landedOn);
+        this.router.currentNavigation()?.trigger === 'popstate' &&
+        (at !== landedAt || on !== landedOn || from !== landedFrom);
+      landedFrom = from;
       landedAt = at;
       landedOn = on;
       if (!movedTo && !popped) return;
@@ -317,6 +334,7 @@ export class Thread {
 
   private resetState(): void {
     this.generation++;
+    this.readerMoved = false;
     this.messages.set([]);
     this.win.reset();
     this.revealedIds.set(new Set());
@@ -805,16 +823,20 @@ export class Thread {
   }
 
   commitFromParam(): void {
-    // The reader has moved; the landing marker, `?at` and a picked day go.
-    this.landedId.set(null);
+    // Where the viewport is, whoever moved it. The landing (its marker, `?at`, a
+    // picked day) goes only once the reader has: the pages the app loads around
+    // it by itself scroll too, and on a phone at once.
+    const left = this.readerMoved;
+    if (left) this.landedId.set(null);
     const o = this.origin();
     const i = this.id();
     if (o == null || i == null) return;
     const from = this.win.atBottom() ? null : this.win.topAnchor()?.id;
     const ts = from ? this.messages().find((m) => m.id === from)?.ts : null;
+    const landing = left ? { at: null, on: null } : {};
     void this.router.navigate([], {
       relativeTo: this.route,
-      queryParams: { from: ts != null ? String(ts) : null, at: null, on: null },
+      queryParams: { from: ts != null ? String(ts) : null, ...landing },
       queryParamsHandling: 'merge',
       replaceUrl: true,
     });
