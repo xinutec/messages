@@ -13,17 +13,10 @@
       <mat-icon>event</mat-icon>
     </button>
     <mat-menu #days="matMenu">
-      <!-- Built when the menu opens, and loaded then too: most readers never ask. -->
-      <ng-template matMenuContent>
-        @defer {
-          <!-- A click inside a menu closes it, so the calendar keeps its own: paging
-               a month would otherwise close it before a day is picked. -->
-          <mat-calendar [maxDate]="today" (click)="$event.stopPropagation()"
-                        (selectedChange)="daysTrigger.closeMenu(); jumpToDate($event)" />
-        } @placeholder {
-          <mat-progress-bar mode="indeterminate" />
-        }
-      </ng-template>
+      <!-- A click inside a menu closes it, so the calendar keeps its own: paging a
+           month would otherwise close it before a day is picked. -->
+      <mat-calendar [maxDate]="today" (click)="$event.stopPropagation()"
+                    (selectedChange)="daysTrigger.closeMenu(); jumpToDate($event)" />
     </mat-menu>
     <button matIconButton (click)="toggleSearch()"
             [attr.aria-label]="searchOpen() ? 'Close search' : 'Search this conversation'">
