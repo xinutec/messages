@@ -1,4 +1,10 @@
 @if (routed()) {
+  <!-- Who it is, before the name in the bar, as Signal draws it: the list's picture. -->
+  @if (conversation(); as c) {
+    <ng-template scaffoldLeading>
+      <app-avatar class="bar-avatar" [origin]="c.origin" [id]="c.id" [name]="barName(c)" [version]="c.avatar" [badge]="false" />
+    </ng-template>
+  }
   <!-- In the bar, beside the conversation's name. Its own search, since the shell's
        box is hidden at phone width while a conversation is open (app.scss). -->
   <ng-template scaffoldActions>

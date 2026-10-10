@@ -18,6 +18,9 @@ export class Avatar {
   readonly name = input.required<string>();
   /** The list's `avatar`: the picture's version, or null for none. */
   readonly version = input<number | null>(null);
+  /** The service badge; the bar leaves it off, where the circle is too small to
+   *  share. */
+  readonly badge = input(true);
 
   protected readonly hue = computed(() => hue(this.origin(), this.id()));
   protected readonly initials = computed(() => initials(this.name()));

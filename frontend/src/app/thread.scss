@@ -17,6 +17,13 @@
   }
 }
 
+// The conversation's picture in the bar, before its name: smaller than the
+// list's, to sit in the toolbar's row.
+.bar-avatar {
+  --avatar-size: 32px;
+  flex: none;
+}
+
 // The date control in the bar, before the search button. Kept narrow: at its
 // intrinsic width it leaves a long title no room on a phone.
 .go-to-date {

@@ -237,6 +237,8 @@ test("open thread — meta + reactions + attachment: lays out cleanly @ phone wi
   // The bar leads with up, named for the conversation (`@xinutec/ui-scaffold`).
   await expectUpInTheBar(page);
   await expect(page.locator("ui-scaffold h1")).toHaveText("Alice Andersson");
+  // Who it is, before the name, as in the list: Alice's picture is gone, so her initials.
+  await expect(page.locator("ui-scaffold app-avatar")).toContainText("AA");
   await expectCleanLayout(page, testInfo);
 });
 

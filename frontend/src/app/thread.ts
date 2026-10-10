@@ -7,11 +7,12 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatListModule } from '@angular/material/list';
 import { FormsModule } from '@angular/forms';
-import { Pictures, ScaffoldActions, scaffoldTitle } from '@xinutec/ui-scaffold';
+import { Pictures, ScaffoldActions, ScaffoldLeading, scaffoldTitle } from '@xinutec/ui-scaffold';
 
 import { Subject, catchError, firstValueFrom, of, switchMap } from 'rxjs';
 
 import { attachmentName, attachmentNoun, isVideo } from './attachment';
+import { Avatar } from './avatar';
 import { FetchRequests } from './fetch-requests';
 import { segments } from './formatting';
 import { hue } from './list-row';
@@ -40,6 +41,8 @@ const POLL_MS = 5000;
     MatListModule,
     MatProgressBarModule,
     ScaffoldActions,
+    ScaffoldLeading,
+    Avatar,
   ],
 })
 export class Thread {
@@ -123,6 +126,11 @@ export class Thread {
     const i = this.id();
     return o != null && i != null ? this.store.find(o, i) : null;
   });
+
+  /** The conversation's name, for its picture's initials. */
+  protected barName(c: Conversation): string {
+    return this.store.title(c);
+  }
 
   // The bar's name for the conversation. A deep link can render before the list
   // arrives, so it starts as a stand-in.

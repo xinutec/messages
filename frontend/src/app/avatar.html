@@ -6,4 +6,4 @@
   }
 } @else {
   {{ initials() }}
-}<span class="origin" [attr.data-origin]="origin()" [title]="service()">{{ service()[0] }}</span>
+}@if (badge()) {<span class="origin" [attr.data-origin]="origin()" [title]="service()">{{ service()[0] }}</span>}
