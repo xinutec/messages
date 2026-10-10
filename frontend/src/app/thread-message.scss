@@ -60,6 +60,21 @@
       }
     }
   }
+  // A button inside the line of text, as a link would be: `edited` with a
+  // history behind it, a deletion to reveal or hide again. Real buttons, so they
+  // work from the keyboard; Material's are too big for a line of text. The
+  // dotted underline is the affordance.
+  .inline-button {
+    background: none;
+    border: 0;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    text-align: left;
+    text-decoration: underline dotted;
+    text-underline-offset: 0.2em;
+  }
   .tag {
     font-style: italic;
   }
@@ -69,19 +84,6 @@
     &.unread {
       opacity: 0.55;
     }
-  }
-  // `edited` with a history behind it: a tag with a dotted underline, like a
-  // revealed deletion.
-  button.tag.history-toggle {
-    background: none;
-    border: 0;
-    padding: 0;
-    color: inherit;
-    font: inherit;
-    font-style: italic;
-    cursor: pointer;
-    text-decoration: underline dotted;
-    text-underline-offset: 0.2em;
   }
   // Earlier versions, indented under the meta line and quieter than the text.
   .edit-history {
@@ -104,22 +106,6 @@
       white-space: pre-wrap;
       overflow-wrap: anywhere;
     }
-  }
-  // Real buttons, so revealing a retraction works from the keyboard, placed
-  // where the text would be. The dotted underline is the affordance.
-  .body.reveal {
-    text-decoration: underline dotted;
-    text-underline-offset: 0.2em;
-  }
-  .body.reveal,
-  .rehide {
-    background: none;
-    border: 0;
-    padding: 0;
-    color: inherit;
-    font: inherit;
-    cursor: pointer;
-    text-align: left;
   }
   .rehide {
     font: var(--mat-sys-label-small);

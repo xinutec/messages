@@ -57,7 +57,10 @@ const THREAD = {
       reply_to: { id: "1", cursor: "1_1", ts: Date.UTC(2026, 0, 1, 12, 0), sender: "Alice Andersson",
         excerpt: "Morning! Did the referral letter come through yet? The clinic said they'd post it but it's been almost two weeks n…",
         deleted: false },
-      attachments: [{ id: "a1", content_type: "application/pdf", file_name: "referral-scan-2026-final-v2.pdf", size: 91234, available: false, is_image: false, fetch: null }], link_images: [], link_offers: [], edits: [] }),
+      attachments: [{ id: "a1", content_type: "application/pdf", file_name: "referral-scan-2026-final-v2.pdf", size: 91234, available: false, is_image: false, fetch: null },
+        // Too big to fetch unasked: offered, with a long name and a size.
+        { id: "a3", content_type: "video/mp4", file_name: "climbing-wall-ascent-saturday.mp4", size: 14950323, available: false, is_image: false, fetch: "offered" }],
+      link_images: [], link_offers: [{ url: "https://cloud.example.org/s/holiday", id: "lo1" }], edits: [] }),
     // An unresolved quote, the longer wording.
     testMessage({ id: "3", ts: Date.UTC(2026, 0, 1, 12, 9), sender: "Alice Andersson", is_outgoing: false,
       body: "Thankyouuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu", deleted: false, edited: false, reactions: [], delivery: null,
@@ -239,6 +242,11 @@ test("open thread — meta + reactions + attachment: lays out cleanly @ phone wi
   await expect(page.locator("ui-scaffold h1")).toHaveText("Alice Andersson");
   // Who it is, before the name, as in the list: Alice's picture is gone, so her initials.
   await expect(page.locator("ui-scaffold app-avatar")).toContainText("AA");
+  // The offers are Material's text buttons, laid out with the rest.
+  const offers = page.locator(".msg button[matButton]");
+  await expect(offers).toHaveText([/Show picture/, /climbing-wall-ascent-saturday\.mp4 +\(14 MB\)/]);
+  await offers.first().scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath("offers.png") });
   await expectCleanLayout(page, testInfo);
 });
 

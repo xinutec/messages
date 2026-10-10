@@ -111,7 +111,7 @@
                   }
                   <!-- A deletion hides the pictures too; both sit behind the one control. -->
                   @if (m.deleted && !isRevealed(m.id)) {
-                    <button type="button" class="body deleted reveal" (click)="toggleReveal(m.id)"
+                    <button type="button" class="body deleted inline-button" (click)="toggleReveal(m.id)"
                             aria-label="Show this deleted message">(deleted)</button>
                   } @else {
                     <!-- Oldest first, so the current text is last. -->
@@ -159,7 +159,7 @@
                         @if (fetches.isAsking(o.id)) {
                           <span class="waiting">fetching the picture…</span>
                         } @else {
-                          <button type="button" (click)="fetches.requestLinkImage(o)">Show picture</button>
+                          <button matButton type="button" (click)="fetches.requestLinkImage(o)">Show picture</button>
                         }
                       </div>
                     }
@@ -191,10 +191,9 @@
                           </span>
                         } @else if (a.fetch) {
                           <!-- An offer: the file is at Telegram, unfetched. Asking queues it for the feed. -->
-                          <button type="button" class="fetch-offer" (click)="fetches.requestMedia(a)">
-                            <mat-icon>attach_file</mat-icon>{{ attachmentName(a) ?? attachmentNoun(a) }}
+                          <button matButton type="button" (click)="fetches.requestMedia(a)">
+                            <mat-icon>download</mat-icon>{{ attachmentName(a) ?? attachmentNoun(a) }}
                             @if (a.size) { ({{ mib(a.size) }}) }
-                            — fetch
                           </button>
                         } @else {
                           <span class="unavailable">
@@ -204,7 +203,7 @@
                       </div>
                     }
                     @if (m.deleted) {
-                      <button type="button" class="rehide" (click)="toggleReveal(m.id)">hide</button>
+                      <button type="button" class="rehide inline-button" (click)="toggleReveal(m.id)">hide</button>
                     }
                   }
 
@@ -214,7 +213,7 @@
                     <!-- The tag opens the earlier versions. -->
                     @if (m.edited) {
                       @if (m.edits.length) {
-                        <button type="button" class="tag history-toggle" (click)="toggleHistory(m.id)"
+                        <button type="button" class="tag history-toggle inline-button" (click)="toggleHistory(m.id)"
                                 [attr.aria-expanded]="isHistoryOpen(m.id)">
                           edited
                         </button>

@@ -663,7 +663,7 @@ async function withDeleted(withImage = false): Promise<ComponentFixture<Thread>>
 }
 
 const revealBtn = (f: ComponentFixture<Thread>): HTMLButtonElement | null =>
-  (f.nativeElement as HTMLElement).querySelector('.msg[data-id="d"] .reveal');
+  (f.nativeElement as HTMLElement).querySelector('.msg[data-id="d"] button[aria-label="Show this deleted message"]');
 
 describe('Thread deleted messages', () => {
   it('does not render a deleted message\'s text until it is revealed', async () => {

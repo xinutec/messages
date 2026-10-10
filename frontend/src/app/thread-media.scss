@@ -90,37 +90,10 @@
 
 // Attachments, and pictures fetched or offered for links.
 .msg {
-  // An unfetched attachment offered for the asking, styled like the link offer:
-  // both ask "this exists; shall I get it?".
-  .fetch-offer {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.2rem;
-    background: none;
-    border: 0;
-    padding: 0;
-    color: var(--mat-sys-primary);
-    font: inherit;
-    cursor: pointer;
-    text-decoration: underline dotted;
-    text-underline-offset: 0.2em;
-  }
-
   // Offers to fetch a link's picture; quiet, since most links are not pictures.
   .link-offer {
     margin-top: 0.3rem;
     font: var(--mat-sys-label-medium);
-
-    button {
-      background: none;
-      border: 0;
-      padding: 0;
-      color: var(--mat-sys-primary);
-      font: inherit;
-      cursor: pointer;
-      text-decoration: underline dotted;
-      text-underline-offset: 0.2em;
-    }
 
     .waiting {
       opacity: 0.7;
