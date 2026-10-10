@@ -9,8 +9,8 @@
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding: 0 1.5rem;
-  // thread.ts anchors the viewport itself; native anchoring would compound it.
-  overflow-anchor: none;
+  // The browser's scroll anchoring stays on: it keeps the reader's place while
+  // pictures above them load. `keepingAnchor` covers what the thread itself moves.
 
   > * {
     flex: none;

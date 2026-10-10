@@ -176,3 +176,64 @@ test("scrolling to the bottom of a landing fetches forwards", async ({ page }) =
     )
     .toBeGreaterThan(1);
 });
+
+/**
+ * Scrolling back past pictures: while the reader holds still, nothing they look
+ * at moves. A lazy picture loads just above the viewport as the reader nears it
+ * and grows from nothing; with the browser's own scroll anchoring off, that
+ * growth pushed the visible messages down, a jump seen on the phone.
+ */
+test("pictures loading above the reader do not move what they are reading", async ({ page }) => {
+  await mockApi(page);
+  // A taller picture than the default, and slow, as over a phone's connection.
+  await page.route("**/api/attachments/**", async (r) => {
+    await new Promise((done) => setTimeout(done, 300));
+    await r.fulfill({
+      contentType: "image/svg+xml",
+      body: `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300"><rect width="300" height="300" fill="#3b6ea5"/></svg>`,
+    });
+  });
+  // Every fourth message carries a picture.
+  await page.route("**/api/conversations/**/messages**", (r) =>
+    r.fulfill({
+      json: {
+        messages: newestPage(100).map((m, k) => ({ ...m, attachments: k % 4 === 0 ? [imageAttachment(k)] : [] })),
+        has_more: false, next_cursor: null, prev_cursor: null,
+      } satisfies MessagesPage,
+    }),
+  );
+  await page.goto("/conversation/signal/dm:a");
+  await page.locator('.msg[data-id="99"]').waitFor();
+  await page.waitForTimeout(1000);
+
+  /** The top visible message and where it is, in the thread's own frame. */
+  const anchor = () =>
+    page.locator(".thread").evaluate((t) => {
+      const top = t.getBoundingClientRect().top;
+      for (const m of t.querySelectorAll<HTMLElement>(".msg")) {
+        const r = m.getBoundingClientRect();
+        if (r.bottom > top) return { id: m.dataset["id"], top: r.top - top };
+      }
+      return null;
+    });
+
+  const moved: string[] = [];
+  await page.locator(".thread").hover();
+  for (let step = 0; step < 12; step++) {
+    await page.mouse.wheel(0, -350);
+    // The wheel's own scroll is over; the reader holds still from here.
+    await page.waitForTimeout(150);
+    const held = await anchor();
+    // Long enough for the pictures it brought near to arrive and lay out.
+    await page.waitForTimeout(700);
+    if (!held) continue;
+    // The same message, wherever it went: a picture growing above it can push it
+    // so far that another message becomes the top one.
+    const now = await page.locator(".thread").evaluate(
+      (t, id) => t.querySelector<HTMLElement>(`.msg[data-id="${id}"]`)!.getBoundingClientRect().top - t.getBoundingClientRect().top,
+      held.id,
+    );
+    if (Math.abs(now - held.top) > 1) moved.push(`step ${step}: msg ${held.id} moved ${(now - held.top).toFixed(0)}px`);
+  }
+  expect(moved).toEqual([]);
+});
