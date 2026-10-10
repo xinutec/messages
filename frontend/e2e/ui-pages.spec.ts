@@ -507,6 +507,19 @@ test("the date control is the calendar icon alone @ phone width", async ({ page 
   expect(await field.evaluate((e) => getComputedStyle(e).opacity)).toBe("0");
 });
 
+// The field is emptied after each jump: holding the day, picking that day again
+// (after going back, say) changed nothing, so no `change`, and the tap did nothing.
+test("the same day can be picked twice @ phone width", async ({ page }) => {
+  await mockApi(page);
+  await mockDay(page);
+  await page.goto("/conversation/signal/dm:a");
+  await page.locator(".msg .body").first().waitFor();
+  const field = page.locator('ui-scaffold input[type="date"]');
+  await field.fill("2025-03-04");
+  await page.getByText("a message from that day").waitFor();
+  await expect(field).toHaveValue("");
+});
+
 // Back after a jump goes back to where the reader was, not one entry nowhere.
 test("back after picking a date returns to where you were @ phone width", async ({ page }) => {
   await mockApi(page);

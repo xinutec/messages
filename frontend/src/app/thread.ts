@@ -440,8 +440,12 @@ export class Thread {
   }
 
   /** Jump to a date: local midnight, not `Date.parse`, which reads a bare date as
-   *  UTC. The server converts `?on` to the origin's unit. */
-  protected jumpToDate(value: string): void {
+   *  UTC. The server converts `?on` to the origin's unit. The field is emptied:
+   *  still holding the day, picking it again would change nothing and fire no
+   *  `change`. */
+  protected jumpToDate(field: HTMLInputElement): void {
+    const value = field.value;
+    field.value = '';
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
     if (!m) return;
     const ms = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
