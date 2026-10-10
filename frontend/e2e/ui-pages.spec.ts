@@ -453,12 +453,19 @@ test("a failed conversation search says so rather than \"no matches\" @ phone wi
 /** Pick the first day of this month on the bar's calendar: on the calendar as
  *  it opens, and never after today. */
 async function pickFirstOfMonth(page: Page): Promise<number> {
-  const now = new Date();
-  const day = new Date(now.getFullYear(), now.getMonth(), 1);
+  // In the browser: its local midnight is what the app sends, and the runner's
+  // time zone (UTC in CI) is not the browser's.
+  const { label, ms } = await page.evaluate(() => {
+    const now = new Date();
+    const day = new Date(now.getFullYear(), now.getMonth(), 1);
+    return {
+      label: day.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
+      ms: day.getTime(),
+    };
+  });
   await page.getByRole("button", { name: "Jump to a date" }).click();
-  const label = day.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
   await page.locator("mat-calendar").getByRole("button", { name: label, exact: true }).click();
-  return day.getTime();
+  return ms;
 }
 
 // The day goes to the server as local midnight in milliseconds; the server
