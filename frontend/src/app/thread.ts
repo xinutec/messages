@@ -13,7 +13,7 @@ import { Pictures, ScaffoldActions, ScaffoldLeading, scaffoldTitle } from '@xinu
 
 import { firstValueFrom } from 'rxjs';
 
-import { attachmentName, attachmentNoun, isImage, isVideo } from './attachment';
+import { attachmentName, attachmentNoun, isAudio, isImage, isVideo } from './attachment';
 import { Avatar } from './avatar';
 import { FetchRequests } from './fetch-requests';
 import { segments } from './formatting';
@@ -108,6 +108,7 @@ export class Thread {
 
   protected readonly isImage = isImage;
   protected readonly isVideo = isVideo;
+  protected readonly isAudio = isAudio;
 
   /** Deleted messages the reader chose to see, by id. Screen only (the clipboard
    *  still says `(deleted)`), reset with the conversation. Ids rather than a flag

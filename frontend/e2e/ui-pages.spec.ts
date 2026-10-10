@@ -59,7 +59,9 @@ const THREAD = {
         deleted: false },
       attachments: [{ id: "a1", content_type: "application/pdf", file_name: "referral-scan-2026-final-v2.pdf", size: 91234, available: false, fetch: null },
         // Too big to fetch unasked: offered, with a long name and a size.
-        { id: "a3", content_type: "video/mp4", file_name: "climbing-wall-ascent-saturday.mp4", size: 14950323, available: false, fetch: "offered" }],
+        { id: "a3", content_type: "video/mp4", file_name: "climbing-wall-ascent-saturday.mp4", size: 14950323, available: false, fetch: "offered" },
+        // A voice message, as Signal labels one.
+        { id: "au1", content_type: "audio/aac", file_name: "signal-2026-10-10-21-27-55-970.m4a", size: 295210, available: true, fetch: null }],
       link_images: [], link_offers: [{ url: "https://cloud.example.org/s/holiday", id: "lo1" }], edits: [] }),
     // An unresolved quote, the longer wording.
     testMessage({ id: "3", ts: Date.UTC(2026, 0, 1, 12, 9), sender: "Alice Andersson", is_outgoing: false,
@@ -166,6 +168,10 @@ async function mockApi(page: Page): Promise<void> {
     r.fulfill({ contentType: "image/svg+xml", body: PIXELS }),
   );
   await page.route("**/api/conversations/signal/dm%3Aa/avatar?v=2", (r) => r.fulfill({ status: 404 }));
+  // A second of silence, as WAV: Playwright's Chromium may not play AAC.
+  await page.route("**/api/attachments/au1", (r) =>
+    r.fulfill({ contentType: "audio/wav", path: "e2e/beep.wav" }),
+  );
   // A second of test pattern, in WebM: Playwright's Chromium plays no H.264.
   await page.route("**/api/attachments/v24", (r) =>
     r.fulfill({ contentType: "video/webm", path: "e2e/clip.webm" }),
@@ -245,6 +251,12 @@ test("open thread — meta + reactions + attachment: lays out cleanly @ phone wi
   // The offers are Material's text buttons, laid out with the rest.
   const offers = page.locator(".msg button[matButton]");
   await expect(offers).toHaveText([/Show picture/, /climbing-wall-ascent-saturday\.mp4 +\(14 MB\)/]);
+  // A voice message plays in place: the player is there, and has what it needs.
+  const voice = page.locator(".msg audio");
+  await expect(voice).toHaveAttribute("src", "/api/attachments/au1");
+  await expect
+    .poll(() => voice.evaluate((e) => e instanceof HTMLAudioElement && e.readyState >= 1))
+    .toBe(true);
   await offers.first().scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath("offers.png") });
   await expectCleanLayout(page, testInfo);

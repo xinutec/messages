@@ -124,6 +124,12 @@
       border-radius: 0.4rem;
       display: block;
     }
+    // The browser's own player, as wide as a picture would be: at its default
+    // 300px it would overflow a bubble on a phone.
+    audio {
+      display: block;
+      width: min(320px, 100%);
+    }
     a,
     .unavailable {
       display: inline-flex;

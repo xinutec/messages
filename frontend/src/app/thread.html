@@ -179,6 +179,10 @@
                           <video controls playsinline preload="metadata"
                                  [src]="attachmentUrl(a) + '#t=0.1'"
                                  [attr.aria-label]="attachmentName(a) ?? 'video'"></video>
+                        } @else if (a.available && isAudio(a)) {
+                          <!-- Played in place, a voice message most often. -->
+                          <audio controls preload="metadata" [src]="attachmentUrl(a)"
+                                 [attr.aria-label]="attachmentName(a) ?? 'audio'"></audio>
                         } @else if (a.available) {
                           <a [href]="attachmentUrl(a)" target="_blank" rel="noopener">
                             <mat-icon>attach_file</mat-icon>{{ attachmentName(a) ?? attachmentNoun(a) }}

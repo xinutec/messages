@@ -157,7 +157,7 @@ describe('formatChatLog', () => {
       '01:00 <a> [image: shot.png]',
       '01:00 <a> [attachment: notes.pdf]',
       '01:00 <a> [image: old.jpg (not stored)]',
-      '01:00 <a> [attachment: audio/ogg]',
+      '01:00 <a> [audio]',
       '01:00 <a> [attachment: text/plain]',
       '01:00 <a> [image]',
       '01:00 <a> [image (not stored)]',

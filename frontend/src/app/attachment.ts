@@ -17,15 +17,20 @@ export function isVideo(a: Attachment): boolean {
   return a.content_type?.startsWith('video/') ?? false;
 }
 
+/** Whether it is sound, a voice message most often: played in place too. */
+export function isAudio(a: Attachment): boolean {
+  return a.content_type?.startsWith('audio/') ?? false;
+}
+
 /** What kind of thing it is, and so what to call it without a name. */
 export function attachmentNoun(a: Attachment): string {
-  return isImage(a) ? 'image' : isVideo(a) ? 'video' : 'attachment';
+  return isImage(a) ? 'image' : isVideo(a) ? 'video' : isAudio(a) ? 'audio' : 'attachment';
 }
 
 /** What to call it, or null when nothing says more than the noun. The content
  *  type stands in for a missing filename, when it adds something. */
 export function attachmentName(a: Attachment): string | null {
-  return named(a.file_name) ?? (isImage(a) || isVideo(a) ? null : named(a.content_type));
+  return named(a.file_name) ?? (isImage(a) || isVideo(a) || isAudio(a) ? null : named(a.content_type));
 }
 
 /** Noun and name together: `image`, `image: shot.png`, `attachment: audio/ogg`.
