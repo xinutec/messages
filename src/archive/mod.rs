@@ -324,7 +324,6 @@ pub struct Attachment {
     pub size: Option<i64>,
     /// Whether the bytes are held.
     pub available: bool,
-    pub is_image: bool,
     /// Whether these bytes can be asked for.
     pub fetch: Option<FetchState>,
 }
@@ -515,10 +514,6 @@ fn distinct<T: Ord>(values: impl IntoIterator<Item = T>) -> Vec<T> {
     v.sort_unstable();
     v.dedup();
     v
-}
-
-fn is_image(ct: Option<&str>) -> bool {
-    ct.is_some_and(|c| c.starts_with("image/"))
 }
 
 /// How much of a quoted message a reply preview carries.

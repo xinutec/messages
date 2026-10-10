@@ -220,7 +220,6 @@ pub(super) async fn page(
             let stored_path: Option<String> = ar.try_get("stored_path")?;
             let att = Attachment {
                 id: ar.try_get::<i64, _>("id")?.to_string(),
-                is_image: is_image(content_type.as_deref()),
                 content_type,
                 file_name: ar.try_get("file_name")?,
                 size: ar.try_get("size_bytes")?,

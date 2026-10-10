@@ -118,7 +118,7 @@ export class FetchRequests {
   private landMedia(id: string, contentType: string | null): void {
     this.updateAttachment(id, (a) => {
       const type = contentType ?? a.content_type;
-      return { ...a, available: true, fetch: null, content_type: type, is_image: (type ?? '').startsWith('image/') };
+      return { ...a, available: true, fetch: null, content_type: type };
     });
   }
 

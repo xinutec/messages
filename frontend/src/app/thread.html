@@ -166,7 +166,7 @@
                     @for (a of m.attachments; track a.id) {
                       <div class="attach">
                         <!-- Named by `attachment.ts`, as the clipboard names it; the icon gives the kind. -->
-                        @if (a.available && a.is_image) {
+                        @if (a.available && isImage(a)) {
                           <!-- Opens in the fleet's picture viewer, where it can be looked at closely;
                                back closes it. -->
                           <button type="button" class="picture" (click)="viewPicture(a)"

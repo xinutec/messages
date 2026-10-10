@@ -257,7 +257,6 @@ async fn attach_attachments(pool: &MySqlPool, msgs: &mut [Message], ids: &[i64])
         let stored_path: Option<String> = r.try_get("stored_path")?;
         let att = Attachment {
             id: r.try_get::<i64, _>("id")?.to_string(),
-            is_image: is_image(mime.as_deref()),
             content_type: mime,
             file_name: r.try_get("name")?,
             // Google Chat records pixel dimensions, not a byte count.

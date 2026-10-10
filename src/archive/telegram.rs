@@ -228,7 +228,6 @@ pub(super) async fn page(
             msgs[i].attachments.push(Attachment {
                 // The message's API id, which is what the media route takes.
                 id: api_id,
-                is_image: is_image(content_type.as_deref()),
                 content_type,
                 // Telegram photos carry no filename; the frontend names them.
                 file_name: None,

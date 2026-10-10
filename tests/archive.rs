@@ -715,7 +715,7 @@ async fn signal_attachments_available_flag_and_blob_lookup() {
     let img = m0
         .attachments
         .iter()
-        .find(|a| a.is_image)
+        .find(|a| a.content_type.as_deref() == Some("image/jpeg"))
         .expect("image attachment");
     assert!(
         img.available
@@ -725,7 +725,7 @@ async fn signal_attachments_available_flag_and_blob_lookup() {
     let pdf = m0
         .attachments
         .iter()
-        .find(|a| !a.is_image)
+        .find(|a| a.content_type.as_deref() == Some("application/pdf"))
         .expect("pdf attachment");
     assert!(!pdf.available, "metadata-only attachment is not available");
 
@@ -1937,19 +1937,25 @@ async fn telegram_media_arrives_as_attachments_with_availability() {
     let held = by("forget it");
     assert_eq!(held.attachments.len(), 1);
     assert!(held.attachments[0].available);
-    assert!(held.attachments[0].is_image);
+    assert_eq!(
+        held.attachments[0].content_type.as_deref(),
+        Some("image/jpeg")
+    );
     assert_eq!(held.attachments[0].size, Some(204_800));
     // The message's API id, which the media route takes.
     assert_eq!(held.attachments[0].id, held.id);
 
-    // msg 13: offered, not held, and not an image.
+    // msg 13: offered, not held, and a video.
     let offered = by("third go");
     assert_eq!(offered.attachments.len(), 1);
     assert!(
         !offered.attachments[0].available,
         "1.5GB still at Telegram must not be drawn as a picture"
     );
-    assert!(!offered.attachments[0].is_image);
+    assert_eq!(
+        offered.attachments[0].content_type.as_deref(),
+        Some("video/mp4")
+    );
 
     assert!(by("hoi").attachments.is_empty());
 }
@@ -2328,7 +2334,7 @@ async fn a_gchat_picture_is_shown_even_when_its_bytes_are_not_held() {
         held.available,
         "stored_path is set, so the bytes are servable"
     );
-    assert!(held.is_image);
+    assert_eq!(held.content_type.as_deref(), Some("image/jpeg"));
 
     let known = &hey.attachments[1];
     assert_eq!(known.file_name.as_deref(), Some("lost.webp"));

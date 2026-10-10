@@ -7,6 +7,11 @@ import { Attachment } from './models';
 /** An empty name is no name; `??` would keep the empty string. */
 const named = (s: string | null): string | null => (s != null && s !== '' ? s : null);
 
+/** Whether it is a picture: the thread shows it, and opens it in the viewer. */
+export function isImage(a: Attachment): boolean {
+  return a.content_type?.startsWith('image/') ?? false;
+}
+
 /** Whether it plays: the thread draws it in place rather than as a file. */
 export function isVideo(a: Attachment): boolean {
   return a.content_type?.startsWith('video/') ?? false;
@@ -14,13 +19,13 @@ export function isVideo(a: Attachment): boolean {
 
 /** What kind of thing it is, and so what to call it without a name. */
 export function attachmentNoun(a: Attachment): string {
-  return a.is_image ? 'image' : isVideo(a) ? 'video' : 'attachment';
+  return isImage(a) ? 'image' : isVideo(a) ? 'video' : 'attachment';
 }
 
 /** What to call it, or null when nothing says more than the noun. The content
  *  type stands in for a missing filename, when it adds something. */
 export function attachmentName(a: Attachment): string | null {
-  return named(a.file_name) ?? (a.is_image || isVideo(a) ? null : named(a.content_type));
+  return named(a.file_name) ?? (isImage(a) || isVideo(a) ? null : named(a.content_type));
 }
 
 /** Noun and name together: `image`, `image: shot.png`, `attachment: audio/ogg`.

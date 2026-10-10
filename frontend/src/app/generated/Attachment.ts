@@ -5,7 +5,7 @@ export type Attachment = { id: string, content_type: string | null, file_name: s
 /**
  * Whether the bytes are held.
  */
-available: boolean, is_image: boolean, 
+available: boolean, 
 /**
  * Whether these bytes can be asked for.
  */

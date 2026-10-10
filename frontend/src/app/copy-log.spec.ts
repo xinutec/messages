@@ -20,7 +20,6 @@ function file(over: Partial<Attachment>): Attachment {
     file_name: null,
     size: null,
     available: true,
-    is_image: false,
     // Signal: nothing to ask for. Telegram's states are tested in
     // tests/archive.rs.
     fetch: null,
@@ -119,14 +118,14 @@ describe('formatChatLog', () => {
         sender: 'a',
         body: 'gone',
         deleted: true,
-        attachments: [file({ file_name: 'shot.png', is_image: true })],
+        attachments: [file({ file_name: 'shot.png', content_type: 'image/png' })],
       }),
       // Attachment-only: no body at all.
       msg({
         ts: at(2026, 8, 13, 1, 1),
         sender: 'a',
         deleted: true,
-        attachments: [file({ file_name: 'secret.jpg', is_image: true })],
+        attachments: [file({ file_name: 'secret.jpg', content_type: 'image/jpeg' })],
       }),
     ]);
     expect(out).not.toContain('shot.png');
@@ -141,15 +140,15 @@ describe('formatChatLog', () => {
         ts: at(2026, 8, 13, 1, 0),
         sender: 'a',
         attachments: [
-          file({ file_name: 'shot.png', is_image: true }),
+          file({ file_name: 'shot.png', content_type: 'image/png' }),
           file({ file_name: 'notes.pdf' }),
-          file({ file_name: 'old.jpg', is_image: true, available: false, fetch: null }),
+          file({ file_name: 'old.jpg', content_type: 'image/jpeg', available: false, fetch: null }),
           file({ content_type: 'audio/ogg' }),
           file({ file_name: '', content_type: 'text/plain' }),
           // A Signal photo has no filename; `[image: image/jpeg]` would say
           // image twice.
-          file({ content_type: 'image/jpeg', is_image: true }),
-          file({ content_type: 'image/png', is_image: true, available: false, fetch: null }),
+          file({ content_type: 'image/jpeg' }),
+          file({ content_type: 'image/png', available: false, fetch: null }),
           file({}),
         ],
       }),
@@ -174,7 +173,7 @@ describe('formatChatLog', () => {
         sender: 'a',
         body: 'see this',
         edited: true,
-        attachments: [file({ file_name: 'shot.png', is_image: true })],
+        attachments: [file({ file_name: 'shot.png', content_type: 'image/png' })],
       }),
     ]);
     expect(out.split('\n').slice(1)).toEqual([
