@@ -1,7 +1,7 @@
-//! A conversation's picture, from the files the feeds keep beside the media
-//! they already store: the Signal ingester's and the Telegram feed's, each in
-//! an `avatars` directory. Found by name; no file is no picture, and the list
-//! draws initials.
+//! A conversation's picture, from the files kept beside the media already
+//! stored, each in an `avatars` directory: the Signal ingester's and the Telegram
+//! feed's, and Google Chat's from gchat-archive's `fetch_avatars.py`. Found by
+//! name; no file is no picture, and the list draws initials.
 
 use std::path::PathBuf;
 use std::time::UNIX_EPOCH;
@@ -10,14 +10,15 @@ use crate::archive::{Conversation, Origin};
 use crate::config::Config;
 
 /// Where a conversation's picture is filed under the two media dirs, or `None`
-/// where the origin keeps none or the name would leave the directory. The feeds
-/// write the same names.
-fn filed(signal: &str, telegram: &str, origin: Origin, id: &str) -> Option<PathBuf> {
+/// where the origin keeps none or the name would leave the directory. Whoever
+/// writes them uses the same names.
+fn filed(attachments: &str, telegram: &str, origin: Origin, id: &str) -> Option<PathBuf> {
     let (dir, name) = match origin {
         // The thread id, with a group id's `/` as `_`.
-        Origin::Signal => (signal, id.replace('/', "_")),
+        Origin::Signal => (attachments, id.replace('/', "_")),
+        Origin::Gchat => (attachments, format!("gchat-{id}.jpg")),
         Origin::Telegram => (telegram, format!("{id}.jpg")),
-        Origin::Gchat | Origin::Irc => return None,
+        Origin::Irc => return None,
     };
     if name.contains('/') || name.starts_with('.') {
         return None;

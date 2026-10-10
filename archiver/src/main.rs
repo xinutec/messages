@@ -438,12 +438,11 @@ async fn refresh_group_names(ctx: Ctx) {
 }
 
 /// Keep a conversation's picture where the viewer looks for it:
-/// `avatars/<thread id, / as _>` under the attachments dir (the viewer's
-/// `avatars.rs` names it the same way). Rewritten only when the bytes change, so
+/// `avatars/<attach::avatar_name>` under the attachments dir. Rewritten only when the bytes change, so
 /// the file's time stays the picture's version; removed once Signal has none.
 async fn keep_avatar(ctx: &Ctx, url: &str, thread: &str) -> Result<()> {
     let dir = std::path::Path::new(&ctx.attach_dir).join("avatars");
-    let path = dir.join(thread.replace('/', "_"));
+    let path = dir.join(attach::avatar_name(thread));
     let res = ctx.http.get(url).timeout(GROUPS_TIMEOUT).send().await?;
     let status = res.status();
     let bytes = res.bytes().await?;
@@ -462,7 +461,7 @@ async fn keep_avatar(ctx: &Ctx, url: &str, thread: &str) -> Result<()> {
     }
     // Written aside and renamed, so the viewer never serves half a picture.
     tokio::fs::create_dir_all(&dir).await?;
-    let part = dir.join(format!("{}.part", thread.replace('/', "_")));
+    let part = dir.join(format!("{}.part", attach::avatar_name(thread)));
     tokio::fs::write(&part, &bytes).await?;
     tokio::fs::rename(&part, &path).await?;
     Ok(())

@@ -52,3 +52,10 @@ where
         .with_context(|| format!("flushing {}", path.display()))?;
     Ok(())
 }
+
+/// The file a Signal conversation's picture is kept in, under `avatars/` in the
+/// attachments dir: its thread id, with a group id's `/` as `_`. The viewer
+/// finds it by the same name; its tests hold the two together.
+pub fn avatar_name(thread: &str) -> String {
+    thread.replace('/', "_")
+}

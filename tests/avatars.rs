@@ -24,6 +24,17 @@ fn dirs(test: &str, files: &[(&str, &str)]) -> (Config, std::path::PathBuf) {
     (cfg, root)
 }
 
+/// The name the Signal ingester writes is the name the viewer reads: one
+/// function on the writing side, asked here, so a change to either breaks this.
+#[test]
+fn the_viewer_finds_what_the_ingester_writes() {
+    let thread = "group:jEsJ/yV7+Q=";
+    let name = signal_archiver::attach::avatar_name(thread);
+    let (cfg, root) = dirs("ingester", &[("a", name.as_str())]);
+    assert!(find(&cfg, Origin::Signal, thread).is_some());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn signal_is_filed_by_thread_id_with_slashes_made_underscores() {
     let (cfg, root) = dirs("signal", &[("a", "group:jEsJ_yV7+Q="), ("a", "dm:u-1")]);
@@ -53,10 +64,18 @@ fn no_name_leaves_the_directory() {
 }
 
 #[test]
-fn origins_without_pictures_have_none() {
-    let (cfg, root) = dirs("none", &[("a", "7"), ("a", "g")]);
+fn irc_has_no_pictures() {
+    let (cfg, root) = dirs("none", &[("a", "7")]);
     assert!(find(&cfg, Origin::Irc, "7").is_none());
-    assert!(find(&cfg, Origin::Gchat, "g").is_none());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// Copied from gchat-archive's `fetch_avatars.py`, which names them so.
+#[test]
+fn google_chat_is_filed_by_group_id() {
+    let (cfg, root) = dirs("gchat", &[("a", "gchat-0N6pMUAAAAE.jpg")]);
+    assert!(find(&cfg, Origin::Gchat, "0N6pMUAAAAE").is_some());
+    assert!(find(&cfg, Origin::Gchat, "other").is_none());
     std::fs::remove_dir_all(root).unwrap();
 }
 
