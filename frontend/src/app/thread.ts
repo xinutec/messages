@@ -541,12 +541,18 @@ export class Thread {
     }
   }
 
-  // ---- sending (IRC only) -------------------------------------------------
+  // ---- sending (IRC and Telegram) -----------------------------------------
 
-  /** Only IRC has a client to send with. */
-  readonly canSend = computed(() => this.origin() === 'irc' && this.routed());
-  /** The draft and its sending; see composer.ts. A line irssi logged reloads the
-   *  thread, to show it. */
+  /** IRC, and a Telegram DM or group: not a broadcast, which has an audience
+   *  rather than a conversation. Signal is read-only by decision. */
+  readonly canSend = computed(() => {
+    if (!this.routed()) return false;
+    if (this.origin() === 'irc') return true;
+    const kind = this.conversation()?.kind;
+    return this.origin() === 'telegram' && (kind === 'dm' || kind === 'group');
+  });
+  /** The draft and its sending; see composer.ts. A sent message that is
+   *  already archived reloads the thread, to show it. */
   readonly composer = new Composer(this.api, this.origin, this.id, () => this.reloadNow());
 
   // ---- what the reader asks to be fetched ----------------------------------

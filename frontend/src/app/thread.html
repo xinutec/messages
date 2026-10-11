@@ -280,7 +280,7 @@
     <div [style.height.px]="bottomSpacer()"></div>
   }
 
-  <!-- IRC only. Outside the loading branch, so it stays put while a send reloads the
+  <!-- IRC and Telegram. Outside the loading branch, so it stays put while a send reloads the
        thread. -->
   @if (canSend() && !threadError()) {
     <form class="composer" (submit)="$event.preventDefault(); composer.send()">

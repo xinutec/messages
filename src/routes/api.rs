@@ -380,7 +380,7 @@ pub async fn search(
     Ok(Json(archive::search(&app.pool, q, limit, scope).await?))
 }
 
-/// A message to put on IRC, as the user.
+/// A message to put on IRC or Telegram, as the user.
 #[derive(Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -390,37 +390,82 @@ pub struct SendRequest {
     pub text: String,
 }
 
-/// What happened, in the words of the irssi that did it.
+/// What happened, in the words of the irssi or Telegram feed that did it.
 #[derive(Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct SendResult {
-    /// True only when irssi put the message on the wire.
+    /// True only when the message went: irssi put it on the wire, or Telegram
+    /// took it.
     pub sent: bool,
-    /// Why not: irssi's refusal, usually that it has no tab for the target.
+    /// Why not, or why the outcome is not known yet.
     pub error: Option<String>,
     /// Whether the message is already archived, visible without waiting for the
     /// import. A send can succeed with this false.
     pub archived: bool,
 }
 
-/// POST /api/conversations/irc/{id}/send → say something, through irssi.
+/// POST /api/conversations/{irc,telegram}/{id}/send → say something.
 ///
-/// The app's one outward write. Bounded by the allow-listed session and by the
-/// irssi host's own rules; this handler refuses any target the archive does not
-/// hold.
+/// The app's one outward write. Bounded by the allow-listed session; the
+/// recipient is always a conversation the archive holds.
 pub async fn send(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
     Path((origin, id)): Path<(String, String)>,
     Json(req): Json<SendRequest>,
 ) -> Result<Json<SendResult>, AppError> {
-    // Only IRC. Signal is read-only by decision: an IRC echo can be confirmed
-    // against irssi's log, while a Signal echo would be the only evidence the
-    // message existed (#900).
-    if archive::Origin::parse(&origin) != Some(archive::Origin::Irc) {
-        return Err(AppError::NotFound);
+    // Signal is read-only by decision: an IRC or Telegram message is confirmed
+    // by irssi's log or by Telegram, while a Signal echo would be the only
+    // evidence the message existed.
+    match archive::Origin::parse(&origin) {
+        Some(archive::Origin::Irc) => send_irc(&app, &id, &req).await,
+        Some(archive::Origin::Telegram) => send_telegram(&app, &id, &req).await,
+        _ => Err(AppError::NotFound),
     }
+}
+
+/// Through the feed that holds the session; see `telegram_send`.
+async fn send_telegram(
+    app: &AppState,
+    id: &str,
+    req: &SendRequest,
+) -> Result<Json<SendResult>, AppError> {
+    let Some(row) = crate::telegram_send::queue(&app.pool, id, &req.text).await? else {
+        return Err(AppError::NotFound);
+    };
+    let outcome = crate::telegram_send::wait(&app.pool, row).await?;
+    // Logged by conversation and row, never the message.
+    tracing::info!("telegram send {row} to {id}: {outcome:?}");
+    use crate::telegram_send::Outcome;
+    Ok(Json(match outcome {
+        Outcome::Sent { archived } => SendResult {
+            sent: true,
+            error: None,
+            archived,
+        },
+        Outcome::Refused(why) => SendResult {
+            sent: false,
+            error: Some(why),
+            archived: false,
+        },
+        Outcome::Unanswered => SendResult {
+            sent: false,
+            error: Some(
+                "Telegram has not answered yet: it may still go. Check before sending again."
+                    .to_owned(),
+            ),
+            archived: false,
+        },
+    }))
+}
+
+/// Through irssi; see `irc_send`.
+async fn send_irc(
+    app: &AppState,
+    id: &str,
+    req: &SendRequest,
+) -> Result<Json<SendResult>, AppError> {
     let Some(sender) = app.irc.clone() else {
         // No key mounted: sending is not configured.
         return Ok(Json(SendResult {
@@ -430,7 +475,7 @@ pub async fn send(
         }));
     };
 
-    let Some(target) = archive::irc::target(&app.pool, &id).await? else {
+    let Some(target) = archive::irc::target(&app.pool, id).await? else {
         return Err(AppError::NotFound);
     };
     // irssi's server-notice window is named after the user's nick.
@@ -459,7 +504,7 @@ pub async fn send(
         }
         crate::irc_send::Outcome::Sent(sent) => {
             // The message has gone, so a failed echo is logged, not returned.
-            let archived = match crate::irc_send::record_echo(&app.pool, &id, &sent).await {
+            let archived = match crate::irc_send::record_echo(&app.pool, id, &sent).await {
                 Ok(written) => written,
                 Err(e) => {
                     tracing::error!("sent, but could not record the echo: {e:#}");

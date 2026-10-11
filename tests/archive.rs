@@ -3163,3 +3163,115 @@ async fn a_voice_message_is_leased_once_and_its_words_shown() {
         .unwrap();
     assert!(error.is_some(), "retired with a reason");
 }
+
+/// A Telegram send is queued only for a DM or group the archive holds, never a
+/// broadcast or an id it has not seen.
+#[tokio::test]
+async fn a_telegram_send_is_queued_only_for_a_held_dm_or_group() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    use messages::telegram_send::queue;
+    assert!(
+        queue(&pool, "4242", "hi").await.unwrap().is_some(),
+        "the DM"
+    );
+    assert!(
+        queue(&pool, "-77", "hi").await.unwrap().is_some(),
+        "the group"
+    );
+    assert!(
+        queue(&pool, "-1000000000055", "hi")
+            .await
+            .unwrap()
+            .is_none(),
+        "a broadcast"
+    );
+    assert!(
+        queue(&pool, "999999", "hi").await.unwrap().is_none(),
+        "unseen"
+    );
+    assert!(
+        queue(&pool, "x", "hi").await.unwrap().is_none(),
+        "not an id"
+    );
+}
+
+/// The viewer reports what the feed answered; a send the feed never reached is
+/// withdrawn, so it cannot go after the reader was told it did not; and one the
+/// feed took but has not answered is reported as unknown, not as unsent.
+#[tokio::test]
+async fn a_telegram_send_reports_the_feeds_answer() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    use messages::telegram_send::{Outcome, queue, wait_for};
+    let patience = std::time::Duration::from_millis(600);
+    async fn answer(pool: &MySqlPool, row: i64, state: &str, note: Option<&str>) {
+        sqlx::query("UPDATE telegram_outbox SET state = ?, note = ? WHERE id = ?")
+            .bind(state)
+            .bind(note)
+            .bind(row)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    let row = queue(&pool, "4242", "hi").await.unwrap().unwrap();
+    answer(&pool, row, "sent", None).await;
+    assert_eq!(
+        wait_for(&pool, row, patience).await.unwrap(),
+        Outcome::Sent { archived: true }
+    );
+
+    let row = queue(&pool, "4242", "hi").await.unwrap().unwrap();
+    answer(&pool, row, "sent", Some("sent, but not stored")).await;
+    assert_eq!(
+        wait_for(&pool, row, patience).await.unwrap(),
+        Outcome::Sent { archived: false }
+    );
+
+    let row = queue(&pool, "4242", "hi").await.unwrap().unwrap();
+    answer(&pool, row, "failed", Some("telegram refused it")).await;
+    assert_eq!(
+        wait_for(&pool, row, patience).await.unwrap(),
+        Outcome::Refused("telegram refused it".to_owned())
+    );
+
+    // An answer that arrives while the viewer waits.
+    let row = queue(&pool, "4242", "hi").await.unwrap().unwrap();
+    let later = {
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            answer(&pool, row, "sent", None).await;
+        })
+    };
+    assert_eq!(
+        wait_for(&pool, row, std::time::Duration::from_secs(5))
+            .await
+            .unwrap(),
+        Outcome::Sent { archived: true }
+    );
+    later.await.unwrap();
+
+    let row = queue(&pool, "4242", "hi").await.unwrap().unwrap();
+    assert!(matches!(
+        wait_for(&pool, row, patience).await.unwrap(),
+        Outcome::Refused(_)
+    ));
+    let state: String =
+        sqlx::query_scalar("SELECT CAST(state AS CHAR) FROM telegram_outbox WHERE id = ?")
+            .bind(row)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(state, "failed", "withdrawn, so the feed will not send it");
+
+    let row = queue(&pool, "4242", "hi").await.unwrap().unwrap();
+    answer(&pool, row, "sending", None).await;
+    assert_eq!(
+        wait_for(&pool, row, patience).await.unwrap(),
+        Outcome::Unanswered
+    );
+}

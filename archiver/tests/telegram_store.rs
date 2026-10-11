@@ -1092,3 +1092,85 @@ async fn a_call_keeps_every_frame_that_arrived() {
         "a second device hanging up is a second frame, not a duplicate"
     );
 }
+
+/// The outbox: the oldest fresh send is claimed first and only once; a stale or
+/// withdrawn one is never sent; and a send left `sending` by a stopped feed is
+/// failed as unknown, never retried.
+#[tokio::test]
+async fn the_outbox_sends_each_fresh_row_at_most_once() {
+    let Some((db, pool)) = connect().await else {
+        return;
+    };
+    let conversation = ids(18).conversation;
+    let queue = |text: &'static str, age_minutes: i64| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO telegram_outbox (conversation_id, text, queued_at)
+                 VALUES (?, ?, CURRENT_TIMESTAMP - INTERVAL ? MINUTE)",
+            )
+            .bind(conversation)
+            .bind(text)
+            .bind(age_minutes)
+            .execute(&pool)
+            .await
+            .unwrap()
+            .last_insert_id() as i64
+        }
+    };
+    let state = |id: i64| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (String, Option<i32>, Option<String>)>(
+                "SELECT CAST(state AS CHAR), msg_id, note FROM telegram_outbox WHERE id = ?",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+
+    let stale = queue("stale", 10).await;
+    let first = queue("first", 0).await;
+    let second = queue("second", 0).await;
+    let withdrawn = queue("withdrawn", 0).await;
+    sqlx::query("UPDATE telegram_outbox SET state = 'failed' WHERE id = ?")
+        .bind(withdrawn)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Drained, since earlier runs' rows share the table; ours in queue order.
+    let mut claimed = Vec::new();
+    while let Some(send) = db.claim_telegram_send(60).await.unwrap() {
+        if send.conversation_id == conversation {
+            claimed.push((send.id, send.text));
+        }
+    }
+    assert_eq!(
+        claimed,
+        vec![(first, "first".to_owned()), (second, "second".to_owned())]
+    );
+    assert_eq!(state(first).await.0, "sending", "claimed before the call");
+    let (s, _, note) = state(stale).await;
+    assert_eq!(s, "failed");
+    assert!(note.unwrap().contains("expired"));
+
+    db.record_telegram_sent(first, 77, None).await.unwrap();
+    db.record_telegram_send_failed(first, "late").await.unwrap();
+    assert_eq!(
+        state(first).await,
+        ("sent".to_owned(), Some(77), None),
+        "a failure cannot overwrite a send"
+    );
+
+    assert!(db.abandon_interrupted_telegram_sends().await.unwrap() >= 1);
+    let (s, msg_id, note) = state(second).await;
+    assert_eq!((s.as_str(), msg_id), ("failed", None));
+    assert!(note.unwrap().contains("may or may not"));
+    assert!(
+        db.claim_telegram_send(60).await.unwrap().is_none(),
+        "nothing is retried"
+    );
+}

@@ -2,8 +2,8 @@
 //! Telegram archive in the `signal` MariaDB. The binary (`src/main.rs`) is a thin
 //! wrapper; logic lives here.
 //!
-//! ⚠ It can send on IRC, as the user, on networks other people are on;
-//! [`irc_send`] says what bounds that.
+//! ⚠ It can send on IRC and Telegram, as the user, to other people;
+//! [`irc_send`] and [`telegram_send`] say what bounds that.
 
 pub mod archive;
 pub mod avatars;
@@ -18,4 +18,5 @@ pub mod pending_login;
 pub mod routes;
 pub mod session;
 pub mod state;
+pub mod telegram_send;
 pub mod transcribe;

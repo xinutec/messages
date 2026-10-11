@@ -652,4 +652,24 @@ pub(super) const MIGRATIONS: &[&str] = &[
     ) DEFAULT CHARSET=utf8mb4",
     // v58: backfill v57 from `signal_frames`.
     BACKFILL_MENTIONS,
+    // v59: messages the viewer asks the feed to send, as `wanted` asks it to
+    // fetch (v27): only the feed holds the session, and it listens on no port.
+    //
+    //     queued → sending → sent     `msg_id` is Telegram's, read back and stored
+    //                      → failed   `note` says why
+    //            → failed             withdrawn by the viewer, or expired
+    //
+    // `sending` is claimed before the call and never retried, so a send happens
+    // at most once. A row is kept, never deleted: it is what was asked.
+    r"CREATE TABLE IF NOT EXISTS telegram_outbox (
+        id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        conversation_id BIGINT NOT NULL,
+        text TEXT NOT NULL,
+        state ENUM('queued','sending','sent','failed') NOT NULL DEFAULT 'queued',
+        msg_id INT NULL,
+        note VARCHAR(255) NULL,
+        queued_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        done_at TIMESTAMP NULL,
+        INDEX idx_tg_outbox_state (state, queued_at)
+    ) DEFAULT CHARSET=utf8mb4",
 ];

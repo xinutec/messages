@@ -62,10 +62,10 @@ source IPs survive k3s servicelb; check before relying on it.
   epoch ms; the server converts it to the origin's unit.
 - `GET /api/search?q=[&origin=&id=]` — substring search, everywhere or in one
   conversation. Each hit carries a cursor that lands on it.
-- `POST /api/conversations/irc/{id}/send` — say something through irssi. The
-  body is the text only; the recipient comes from `{id}`. Other origins 404:
-  Signal by decision (see `routes/api.rs`), Telegram because sending there is not
-  designed yet.
+- `POST /api/conversations/{irc,telegram}/{id}/send` — say something, through
+  irssi or through the Telegram feed (`src/telegram_send.rs`), to a Telegram DM
+  or group only. The body is the text only; the recipient comes from `{id}`.
+  Signal and Google Chat 404, Signal by decision (see `routes/api.rs`).
 - `GET /api/attachments/{id}`, `/api/gchat-attachments/{id}`,
   `/api/telegram-media/{id}` — held bytes, one route per origin since attachment
   ids are per origin. `POST /api/telegram-media/{id}/request` queues an
@@ -169,7 +169,8 @@ a group says `read by 2` rather than `read`, and my own linked device's read
 sync is not counted.
 
 Sending is optional: without a usable key the app serves the archive and refuses
-to send.
+to send on IRC. A Telegram send waits for the feed for 20 seconds and is
+withdrawn if the feed never took it.
 
 ## Known limits
 - Signal reactions are distinct current authors per emoji, so a same-author

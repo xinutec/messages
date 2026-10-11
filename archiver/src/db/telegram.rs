@@ -624,6 +624,91 @@ impl Db {
         .await?)
     }
 
+    /// Take the oldest queued send, marking it `sending` first: the send that
+    /// follows happens at most once, whatever happens to this process. A row
+    /// queued longer ago than `fresh_secs` is failed instead: the viewer that
+    /// asked has stopped waiting, and its reader was told it was not sent.
+    pub async fn claim_telegram_send(&self, fresh_secs: i64) -> Result<Option<TelegramSend>> {
+        sqlx::query(
+            "UPDATE telegram_outbox SET state = 'failed', done_at = CURRENT_TIMESTAMP,
+                    note = 'expired before the feed reached it'
+              WHERE state = 'queued' AND queued_at < CURRENT_TIMESTAMP - INTERVAL ? SECOND",
+        )
+        .bind(fresh_secs)
+        .execute(&self.pool)
+        .await?;
+        let next: Option<(i64, i64, String)> = sqlx::query_as(
+            "SELECT id, conversation_id, text FROM telegram_outbox
+              WHERE state = 'queued' ORDER BY queued_at, id LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some((id, conversation_id, text)) = next else {
+            return Ok(None);
+        };
+        // Conditional, so a viewer withdrawing it in between wins.
+        let claimed = sqlx::query(
+            "UPDATE telegram_outbox SET state = 'sending' WHERE id = ? AND state = 'queued'",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        Ok((claimed == 1).then_some(TelegramSend {
+            id,
+            conversation_id,
+            text,
+        }))
+    }
+
+    /// The send went out as Telegram's `msg_id`. `note` is set when it is not
+    /// yet in the archive.
+    pub async fn record_telegram_sent(
+        &self,
+        id: i64,
+        msg_id: i32,
+        note: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE telegram_outbox SET state = 'sent', msg_id = ?, note = ?,
+                    done_at = CURRENT_TIMESTAMP
+              WHERE id = ? AND state = 'sending'",
+        )
+        .bind(msg_id)
+        .bind(note)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// The send did not go out, or may not have.
+    pub async fn record_telegram_send_failed(&self, id: i64, note: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE telegram_outbox SET state = 'failed', note = ?, done_at = CURRENT_TIMESTAMP
+              WHERE id = ? AND state = 'sending'",
+        )
+        .bind(note.chars().take(255).collect::<String>())
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Sends a previous run claimed and never finished: the process stopped
+    /// during the call, so whether Telegram has them is unknown. Failed with that
+    /// said, never retried. Returns how many.
+    pub async fn abandon_interrupted_telegram_sends(&self) -> Result<u64> {
+        Ok(sqlx::query(
+            "UPDATE telegram_outbox SET state = 'failed', done_at = CURRENT_TIMESTAMP,
+                    note = 'interrupted mid-send: it may or may not have gone; check Telegram'
+              WHERE state = 'sending'",
+        )
+        .execute(&self.pool)
+        .await?
+        .rows_affected())
+    }
+
     /// How far back a conversation has been walked, or `None` if it never has.
     pub async fn telegram_backfill_state(
         &self,
@@ -727,6 +812,16 @@ fn reaction_key(emoji: Option<&str>, custom_emoji_id: Option<i64>) -> String {
         (None, Some(id)) => format!("custom:{id}"),
         (None, None) => String::new(),
     }
+}
+
+/// A send the feed has claimed (`Db::claim_telegram_send`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TelegramSend {
+    /// The `telegram_outbox` row.
+    pub id: i64,
+    /// Where it goes: a conversation the archive holds, never the reader's word.
+    pub conversation_id: i64,
+    pub text: String,
 }
 
 /// What [`Db::store_telegram_message`] did.

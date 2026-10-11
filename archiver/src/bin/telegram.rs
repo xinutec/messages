@@ -13,6 +13,9 @@
 //!                             signal MariaDB  (telegram_*)
 //! ```
 //!
+//! It also sends what the viewer queues in `telegram_outbox`, each at most once,
+//! storing the message as Telegram reads it back; see [`serve_outbox`].
+//!
 //! A user client, not a bot: a bot is a separate account and cannot read its
 //! owner's chats. The stored session is therefore a credential; see
 //! `telegram::session`. Secret chats are device-local and unreachable.
@@ -79,6 +82,14 @@ const REQUEST_BATCH: i64 = 1;
 /// does not. A size rather than a `media_kind` test because the bytes are the
 /// cost.
 const EAGER_MAX_BYTES: i64 = 4 * 1024 * 1024;
+
+/// How often the feed looks for messages the viewer asked it to send. Shorter
+/// than [`REQUEST_POLL`]: a reader is waiting with the send button greyed.
+const OUTBOX_POLL: Duration = Duration::from_secs(1);
+
+/// How long a queued send stays sendable. Past the viewer's own wait, so it
+/// never sends what its reader was told did not go.
+const OUTBOX_FRESH_SECS: i64 = 60;
 
 #[derive(Clone)]
 struct Cfg {
@@ -270,6 +281,13 @@ async fn archive(
         tokio::spawn(async move { serve_requests(&client, &db, &cfg, &session).await })
     };
 
+    let outbox = {
+        let client = client.clone();
+        let db = db.clone();
+        let session = Arc::clone(session);
+        tokio::spawn(async move { serve_outbox(&client, &db, &session, self_id).await })
+    };
+
     let live = {
         let client = client.clone();
         let db = db.clone();
@@ -288,6 +306,7 @@ async fn archive(
         r = live => r.context("the update stream task panicked")?.context("following updates"),
         r = history => r.context("the backfill task panicked")?.context("backfilling history"),
         r = requests => r.context("the request task panicked")?.context("serving requests"),
+        r = outbox => r.context("the outbox task panicked")?.context("sending"),
     }
 }
 
@@ -1011,6 +1030,94 @@ async fn serve_one(
             Err(anyhow::anyhow!("{e}"))
         }
     }
+}
+
+/// Send what the viewer queued, one at a time, each at most once.
+async fn serve_outbox(
+    client: &Client,
+    db: &Db,
+    session: &Arc<DbSession>,
+    self_id: i64,
+) -> Result<()> {
+    let interrupted = db.abandon_interrupted_telegram_sends().await?;
+    if interrupted > 0 {
+        tracing::warn!("{interrupted} send(s) were interrupted by the last stop; marked failed");
+    }
+    let names = Names::default();
+    names.learn_self(client, self_id).await;
+    loop {
+        let Some(send) = db.claim_telegram_send(OUTBOX_FRESH_SECS).await? else {
+            tokio::time::sleep(OUTBOX_POLL).await;
+            continue;
+        };
+        // Logged by conversation and row, never the text.
+        match send_one(client, db, session, &names, self_id, &send).await {
+            // A failure to record this ends the feed, leaving the row `sending`,
+            // which the next start reports as unknown: never as unsent.
+            Ok((msg_id, note)) => {
+                db.record_telegram_sent(send.id, msg_id, note.as_deref())
+                    .await?;
+                tracing::info!("sent outbox {} to {}", send.id, send.conversation_id);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "outbox {} to {} failed: {e:#}",
+                    send.id,
+                    send.conversation_id
+                );
+                db.record_telegram_send_failed(send.id, &format!("{e:#}"))
+                    .await?;
+            }
+        }
+    }
+}
+
+/// Send one message, then read it back from Telegram and store that, so the
+/// archive holds what Telegram holds rather than what was asked. An error means
+/// it did not go; once it has gone, the answer is its id and any note.
+async fn send_one(
+    client: &Client,
+    db: &Db,
+    session: &Arc<DbSession>,
+    names: &Names,
+    self_id: i64,
+    send: &signal_archiver::db::TelegramSend,
+) -> Result<(i32, Option<String>)> {
+    let id = send.conversation_id;
+    let peer_id =
+        PeerId::from_bot_api_dialog_id(id).with_context(|| format!("{id} is not a dialog id"))?;
+    let peer_ref = session
+        .peer_ref(peer_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("resolving {id}: {e}"))?
+        .with_context(|| format!("no peer reference for {id}"))?;
+    // Plain text, as typed: no markdown, and a link previews as in the apps.
+    let input = grammers_client::message::InputMessage::new()
+        .text(send.text.as_str())
+        .link_preview(true);
+    let sent = client
+        .send_message(peer_ref, input)
+        .await
+        .map_err(|e| anyhow::anyhow!("telegram refused it: {e}"))?;
+    let msg_id = sent.id();
+    // Sent: from here on nothing is an error, since it must not read as unsent.
+    let note = match client.get_messages_by_id(peer_ref, &[msg_id]).await {
+        Ok(back) => match back.into_iter().next().flatten() {
+            Some(message) => {
+                let sender = names.of(client, &message).await;
+                match store(db, self_id, &message.raw, sender).await {
+                    Ok(_) => None,
+                    Err(e) => Some(format!("sent, but not stored: {e:#}")),
+                }
+            }
+            None => Some("sent, but telegram did not return it".to_owned()),
+        },
+        Err(e) => Some(format!("sent, but could not be read back: {e}")),
+    };
+    if let Some(note) = &note {
+        tracing::error!("outbox {}: {note}", send.id);
+    }
+    Ok((msg_id, note.map(|n| n.chars().take(255).collect())))
 }
 
 /// The chat's small picture, as `avatars/<id>.jpg` under the media dir, where the

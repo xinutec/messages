@@ -147,11 +147,11 @@ async fn an_unknown_origin_is_not_found() {
     );
 }
 
-/// Only IRC can be sent to. Signal is read-only by decision (see `api::send`);
-/// Telegram's echo would be confirmable, but sending there is not designed yet.
-/// These are real origins: the claim is that a known non-IRC origin is refused.
+/// Only IRC and Telegram can be sent to. Signal is read-only by decision (see
+/// `api::send`). These are real origins: the claim is that a known origin that
+/// cannot send is refused, and Telegram refuses an id that names no conversation.
 #[tokio::test]
-async fn sending_is_refused_for_every_origin_but_irc() {
+async fn sending_is_refused_for_signal_gchat_and_no_telegram_conversation() {
     let Some(pool) = pool().await else { return };
     let cookie = signed_in(&pool).await;
     for origin in ["signal", "gchat", "telegram"] {

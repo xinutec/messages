@@ -1,4 +1,5 @@
-// Sending a line, IRC only: the draft, the send, and irssi's answer.
+// Sending a line on IRC or Telegram: the draft, the send, and the answer of
+// irssi or of the Telegram feed.
 
 import { type Signal, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
@@ -12,14 +13,14 @@ export class Composer {
    *  submits even when the keydown handler returned early. */
   readonly composing = signal(false);
   readonly sending = signal(false);
-  /** irssi's refusal, shown as-is. */
+  /** The refusal, shown as-is. */
   readonly error = signal<string | null>(null);
 
   constructor(
     private readonly api: MessagesApi,
     private readonly origin: Signal<Origin | undefined>,
     private readonly id: Signal<string | undefined>,
-    /** irssi logged it: show the line, by reloading the thread. */
+    /** It is archived: show it, by reloading the thread. */
     private readonly archived: () => Promise<void>,
   ) {}
 
@@ -40,7 +41,8 @@ export class Composer {
       // Cleared only once sent, so a failure keeps what was typed.
       this.draft.set('');
       if (res.archived) await this.archived();
-      else this.error.set('Sent. It will appear here after the next import.');
+      else if (o === 'irc') this.error.set('Sent. It will appear here after the next import.');
+      else this.error.set('Sent, but not archived yet.');
     } catch {
       this.error.set('Could not reach the server.');
     } finally {

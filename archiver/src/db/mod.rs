@@ -18,7 +18,7 @@ pub use migrations::{
     BACKFILL_SERVER_TIMES, BACKFILL_TEXT_STYLES,
 };
 pub use telegram::{
-    TelegramBackfill, TelegramDeleteScope, TelegramMediaState, TelegramReadDirection,
+    TelegramBackfill, TelegramDeleteScope, TelegramMediaState, TelegramReadDirection, TelegramSend,
     TelegramStored,
 };
 

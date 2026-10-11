@@ -138,17 +138,25 @@ describe('Thread', () => {
     const up = resolveUp(declared, { origin: 'irc', id: '#c' }, { origin: 'irc', from: '42' });
     expect(up).toEqual(expect.objectContaining({ path: '/', query: { origin: 'irc' } }));
   });
-  it('offers a composer for IRC only — the other origins have no live client', () => {
+  it('offers a composer for IRC and a Telegram DM or group — never Signal, nor a broadcast', () => {
     const { thread, ref, fixture } = setup();
-    ref.setInput('origin', 'signal');
-    ref.setInput('id', 'dm:a');
-    fixture.detectChanges();
-    expect(thread.canSend()).toBe(false);
-
-    ref.setInput('origin', 'irc');
-    ref.setInput('id', '7');
-    fixture.detectChanges();
-    expect(thread.canSend()).toBe(true);
+    const tg = (id: string, kind: Conversation['kind']): Conversation => ({
+      origin: 'telegram', id, name: id, kind, network: null, message_count: 1, last_ts: 1, last: null, unread: 0, avatar: null,
+    });
+    TestBed.inject(MessagesStore).conversations.set([tg('4242', 'dm'), tg('-77', 'group'), tg('-1055', 'channel')]);
+    const opens = (origin: string, id: string): boolean => {
+      ref.setInput('origin', origin);
+      ref.setInput('id', id);
+      fixture.detectChanges();
+      return thread.canSend();
+    };
+    expect(opens('signal', 'dm:a')).toBe(false);
+    expect(opens('irc', '7')).toBe(true);
+    expect(opens('telegram', '4242')).toBe(true);
+    expect(opens('telegram', '-77')).toBe(true);
+    expect(opens('telegram', '-1055')).toBe(false);
+    // Not in the list yet: no composer until its kind is known.
+    expect(opens('telegram', '999')).toBe(false);
   });
 
   it('keeps the draft when the send is refused, and clears it only once it went', async () => {
@@ -184,6 +192,15 @@ describe('Thread', () => {
     await thread.composer.send();
     expect(thread.composer.draft()).toBe('');
     expect(thread.composer.error()).toContain('after the next import');
+
+    // Telegram has no import to wait for.
+    ref.setInput('origin', 'telegram');
+    ref.setInput('id', '4242');
+    fixture.detectChanges();
+    api.send.mockReturnValueOnce(of({ sent: true, error: null, archived: false }));
+    thread.composer.draft.set('gone, but not stored');
+    await thread.composer.send();
+    expect(thread.composer.error()).toBe('Sent, but not archived yet.');
   });
 
   it('drops an older page that arrives after the reader switched conversations', async () => {
