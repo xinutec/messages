@@ -103,8 +103,8 @@ One-time setup, in case it must be redone: register the OAuth2 client in
 Nextcloud admin (redirect URI `https://messages.xinutec.org/auth/callback`); put
 a Cloudflare `Zone:DNS:Edit` token in `cert-manager` as `cloudflare-api-token`
 and apply `00-letsencrypt-dns-issuer.yaml` (isis needs DNS-01); `messages →
-10.100.0.2` is in `code/dns`; `NC_CLIENT_ID=… NC_CLIENT_SECRET=…
-./k8s/secret.sh` writes the session key and OAuth client.
+10.100.0.2` is in `code/dns`; `plan-run secrets` (kubes README, "Secrets")
+makes the session key and takes the OAuth client from `--values`.
 
 ## Tests
 `gate.dhall` is the gate and the pre-commit hook:
