@@ -68,6 +68,50 @@ test("a selection spanning messages copies as an irssi log", async ({ page }) =>
   );
 });
 
+/** Picking by hand: a long press (a right click here) takes the bar, taps pick
+ *  more, and the bar's copy writes the same log a drag does. */
+test("picked messages copy as the log from the bar, then the picking ends", async ({ page }) => {
+  await openThread(page);
+  await page.locator('.msg[data-id="a"]').click({ button: "right" });
+  await expect(page.getByText("1 selected")).toBeVisible();
+  await page.locator('.msg[data-id="c"]').click();
+  await expect(page.getByText("2 selected")).toBeVisible();
+  await page.getByRole("button", { name: "Copy" }).click();
+  // The toast follows the write; a read before it sees the clipboard as it was.
+  await expect(page.getByText("Copied 2 messages")).toBeVisible();
+  expect(await clipboardText(page)).toBe(
+    "--- Day changed Thu Aug 13 2026\n" +
+      "14:32 <user> hello there\n" +
+      "--- Day changed Fri Aug 14 2026\n" +
+      "09:05 <simon> morning",
+  );
+  await expect(page.getByText("2 selected")).toBeHidden();
+});
+
+/** While picking, what is inside a bubble takes no tap: a link picks the
+ *  message rather than opening. The CSS does this, so only a browser can tell. */
+test("while picking, a tap on a link picks its message instead of following it", async ({ page }) => {
+  await openThread(page);
+  await page.route("**/api/conversations/**/messages**", (r) =>
+    r.fulfill({
+      json: {
+        messages: [...MESSAGES, line("e", Date.UTC(2026, 7, 14, 9, 6), "simon", "see https://example.com/x")],
+        has_more: false,
+        next_cursor: null,
+        prev_cursor: null,
+      } satisfies MessagesPage,
+    }),
+  );
+  await page.reload();
+  await page.locator('.msg[data-id="e"] a').waitFor();
+  await page.locator('.msg[data-id="a"]').click({ button: "right" });
+  const opened = page.context().waitForEvent("page", { timeout: 1000 }).then(() => true, () => false);
+  // `force`: the link is under `pointer-events: none`, which is the point.
+  await page.locator('.msg[data-id="e"] a').click({ force: true });
+  await expect(page.getByText("2 selected")).toBeVisible();
+  expect(await opened).toBe(false);
+});
+
 test("a selection inside one message copies the words, and nothing else", async ({ page }) => {
   await openThread(page);
   await dragSelect(page, "b", "b");

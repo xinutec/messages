@@ -9,7 +9,8 @@ import { MatListModule } from '@angular/material/list';
 import { MatMenuModule } from '@angular/material/menu';
 import { MatCalendar } from '@angular/material/datepicker';
 import { FormsModule } from '@angular/forms';
-import { Pictures, ScaffoldActions, ScaffoldLeading, scaffoldTitle } from '@xinutec/ui-scaffold';
+import { MatSnackBar } from '@angular/material/snack-bar';
+import { Pictures, ScaffoldActions, ScaffoldContext, ScaffoldLeading, scaffoldTitle } from '@xinutec/ui-scaffold';
 
 import { firstValueFrom } from 'rxjs';
 
@@ -18,7 +19,7 @@ import { Avatar } from './avatar';
 import { FetchRequests } from './fetch-requests';
 import { segments } from './formatting';
 import { hue } from './list-row';
-import { chatLogHtml, formatChatLog } from './copy-log';
+import { clipboardOf, writeClipboard } from './copy-log';
 import { selectedMessages } from './selection';
 import {
   attachmentUrl,
@@ -57,6 +58,11 @@ const POLL_MS = 5000;
     '(touchmove)': 'readerMoved = true',
     '(pointerdown)': 'readerMoved = true',
     '(keydown)': 'readerMoved = true',
+    // Picking messages by hand; see `pickedIds`. On the host rather than the
+    // bubbles: the bubble is found from the event, and nothing else here is one.
+    '(contextmenu)': 'onPress($event)',
+    '(click)': 'onTap($event)',
+    '(document:keydown.escape)': 'clearPicked()',
   },
   imports: [
     NgTemplateOutlet,
@@ -67,6 +73,7 @@ const POLL_MS = 5000;
     MatListModule,
     MatProgressBarModule,
     ScaffoldActions,
+    ScaffoldContext,
     ScaffoldLeading,
     Avatar,
     MatMenuModule,
@@ -81,6 +88,7 @@ export class Thread {
   private appRef = inject(ApplicationRef);
   private locale = inject(LOCALE_ID);
   private host = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
+  private snack = inject(MatSnackBar);
   private readonly messagesEl = viewChild<ElementRef<HTMLElement>>('messagesEl');
 
   // Shared with the clipboard; see attachment.ts.
@@ -222,6 +230,7 @@ export class Thread {
       const key = o != null && i != null ? `${o}:${i}` : null;
       if (key === loadedKey) return;
       loadedKey = key;
+      this.clearPicked();
       if (o != null && i != null) void this.loadThread(o, i);
       else this.resetState();
     });
@@ -479,13 +488,78 @@ export class Thread {
     if (data == null) return;
     const picked = selectedMessages(this.messagesEl()?.nativeElement, document.getSelection(), this.rendered());
     if (picked.length < 2) return;
-    // The conversation's size, only when the selection is the whole rendered
-    // window (a truncated select-all). Absent before the list loads.
-    const total = picked.length === this.rendered().length ? this.conversation()?.message_count : undefined;
-    const text = formatChatLog(picked, total != null ? { total } : undefined);
+    const { text, html } = clipboardOf(picked, this.scopeOf(picked));
     data.setData('text/plain', text);
-    data.setData('text/html', chatLogHtml(text));
+    if (html != null) data.setData('text/html', html);
     e.preventDefault();
+  }
+
+  /** The conversation's size, only when the copy is the whole rendered window
+   *  (a truncated select-all). Absent before the list loads. */
+  private scopeOf(picked: readonly Message[]): { total: number } | undefined {
+    const total = picked.length === this.rendered().length ? this.conversation()?.message_count : undefined;
+    return total != null ? { total } : undefined;
+  }
+
+  // ---- picking messages by hand -------------------------------------------
+
+  /** Messages picked for a copy, Signal's way: a long press picks the first and
+   *  enters the mode, taps pick and unpick others, unpicking the last leaves.
+   *  The long press is the `contextmenu` event, which a touch screen fires on
+   *  one and a desk on a right click. Kept as ids; the bar and the copy read
+   *  `picked`, so a message collapsed out of the window drops out. */
+  readonly pickedIds = signal<ReadonlySet<string>>(new Set());
+  readonly picked = computed(() => {
+    const ids = this.pickedIds();
+    return this.rendered().filter((m) => ids.has(m.id));
+  });
+
+  protected clearPicked(): void {
+    if (this.pickedIds().size > 0) this.pickedIds.set(new Set());
+  }
+
+  private togglePicked(id: string): void {
+    const next = new Set(this.pickedIds());
+    if (!next.delete(id)) next.add(id);
+    this.pickedIds.set(next);
+  }
+
+  /** The message a pointer event is on, by its bubble. */
+  private messageAt(e: Event): string | undefined {
+    const at = e.target instanceof Element ? e.target : null;
+    return at?.closest<HTMLElement>('.msg[data-id]')?.dataset['id'];
+  }
+
+  protected onPress(e: MouseEvent): void {
+    // A link or a picture keeps the browser's own menu.
+    if (e.target instanceof Element && e.target.closest('a, img, video, audio')) return;
+    const id = this.messageAt(e);
+    if (id == null) return;
+    e.preventDefault();
+    this.togglePicked(id);
+  }
+
+  /** While picking, a tap anywhere on a bubble is a pick; thread.scss keeps
+   *  what is inside it from taking the tap. */
+  protected onTap(e: MouseEvent): void {
+    if (this.picked().length === 0) return;
+    const id = this.messageAt(e);
+    if (id == null) return;
+    e.preventDefault();
+    this.togglePicked(id);
+  }
+
+  async copyPicked(): Promise<void> {
+    const picked = this.picked();
+    const { text, html } = clipboardOf(picked, this.scopeOf(picked));
+    try {
+      await writeClipboard(text, html);
+    } catch {
+      this.snack.open("Couldn't copy", undefined, { duration: 3000 });
+      return;
+    }
+    this.snack.open(picked.length === 1 ? 'Copied' : `Copied ${picked.length} messages`, undefined, { duration: 2000 });
+    this.clearPicked();
   }
 
   // ---- keeping up with what arrives ---------------------------------------

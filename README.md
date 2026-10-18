@@ -44,7 +44,8 @@ source IPs survive k3s servicelb; check before relying on it.
 - `frontend/` — Angular: conversation list with origin filter, thread view, and
   an IRC composer. `frontend/src/app/thread-window.ts` keeps a window of a long
   thread in the DOM; `frontend/src/app/copy-log.ts` copies a selection as an
-  irssi log (the inverse of `irclog/`); `frontend/src/app/attachment.ts` names
+  irssi log (the inverse of `irclog/`), whether dragged over or picked by hand
+  (a long press, then taps, as in Signal); `frontend/src/app/attachment.ts` names
   attachments for both screen and clipboard. `frontend/src/app/generated/` is
   written by ts-rs (`scripts/gen-types.sh`) and imported through
   `frontend/src/app/models.ts`.

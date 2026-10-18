@@ -92,3 +92,24 @@ export function chatLogHtml(text: string): string {
     .replace(/"/g, '&quot;');
   return `<pre>${escaped}</pre>`;
 }
+
+/** What a copy of these messages puts on the clipboard: one message's words as
+ *  they are, two or more as the log, in both flavours. */
+export function clipboardOf(messages: readonly Message[], scope?: LogScope): { text: string; html?: string } {
+  if (messages.length === 1) return { text: bodyLines(messages[0]).join('\n') };
+  const text = formatChatLog(messages, scope);
+  return { text, html: chatLogHtml(text) };
+}
+
+/** Put text, and its rich flavour where the browser takes one, on the clipboard. */
+export async function writeClipboard(text: string, html?: string): Promise<void> {
+  if (html != null && typeof ClipboardItem !== 'undefined') {
+    const item = new ClipboardItem({
+      'text/plain': new Blob([text], { type: 'text/plain' }),
+      'text/html': new Blob([html], { type: 'text/html' }),
+    });
+    await navigator.clipboard.write([item]);
+  } else {
+    await navigator.clipboard.writeText(text);
+  }
+}

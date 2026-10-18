@@ -184,6 +184,14 @@
     background: color-mix(in srgb, var(--mat-sys-primary) 12%, transparent);
   }
 
+  // Picked by hand (thread.ts `pickedIds`): a ring and a wash in the primary, over
+  // either background.
+  &.picked {
+    outline: 2px solid var(--mat-sys-primary);
+    outline-offset: -2px;
+    background: color-mix(in srgb, var(--mat-sys-primary) 24%, var(--mat-sys-surface));
+  }
+
   // Words only: the time floats at the end of the text, on its last line when
   // there is room and under it when not, as Signal sets it.
   &.plain {
@@ -196,6 +204,25 @@
       margin: 0.45rem 0 0 0.75rem;
     }
   }
+}
+
+// While any message is picked, a tap anywhere on a bubble picks or unpicks it:
+// nothing inside takes the tap, and no text gets selected.
+.messages.picking {
+  user-select: none;
+  .msg {
+    cursor: pointer;
+    * {
+      pointer-events: none;
+    }
+  }
+}
+
+// The bar while picking (thread.html `scaffoldContext`): the count stands where
+// the name would, and pushes the copy to the end.
+.picked-count {
+  flex: 1;
+  font-weight: 500;
 }
 
 // One sender's run reads as one block: where two of its bubbles meet, the

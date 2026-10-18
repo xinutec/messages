@@ -4,7 +4,7 @@ import { ActivatedRoute, Router, convertToParamMap, provideRouter, withComponent
 import { RouterTestingHarness } from '@angular/router/testing';
 import { BehaviorSubject, Observable, Subject, of } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
-import { declaredUp, resolveUp } from '@xinutec/ui-scaffold';
+import { Place, declaredUp, resolveUp } from '@xinutec/ui-scaffold';
 
 import { routes } from './app.routes';
 import { Thread } from './thread';
@@ -741,6 +741,105 @@ describe('Thread deleted messages', () => {
     const { written } = fireCopy(f);
     expect(written.get('text/plain')).toContain('(deleted)');
     expect(written.get('text/plain')).not.toContain('the retracted words');
+  });
+});
+
+describe('Thread picking messages by hand', () => {
+  const bubble = (f: ComponentFixture<Thread>, id: string): HTMLElement =>
+    (f.nativeElement as HTMLElement).querySelector(`.msg[data-id="${id}"]`)!;
+  /** The long press: `contextmenu`, as a touch screen and a right click fire it. */
+  const press = (f: ComponentFixture<Thread>, on: Element): boolean => {
+    const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    on.dispatchEvent(ev);
+    f.detectChanges();
+    return ev.defaultPrevented;
+  };
+  const tap = (f: ComponentFixture<Thread>, on: Element): void => {
+    on.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    f.detectChanges();
+  };
+  const pickedIds = (f: ComponentFixture<Thread>): string[] => f.componentInstance.picked().map((m) => m.id);
+  const writes: string[] = [];
+  Object.defineProperty(navigator, 'clipboard', {
+    value: {
+      writeText: (t: string): Promise<void> => {
+        writes.push(t);
+        return Promise.resolve();
+      },
+    },
+    configurable: true,
+  });
+  const root = (f: ComponentFixture<Thread>): HTMLElement => f.nativeElement as HTMLElement;
+
+  it('a long press picks the message; taps pick and unpick; unpicking the last leaves', async () => {
+    const f = await threeRendered();
+    const place = TestBed.inject(Place);
+    expect(press(f, bubble(f, 'a'))).toBe(true);
+    expect(pickedIds(f)).toEqual(['a']);
+    expect(place.context()).toBeDefined();
+    expect(root(f).querySelector('.messages.picking')).not.toBeNull();
+    tap(f, bubble(f, 'c').querySelector('.body')!);
+    expect(pickedIds(f)).toEqual(['a', 'c']);
+    tap(f, bubble(f, 'a'));
+    expect(pickedIds(f)).toEqual(['c']);
+    tap(f, bubble(f, 'c'));
+    expect(pickedIds(f)).toEqual([]);
+    expect(place.context()).toBeUndefined();
+    expect(root(f).querySelector('.messages.picking')).toBeNull();
+  });
+
+  it('a tap picks nothing until a long press has', async () => {
+    const f = await threeRendered();
+    tap(f, bubble(f, 'a'));
+    expect(pickedIds(f)).toEqual([]);
+  });
+
+  it('copies the picked messages as the log, in thread order, and leaves', async () => {
+    const f = await threeRendered();
+    press(f, bubble(f, 'c'));
+    tap(f, bubble(f, 'a'));
+    writes.length = 0;
+    await f.componentInstance.copyPicked();
+    expect(writes).toEqual([
+      '--- Day changed Thu Aug 13 2026\n14:32 <user> hello there\n--- Day changed Fri Aug 14 2026\n09:05 <simon> morning',
+    ]);
+    expect(pickedIds(f)).toEqual([]);
+  });
+
+  it('copies one picked message as its words', async () => {
+    const f = await threeRendered();
+    press(f, bubble(f, 'b'));
+    writes.length = 0;
+    await f.componentInstance.copyPicked();
+    expect(writes).toEqual(['hi']);
+  });
+
+  it('a long press on a link leaves the browser its own menu', async () => {
+    const { thread, ref, fixture } = setup();
+    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    api.messages.mockReturnValue(page([{ ...msg('a', 1000), body: 'see https://example.com/x' }]));
+    ref.setInput('origin', 'irc');
+    ref.setInput('id', '7');
+    fixture.detectChanges();
+    await settle(thread);
+    fixture.detectChanges();
+    const link = bubble(fixture, 'a').querySelector('a')!;
+    expect(press(fixture, link)).toBe(false);
+    expect(pickedIds(fixture)).toEqual([]);
+  });
+
+  it('Escape leaves, and so does opening another conversation', async () => {
+    const f = await threeRendered();
+    press(f, bubble(f, 'a'));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    f.detectChanges();
+    expect(pickedIds(f)).toEqual([]);
+
+    press(f, bubble(f, 'a'));
+    expect(pickedIds(f)).toEqual(['a']);
+    f.componentRef.setInput('id', '8');
+    f.detectChanges();
+    expect(f.componentInstance.pickedIds().size).toBe(0);
   });
 });
 
