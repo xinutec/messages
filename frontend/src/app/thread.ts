@@ -536,6 +536,8 @@ export class Thread {
     const id = this.messageAt(e);
     if (id == null) return;
     e.preventDefault();
+    // A touch screen's long press may have started selecting the words too.
+    document.getSelection()?.removeAllRanges();
     this.togglePicked(id);
   }
 

@@ -8,8 +8,10 @@ import { testMessage } from "../src/app/test-message";
  * jsdom's Selection API is wrong here.
  */
 
-// Fixed, so the rendered clock does not follow the machine's time zone.
-test.use({ timezoneId: "UTC", permissions: ["clipboard-read", "clipboard-write"] });
+// Fixed, so the rendered clock does not follow the machine's time zone. A mouse,
+// not the suite's touch screen: dragging over the words is a desk's way, and on
+// a touch screen they are not selectable at all (the last test).
+test.use({ timezoneId: "UTC", permissions: ["clipboard-read", "clipboard-write"], hasTouch: false });
 
 const ME = { user_id: "u1", display_name: "Test User" } satisfies Me;
 /** Matches the four messages served, or every copy would report truncation. */
@@ -166,4 +168,18 @@ test("a quote of two messages carries no such notice", async ({ page }) => {
   const text = await clipboardText(page);
   expect(text).toContain("hello there");
   expect(text).not.toContain("not loaded on screen");
+});
+/** On a touch screen a long press picks the message, so the words are not
+ *  selectable: a drag over them selects nothing (thread.scss). */
+test.describe("on a touch screen", () => {
+  test.use({ hasTouch: true });
+
+  test("a drag over the words selects nothing; a long press picks the message", async ({ page }) => {
+    await openThread(page);
+    await dragSelect(page, "a", "c");
+    expect(await page.evaluate(() => document.getSelection()?.toString() ?? "")).toBe("");
+    await page.locator('.msg[data-id="b"]').click({ button: "right" });
+    await expect(page.getByText("1 selected")).toBeVisible();
+    expect(await page.evaluate(() => document.getSelection()?.toString() ?? "")).toBe("");
+  });
 });

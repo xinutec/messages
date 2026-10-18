@@ -206,6 +206,16 @@
   }
 }
 
+// On a touch screen a long press picks the message (thread.ts `onPress`), as in
+// Signal, so the words are not selectable there: the press would otherwise also
+// start a text selection, handles and all, before the pick could say no. A desk
+// keeps its drag selection; one picked message copies its words.
+@media (pointer: coarse) {
+  .messages {
+    user-select: none;
+  }
+}
+
 // While any message is picked, a tap anywhere on a bubble picks or unpicks it:
 // nothing inside takes the tap, and no text gets selected.
 .messages.picking {
