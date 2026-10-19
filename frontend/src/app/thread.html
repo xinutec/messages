@@ -25,9 +25,9 @@
   </ng-template>
 
   <!-- Messages picked by hand take the bar, as in Signal: close, the count, copy. -->
-  @if (picked().length; as n) {
+  @if (picking.picked().length; as n) {
     <ng-template scaffoldContext>
-      <button matIconButton (click)="clearPicked()" aria-label="Stop selecting">
+      <button matIconButton (click)="picking.clear()" aria-label="Stop selecting">
         <mat-icon>close</mat-icon>
       </button>
       <span class="picked-count">{{ n }} selected</span>
@@ -84,8 +84,8 @@
     <div [style.height.px]="topSpacer()"></div>
 
     <!-- A long press picks a message, then taps pick more: the host's listeners,
-         see thread.ts `pickedIds`. -->
-    <div class="messages" #messagesEl [class.picking]="picked().length > 0">
+         see selection.ts `Picking`. -->
+    <div class="messages" #messagesEl [class.picking]="picking.picked().length > 0">
       @for (g of dayGroups(); track g.key) {
         <section>
           <div class="day"><span>{{ g.ts | date: 'fullDate' }}</span></div>
@@ -93,7 +93,7 @@
             <!-- An album is one set: its members share a grid and one meta line. -->
             <div class="run" [class.album]="run.length > 1" [class.out]="run[0].is_outgoing">
               @for (m of run; track m.id) {
-                <div class="msg" [class.out]="m.is_outgoing" [class.first]="startsRun().has(m.id)" [class.plain]="isPlain(m)" [class.landed]="landedId() === m.id" [class.picked]="pickedIds().has(m.id)" [attr.data-id]="m.id" [attr.data-ts]="m.ts">
+                <div class="msg" [class.out]="m.is_outgoing" [class.first]="startsRun().has(m.id)" [class.plain]="isPlain(m)" [class.landed]="landedId() === m.id" [class.picked]="picking.ids().has(m.id)" [attr.data-id]="m.id" [attr.data-ts]="m.ts">
                   <!-- Who speaks, once per run, and only where the bar does not already say. -->
                   @if (!m.is_outgoing && namesSenders() && startsRun().has(m.id)) {
                     <!-- Coloured by who it is, not what they are called: see `senderHue`. -->

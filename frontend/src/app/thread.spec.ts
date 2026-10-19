@@ -759,7 +759,7 @@ describe('Thread picking messages by hand', () => {
     on.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     f.detectChanges();
   };
-  const pickedIds = (f: ComponentFixture<Thread>): string[] => f.componentInstance.picked().map((m) => m.id);
+  const pickedIds = (f: ComponentFixture<Thread>): string[] => f.componentInstance.picking.picked().map((m) => m.id);
   const writes: string[] = [];
   Object.defineProperty(navigator, 'clipboard', {
     value: {
@@ -871,7 +871,7 @@ describe('Thread picking messages by hand', () => {
     // Closed from the bar: the step is taken away for us.
     press(f, bubble(f, 'a'));
     expect(overlay()).toBe(true);
-    f.componentInstance.clearPicked();
+    f.componentInstance.picking.clear();
     expect(overlay()).toBe(false);
     // That a second session's close steps back once, not once per session, is
     // held by e2e/copy.spec.ts: this mock's back is immediate, so a stale
@@ -884,7 +884,7 @@ describe('Thread picking messages by hand', () => {
     press(f, bubble(f, 'a'));
     f.componentInstance.commitFromParam();
     expect(navigate).not.toHaveBeenCalled();
-    f.componentInstance.clearPicked();
+    f.componentInstance.picking.clear();
     f.componentInstance.commitFromParam();
     expect(navigate).toHaveBeenCalledTimes(1);
     expect(navigate.mock.calls[0][1]).toMatchObject({ replaceUrl: true });
@@ -901,7 +901,7 @@ describe('Thread picking messages by hand', () => {
     expect(pickedIds(f)).toEqual(['a']);
     f.componentRef.setInput('id', '8');
     f.detectChanges();
-    expect(f.componentInstance.pickedIds().size).toBe(0);
+    expect(f.componentInstance.picking.ids().size).toBe(0);
   });
 });
 

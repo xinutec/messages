@@ -10,9 +10,9 @@ import { MatMenuModule } from '@angular/material/menu';
 import { MatCalendar } from '@angular/material/datepicker';
 import { FormsModule } from '@angular/forms';
 import { MatSnackBar } from '@angular/material/snack-bar';
-import { Pictures, ScaffoldActions, ScaffoldContext, ScaffoldLeading, scaffoldTitle, wireBack } from '@xinutec/ui-scaffold';
+import { Pictures, ScaffoldActions, ScaffoldContext, ScaffoldLeading, scaffoldTitle } from '@xinutec/ui-scaffold';
 
-import { Subject, firstValueFrom, take } from 'rxjs';
+import { firstValueFrom } from 'rxjs';
 
 import { attachmentName, attachmentNoun, isAudio, isImage, isVideo } from './attachment';
 import { Avatar } from './avatar';
@@ -20,7 +20,7 @@ import { FetchRequests } from './fetch-requests';
 import { segments } from './formatting';
 import { hue } from './list-row';
 import { clipboardOf, writeClipboard } from './copy-log';
-import { selectedMessages } from './selection';
+import { Picking, selectedMessages } from './selection';
 import {
   attachmentUrl,
   dayGroups,
@@ -58,11 +58,11 @@ const POLL_MS = 5000;
     '(touchmove)': 'readerMoved = true',
     '(pointerdown)': 'readerMoved = true',
     '(keydown)': 'readerMoved = true',
-    // Picking messages by hand; see `pickedIds`. On the host rather than the
+    // Picking messages by hand; see `picking`. On the host rather than the
     // bubbles: the bubble is found from the event, and nothing else here is one.
-    '(contextmenu)': 'onPress($event)',
-    '(click)': 'onTap($event)',
-    '(document:keydown.escape)': 'clearPicked()',
+    '(contextmenu)': 'picking.press($event)',
+    '(click)': 'picking.tap($event)',
+    '(document:keydown.escape)': 'picking.clear()',
   },
   imports: [
     NgTemplateOutlet,
@@ -231,7 +231,7 @@ export class Thread {
       const key = o != null && i != null ? `${o}:${i}` : null;
       if (key === loadedKey) return;
       loadedKey = key;
-      this.clearPicked();
+      this.picking.clear();
       if (o != null && i != null) void this.loadThread(o, i);
       else this.resetState();
     });
@@ -256,8 +256,8 @@ export class Thread {
     const destroyRef = inject(DestroyRef);
     // Intervals and timers go with the component.
     destroyRef.onDestroy(() => clearInterval(poll));
-    // Back while picking pops the entry `setPicked` added, and ends the picking.
-    const popped = this.location.subscribe(() => this.clearPicked());
+    // Back while picking pops the entry the picking added, and ends it.
+    const popped = this.location.subscribe(() => this.picking.clear());
     destroyRef.onDestroy(() => popped.unsubscribe());
     destroyRef.onDestroy(() => {
       if (this.recheck != null) clearTimeout(this.recheck);
@@ -507,101 +507,13 @@ export class Thread {
 
   // ---- picking messages by hand -------------------------------------------
 
-  /** Messages picked for a copy, Signal's way: a long press picks the first and
-   *  enters the mode, taps pick and unpick others, unpicking the last leaves.
-   *  The long press is the `contextmenu` event, which a touch screen fires on
-   *  one and a desk on a right click. A further long press, or Shift-click at a
-   *  desk, picks the range from the last message picked through this one, as a
-   *  file manager's Shift-click does. Kept as ids; the bar and the copy read
-   *  `picked`, in thread order, from every loaded message: one collapsed out of
-   *  the DOM by a long scroll is still picked. */
-  readonly pickedIds = signal<ReadonlySet<string>>(new Set());
-  readonly picked = computed(() => {
-    const ids = this.pickedIds();
-    return this.messages().filter((m) => ids.has(m.id));
-  });
-  /** The last message picked: where a range starts. */
-  private anchor: string | null = null;
-  /** Picking ended other than by back; see `setPicked`. */
-  private readonly pickingClosed = new Subject<void>();
-
-  clearPicked(): void {
-    this.anchor = null;
-    if (this.pickedIds().size === 0) return;
-    this.setPicked(new Set());
-    // The scroll depth the URL did not take while picking; see `commitFromParam`.
-    this.scheduleFromParam();
-  }
-
-  /** Every change to the picked set goes through here, so picking is one
-   *  overlay to history (`wireBack`, as a dialog is): starting it adds the entry
-   *  back spends itself on, and ending it any other way takes the entry away. */
-  private setPicked(next: ReadonlySet<string>): void {
-    const was = this.pickedIds().size > 0;
-    this.pickedIds.set(next);
-    const is = next.size > 0;
-    // One emission, as a dialog's `afterClosed`: `wireBack` keeps its listener
-    // until the first, and a second session must not leave the first's behind.
-    if (is && !was) wireBack(this.location, this.pickingClosed.pipe(take(1)));
-    else if (was && !is) this.pickingClosed.next();
-  }
-
-  private togglePicked(id: string): void {
-    const next = new Set(this.pickedIds());
-    if (!next.delete(id)) {
-      next.add(id);
-      this.anchor = id;
-    }
-    this.setPicked(next);
-  }
-
-  /** Pick from the anchor through `id`, both included; a lone `id` when there
-   *  is no anchor on view. */
-  private pickThrough(id: string): void {
-    const ids = this.messages().map((m) => m.id);
-    const from = this.anchor == null ? -1 : ids.indexOf(this.anchor);
-    const to = ids.indexOf(id);
-    if (from < 0 || to < 0) {
-      if (!this.pickedIds().has(id)) this.togglePicked(id);
-      return;
-    }
-    const next = new Set(this.pickedIds());
-    for (const i of ids.slice(Math.min(from, to), Math.max(from, to) + 1)) next.add(i);
-    this.setPicked(next);
-    this.anchor = id;
-  }
-
-  /** The message a pointer event is on, by its bubble. */
-  private messageAt(e: Event): string | undefined {
-    const at = e.target instanceof Element ? e.target : null;
-    return at?.closest<HTMLElement>('.msg[data-id]')?.dataset['id'];
-  }
-
-  protected onPress(e: MouseEvent): void {
-    // A link or a picture keeps the browser's own menu.
-    if (e.target instanceof Element && e.target.closest('a, img, video, audio')) return;
-    const id = this.messageAt(e);
-    if (id == null) return;
-    e.preventDefault();
-    // A touch screen's long press may have started selecting the words too.
-    document.getSelection()?.removeAllRanges();
-    if (this.picked().length > 0) this.pickThrough(id);
-    else this.togglePicked(id);
-  }
-
-  /** While picking, a tap anywhere on a bubble is a pick; thread.scss keeps
-   *  what is inside it from taking the tap. */
-  protected onTap(e: MouseEvent): void {
-    if (this.picked().length === 0) return;
-    const id = this.messageAt(e);
-    if (id == null) return;
-    e.preventDefault();
-    if (e.shiftKey) this.pickThrough(id);
-    else this.togglePicked(id);
-  }
+  /** Messages picked by hand, for the bar and the copy; see selection.ts. When
+   *  it ends, the URL takes the scroll depth it did not while picking
+   *  (`commitFromParam`). */
+  readonly picking = new Picking(this.messages, this.location, () => this.scheduleFromParam());
 
   async copyPicked(): Promise<void> {
-    const picked = this.picked();
+    const picked = this.picking.picked();
     const { text, html } = clipboardOf(picked, this.scopeOf(picked));
     try {
       await writeClipboard(text, html);
@@ -610,7 +522,7 @@ export class Thread {
       return;
     }
     this.snack.open(picked.length === 1 ? 'Copied' : `Copied ${picked.length} messages`, undefined, { duration: 2000 });
-    this.clearPicked();
+    this.picking.clear();
   }
 
   // ---- keeping up with what arrives ---------------------------------------
@@ -776,9 +688,9 @@ export class Thread {
 
   commitFromParam(): void {
     // Not while picking: this replaces the history entry on top, which is then
-    // the picking's step (`setPicked`), and back would leave the conversation
-    // instead of ending the picking. `clearPicked` catches up.
-    if (this.picked().length > 0) return;
+    // the picking's step, and the close would have none to take away. The
+    // picking's end catches up.
+    if (this.picking.picked().length > 0) return;
     // Where the viewport is, whoever moved it. The landing (its marker, `?at`, a
     // picked day) goes only once the reader has: the pages the app loads around
     // it by itself scroll too, and on a phone at once.

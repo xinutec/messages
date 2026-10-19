@@ -184,7 +184,7 @@
     background: color-mix(in srgb, var(--mat-sys-primary) 12%, transparent);
   }
 
-  // Picked by hand (thread.ts `pickedIds`): a ring and a wash in the primary, over
+  // Picked by hand (selection.ts `Picking`): a ring and a wash in the primary, over
   // either background.
   &.picked {
     outline: 2px solid var(--mat-sys-primary);
@@ -206,7 +206,7 @@
   }
 }
 
-// On a touch screen a long press picks the message (thread.ts `onPress`), as in
+// On a touch screen a long press picks the message (selection.ts `Picking`), as in
 // Signal, so the words are not selectable there: the press would otherwise also
 // start a text selection, handles and all, before the pick could say no. A desk
 // keeps its drag selection; one picked message copies its words.
