@@ -180,14 +180,13 @@ withdrawn if the feed never took it.
 - Google Chat reactors are named only as far as gchat-archive's second capture
   has reached; Telegram truncates its reactor list. `count` stays authoritative.
 - A custom-emoji Telegram reaction has no characters to draw and is left out.
-- Signal link previews show title and description; a preview image is not yet
-  captured (#1693).
 - Telegram secret chats are device-local and absent.
 - A Telegram message edited before the archive saw it has no earlier versions:
   Telegram serves only the current text.
 - A Google Chat picture's bytes are held only if a harvest fetched them; the
   download URL needs the user's session.
 - Attachments are read whole into memory to serve, against the pod's memory limit.
-- Copying reaches only the rendered window (400 messages). A select-all of a
-  longer conversation ends with `--- copied 400 of N messages; the rest were not
-  loaded on screen`.
+- A drag selection reaches only the rendered window (400 messages); a select-all
+  of a longer conversation ends with `--- copied 400 of N messages; the rest were
+  not loaded on screen`. Messages picked by hand stay picked when they scroll out
+  of the window, but only loaded pages can be picked from.
