@@ -101,10 +101,15 @@ test("back ends the picking and stays; after the bar's close, back leaves", asyn
   await expect(page.getByText("1 selected")).toBeHidden();
   await expect(page).toHaveURL(/\/conversation\/irc\/7/);
 
+  // A second session, closed from the bar: still in the conversation (one
+  // session's listener once left a second step behind, and the close left the
+  // conversation); only the back after it leaves.
   await page.locator('.msg[data-id="a"]').click({ button: "right" });
   await expect(page.getByText("1 selected")).toBeVisible();
   await page.getByRole("button", { name: "Stop selecting" }).click();
   await expect(page.getByText("1 selected")).toBeHidden();
+  await page.waitForTimeout(300);
+  await expect(page).toHaveURL(/\/conversation\/irc\/7/);
   await page.goBack();
   await expect(page).not.toHaveURL(/\/conversation\//);
 });

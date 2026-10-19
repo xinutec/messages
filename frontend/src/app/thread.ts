@@ -12,7 +12,7 @@ import { FormsModule } from '@angular/forms';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { Pictures, ScaffoldActions, ScaffoldContext, ScaffoldLeading, scaffoldTitle, wireBack } from '@xinutec/ui-scaffold';
 
-import { Subject, firstValueFrom } from 'rxjs';
+import { Subject, firstValueFrom, take } from 'rxjs';
 
 import { attachmentName, attachmentNoun, isAudio, isImage, isVideo } from './attachment';
 import { Avatar } from './avatar';
@@ -536,7 +536,9 @@ export class Thread {
     const was = this.pickedIds().size > 0;
     this.pickedIds.set(next);
     const is = next.size > 0;
-    if (is && !was) wireBack(this.location, this.pickingClosed);
+    // One emission, as a dialog's `afterClosed`: `wireBack` keeps its listener
+    // until the first, and a second session must not leave the first's behind.
+    if (is && !was) wireBack(this.location, this.pickingClosed.pipe(take(1)));
     else if (was && !is) this.pickingClosed.next();
   }
 

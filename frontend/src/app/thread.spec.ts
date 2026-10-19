@@ -873,6 +873,9 @@ describe('Thread picking messages by hand', () => {
     expect(overlay()).toBe(true);
     f.componentInstance.clearPicked();
     expect(overlay()).toBe(false);
+    // That a second session's close steps back once, not once per session, is
+    // held by e2e/copy.spec.ts: this mock's back is immediate, so a stale
+    // listener finds the step already gone and the double step cannot show.
   });
 
   it('Escape leaves, and so does opening another conversation', async () => {
