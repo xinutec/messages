@@ -71,11 +71,14 @@
     </div>
   }
 
+  <!-- The bar stays over what the service worker kept while the network's page
+       comes (thread.ts `loadThread`); with nothing kept, it stands alone. -->
   @if (loadingThread()) {
-    <mat-progress-bar mode="indeterminate" />
-  } @else if (threadError()) {
+    <div class="loading-thread"><mat-progress-bar mode="indeterminate" /></div>
+  }
+  @if (threadError()) {
     <p class="error">Couldn't load this conversation. <button mat-button (click)="reload()">Retry</button></p>
-  } @else {
+  } @else if (!loadingThread() || messages().length > 0) {
     <!-- Fetching still-older messages after scrolling to the very top. -->
     @if (loadingOlder()) {
       <div class="loading-older"><mat-progress-bar mode="indeterminate" /></div>

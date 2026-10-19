@@ -25,6 +25,8 @@ function makeApi() {
     search: vi.fn(() => of([])),
     logout: vi.fn(() => of({})),
     send: vi.fn(() => of({ sent: true, error: null, archived: true })),
+    keptConversations: vi.fn(() => Promise.resolve(null)),
+    keptMessages: vi.fn(() => Promise.resolve(null)),
   } as unknown as MessagesApi;
 }
 
@@ -838,6 +840,59 @@ describe('Thread composer — drafts, lines and what a send does', () => {
     expect(thread.composer.sending()).toBe(true);
     expect(root.querySelector<HTMLTextAreaElement>('textarea[name=draft]')!.disabled).toBe(false);
     expect(root.querySelector<HTMLButtonElement>('button[aria-label=Send]')!.disabled).toBe(true);
+  });
+});
+
+describe('Thread — the page the worker kept', () => {
+  async function openKept(network: Subject<MessagesPage>, kept: MessagesPage | null): Promise<{ thread: Thread; fixture: ComponentFixture<Thread> }> {
+    const { thread, ref, fixture } = setup();
+    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn>; keptMessages: ReturnType<typeof vi.fn> };
+    api.messages.mockReturnValue(network);
+    api.keptMessages.mockResolvedValue(kept);
+    ref.setInput('origin', 'irc');
+    ref.setInput('id', '7');
+    fixture.detectChanges();
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+    fixture.detectChanges();
+    return { thread, fixture };
+  }
+  const kept = (): MessagesPage => ({ messages: [{ ...msg('k', 1000), body: 'kept' }], has_more: false, next_cursor: null, prev_cursor: null });
+
+  it('shows the kept page under the bar before the network answers; the same page then changes nothing', async () => {
+    const network = new Subject<MessagesPage>();
+    const { thread, fixture } = await openKept(network, kept());
+    const root = fixture.nativeElement as HTMLElement;
+    expect(thread.rendered().map((m) => m.id)).toEqual(['k']);
+    expect(thread.loadingThread()).toBe(true);
+    expect(root.querySelector('.loading-thread')).not.toBeNull();
+    expect(root.querySelector('.msg[data-id="k"]')).not.toBeNull();
+    const before = thread.messages();
+    network.next(kept());
+    network.complete();
+    await new Promise((r) => setTimeout(r, 0));
+    fixture.detectChanges();
+    expect(thread.loadingThread()).toBe(false);
+    expect(thread.messages()).toBe(before);
+    expect(root.querySelector('.loading-thread')).toBeNull();
+  });
+
+  it('a different page from the network replaces the kept one', async () => {
+    const network = new Subject<MessagesPage>();
+    const { thread } = await openKept(network, kept());
+    network.next({ messages: [{ ...msg('k', 1000), body: 'kept' }, { ...msg('n', 2000), body: 'new' }], has_more: false, next_cursor: null, prev_cursor: null });
+    network.complete();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(thread.rendered().map((m) => m.id)).toEqual(['k', 'n']);
+    expect(thread.loadingThread()).toBe(false);
+  });
+
+  it('with nothing kept, the bar stands alone until the page comes', async () => {
+    const network = new Subject<MessagesPage>();
+    const { thread, fixture } = await openKept(network, null);
+    const root = fixture.nativeElement as HTMLElement;
+    expect(thread.loadingThread()).toBe(true);
+    expect(root.querySelector('.loading-thread')).not.toBeNull();
+    expect(root.querySelector('.messages')).toBeNull();
   });
 });
 

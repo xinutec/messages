@@ -34,6 +34,8 @@ function makeApi(over: { search?: ReturnType<typeof vi.fn>; conversations?: Retu
     messages: vi.fn(() => of({ messages: [msg('1', 100)], has_more: false, next_cursor: null, prev_cursor: null } as MessagesPage)),
     search: over.search ?? vi.fn(() => of([] as SearchHit[])),
     logout: vi.fn(() => of({})),
+    keptConversations: vi.fn(() => Promise.resolve(null)),
+    keptMessages: vi.fn(() => Promise.resolve(null)),
   } as unknown as MessagesApi;
 }
 

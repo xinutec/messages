@@ -44,6 +44,18 @@ export class MessagesApi {
     return this.http.get<Conversation[]>('/api/conversations');
   }
 
+  /** The list as the service worker last kept it (ngsw-config's `api` group),
+   *  or `null`: shown at once, until the network's answer replaces it. */
+  keptConversations(): Promise<Conversation[] | null> {
+    return kept<Conversation[]>('/api/conversations');
+  }
+
+  /** The newest page as the service worker last kept it, or `null`; the URL is
+   *  the one `messages` asks for, so the worker's key is the same. */
+  keptMessages(origin: Origin, id: string, limit = 100): Promise<MessagesPage | null> {
+    return kept<MessagesPage>(`/api/conversations/${origin}/${encodeURIComponent(id)}/messages?limit=${limit}`);
+  }
+
   /** One page of a conversation. `dir`:
    *
    *  - `older` (the default): strictly before the cursor;
@@ -89,5 +101,21 @@ export class MessagesApi {
       params['id'] = scope.id;
     }
     return this.http.get<SearchHit[]>('/api/search', { params });
+  }
+}
+
+/** What the service worker last stored for `url`, read through the browser's
+ *  Cache API: the page renders it before the network answers, and the policy
+ *  (network first) would otherwise show nothing until then. `null` with no
+ *  worker, no entry, or an entry that does not read. */
+async function kept<T>(url: string): Promise<T | null> {
+  if (typeof caches === 'undefined') return null;
+  try {
+    const res = await caches.match(url);
+    if (res == null) return null;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the worker stored what the typed request above returned: the same trust HttpClient's generic gives the network's answer
+    return (await res.json()) as T;
+  } catch {
+    return null;
   }
 }

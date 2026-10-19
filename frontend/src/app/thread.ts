@@ -433,6 +433,22 @@ export class Thread {
       if (at != null && (await this.loadAround(origin, id, { at }))) return;
       // `?on`, a picked date, likewise.
       if (onDay != null && (await this.loadAround(origin, id, { onDay }))) return;
+      // A plain open shows the newest page as the service worker last kept it,
+      // under the bar, until the network's page comes; the same page then changes
+      // nothing, and a different one replaces it, moving the view only if the
+      // reader has not.
+      let shown: string | null = null;
+      if (from == null) {
+        const kept = await this.api.keptMessages(origin, id, PAGE);
+        if (gen !== this.generation) return;
+        if (kept != null && kept.messages.length > 0) {
+          this.messages.set(kept.messages);
+          this.fetches.watchInFlight(kept.messages);
+          this.appRef.tick();
+          this.win.withScrollLock(() => this.win.scrollToBottom());
+          shown = JSON.stringify(kept.messages);
+        }
+      }
       const first = await firstValueFrom(this.api.messages(origin, id, undefined, PAGE));
       if (gen !== this.generation) return;
       let msgs = first.messages;
@@ -458,16 +474,22 @@ export class Thread {
         hasMore = older.has_more;
         cursor = older.next_cursor;
       }
-      this.messages.set(msgs);
-      this.fetches.watchInFlight(msgs);
       this.hasMore.set(hasMore);
       this.cursor = cursor;
+      if (shown != null && shown === JSON.stringify(msgs)) {
+        // What is on view is the network's page already.
+        this.loadingThread.set(false);
+        return;
+      }
+      const moved = shown != null && this.readerMoved;
+      this.messages.set(msgs);
+      this.fetches.watchInFlight(msgs);
       this.loadingThread.set(false);
       this.appRef.tick();
       // Position the viewport, then bound the DOM around it.
       this.win.withScrollLock(() => {
         if (from != null) this.win.scrollToTs(from);
-        else this.win.scrollToBottom();
+        else if (!moved) this.win.scrollToBottom();
       });
       this.win.trimToWindow();
       // `watchContent` holds the bottom as images load.

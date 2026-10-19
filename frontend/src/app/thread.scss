@@ -97,6 +97,14 @@
   padding: 0.25rem 0;
 }
 
+// Over the kept page while the network's comes: stays at the top as the
+// reader scrolls, above the floating day.
+.loading-thread {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+
 // Each day is a section with its separator in the flow. The day on view floats
 // at the top only while the reader scrolls (`.floating`; thread.ts `scrolling`),
 // as Signal draws it, and fades once they stop.

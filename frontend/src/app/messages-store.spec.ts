@@ -1,7 +1,7 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { HttpErrorResponse } from '@angular/common/http';
-import { of, throwError } from 'rxjs';
+import { Subject, of, throwError } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 
 import { MessagesApi } from './messages-api';
@@ -19,6 +19,7 @@ function setup(): { store: MessagesStore; api: { conversations: ReturnType<typeo
   const api = {
     me: vi.fn(() => of({ user_id: 'u1', display_name: 'Test User' })),
     conversations: vi.fn(() => of(ONE)),
+    keptConversations: vi.fn(() => Promise.resolve(null)),
   } as unknown as MessagesApi;
   TestBed.configureTestingModule({
     providers: [provideZonelessChangeDetection(), { provide: MessagesApi, useValue: api }],
@@ -60,7 +61,7 @@ describe('MessagesStore — opening offline', () => {
   function setupWith(me: ReturnType<typeof vi.fn>): { store: MessagesStore; conversations: ReturnType<typeof vi.fn> } {
     const conversations = vi.fn(() => of(ONE));
     TestBed.configureTestingModule({
-      providers: [provideZonelessChangeDetection(), { provide: MessagesApi, useValue: { me, conversations } }],
+      providers: [provideZonelessChangeDetection(), { provide: MessagesApi, useValue: { me, conversations, keptConversations: () => Promise.resolve(null) } }],
     });
     return { store: TestBed.inject(MessagesStore), conversations };
   }
@@ -118,3 +119,35 @@ describe('MessagesStore — opening offline', () => {
     expect(localStorage.getItem('messages.me')).toBeNull();
   });
 });
+
+describe('MessagesStore — the list the worker kept', () => {
+  it('shows the kept list at once, and the network\'s replaces it, an empty one included', async () => {
+    localStorage.setItem('messages.me', JSON.stringify({ user_id: 'u1', display_name: 'Test User' }));
+    vi.stubGlobal('caches', {
+      match: (url: string) => Promise.resolve(url === '/api/conversations' ? new Response(JSON.stringify(ONE)) : undefined),
+    });
+    const network = new Subject<Conversation[]>();
+    TestBed.configureTestingModule({
+      providers: [
+        provideZonelessChangeDetection(),
+        { provide: MessagesApi, useValue: { me: vi.fn(() => of({ user_id: 'u1', display_name: 'Test User' })), conversations: vi.fn(() => network), keptConversations: () => kept() } },
+      ],
+    });
+    const store = TestBed.inject(MessagesStore);
+    store.init();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(store.conversations()).toEqual(ONE);
+    network.next([]);
+    expect(store.conversations()).toEqual([]);
+    // Late kept data never overwrites what the network said.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(store.conversations()).toEqual([]);
+    vi.unstubAllGlobals();
+  });
+});
+
+/** The API's reader, through the stubbed Cache API; see messages-api.ts. */
+async function kept(): Promise<Conversation[] | null> {
+  const res = await caches.match('/api/conversations');
+  return res == null ? null : ((await res.json()) as Conversation[]);
+}

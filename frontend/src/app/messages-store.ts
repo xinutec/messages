@@ -22,11 +22,17 @@ export class MessagesStore {
   readonly offline = signal(false);
   readonly conversations = signal<Conversation[]>([]);
   private started = false;
+  /** The network has answered for the list; what the worker kept no longer counts. */
+  private fresh = false;
 
   /** Load the user then the conversation list. Idempotent (the shell calls it). */
   init(): void {
     if (this.started) return;
     this.started = true;
+    // The list as last seen, at once; the network's replaces it.
+    void this.api.keptConversations().then((kept) => {
+      if (kept != null && !this.fresh) this.conversations.set(kept);
+    });
     this.api.me().subscribe({
       next: (m) => {
         this.me.set(m);
@@ -60,7 +66,10 @@ export class MessagesStore {
    *  previous list stays: a stale list beats an empty one. */
   refresh(): void {
     this.api.conversations().subscribe({
-      next: (cs) => this.conversations.set(cs),
+      next: (cs) => {
+        this.fresh = true;
+        this.conversations.set(cs);
+      },
       // dev-lint: allow-ignored-error keeps the previous list: a stale list beats an empty one
       error: () => {},
     });
