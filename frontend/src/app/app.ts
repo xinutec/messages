@@ -55,6 +55,8 @@ export class App {
 
   readonly me = this.store.me;
   readonly loading = this.store.loading;
+  /** No network and nothing remembered; see messages-store.ts. */
+  readonly offline = this.store.offline;
   readonly conversations = this.store.conversations;
 
   /** The filter's labels, and its order. */
@@ -98,6 +100,11 @@ export class App {
     const list = this.conversations();
     return f === 'all' ? list : list.filter((c) => c.origin === f);
   });
+
+  /** Offline with nothing remembered: a fresh start, once there is a network. */
+  retry(): void {
+    window.location.reload();
+  }
 
   constructor() {
     this.swUpdates.start();
@@ -226,6 +233,7 @@ export class App {
   }
 
   signOut(): void {
+    this.store.forget();
     this.api.logout().subscribe(() => (window.location.href = '/'));
   }
 }

@@ -1,5 +1,6 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
+import { HttpErrorResponse } from '@angular/common/http';
 import { of, throwError } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -48,5 +49,72 @@ describe('MessagesStore', () => {
     api.conversations.mockReturnValue(throwError(() => new Error('offline')));
     store.refresh();
     expect(store.conversations()).toEqual(ONE);
+  });
+});
+
+describe('MessagesStore — opening offline', () => {
+  const remembered = { user_id: 'u1', display_name: 'Test User' };
+  const failing = (status: number) =>
+    vi.fn(() => throwError(() => new HttpErrorResponse({ status, statusText: status === 0 ? 'Unknown Error' : 'Error' })));
+
+  function setupWith(me: ReturnType<typeof vi.fn>): { store: MessagesStore; conversations: ReturnType<typeof vi.fn> } {
+    const conversations = vi.fn(() => of(ONE));
+    TestBed.configureTestingModule({
+      providers: [provideZonelessChangeDetection(), { provide: MessagesApi, useValue: { me, conversations } }],
+    });
+    return { store: TestBed.inject(MessagesStore), conversations };
+  }
+
+  it('a signed-in start is remembered, and a later start with no network opens on it, offline', () => {
+    localStorage.clear();
+    const first = setupWith(vi.fn(() => of(remembered)));
+    first.store.init();
+    expect(localStorage.getItem('messages.me')).toContain('u1');
+
+    TestBed.resetTestingModule();
+    const { store, conversations } = setupWith(failing(0));
+    expect(store.loading()).toBe(false);
+    expect(store.me()?.user_id).toBe('u1');
+    store.init();
+    expect(store.me()?.user_id).toBe('u1');
+    expect(store.offline()).toBe(true);
+    // The list is still asked for: the service worker may hold it.
+    expect(conversations).toHaveBeenCalledTimes(1);
+  });
+
+  it('the service worker\'s offline answer (504) is not a sign-out either', () => {
+    localStorage.setItem('messages.me', JSON.stringify(remembered));
+    const { store } = setupWith(failing(504));
+    store.init();
+    expect(store.me()?.user_id).toBe('u1');
+    expect(store.offline()).toBe(true);
+  });
+
+  it('a 401 is a sign-out: the identity goes, and the sign-in page shows', () => {
+    localStorage.setItem('messages.me', JSON.stringify(remembered));
+    const { store } = setupWith(failing(401));
+    store.init();
+    expect(store.me()).toBeNull();
+    expect(store.offline()).toBe(false);
+    expect(localStorage.getItem('messages.me')).toBeNull();
+  });
+
+  it('with nothing remembered and no network, it is offline rather than signed out', () => {
+    localStorage.clear();
+    const { store, conversations } = setupWith(failing(0));
+    expect(store.loading()).toBe(true);
+    store.init();
+    expect(store.loading()).toBe(false);
+    expect(store.me()).toBeNull();
+    expect(store.offline()).toBe(true);
+    expect(conversations).not.toHaveBeenCalled();
+  });
+
+  it('forgetting, on logout, clears what was remembered', () => {
+    localStorage.setItem('messages.me', JSON.stringify(remembered));
+    const { store } = setupWith(vi.fn(() => of(remembered)));
+    store.forget();
+    expect(store.me()).toBeNull();
+    expect(localStorage.getItem('messages.me')).toBeNull();
   });
 });

@@ -1,18 +1,26 @@
+import { HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject, signal } from '@angular/core';
 
 import { MessagesApi } from './messages-api';
 import { Conversation, ConversationKind, Me, Origin } from './models';
+
+/** Where the last-known identity is kept, so the app opens offline rather than
+ *  at sign-in; the service worker keeps the list and the threads (ngsw-config). */
+const ME_KEY = 'messages.me';
 
 // Shell state, the signed-in user and the conversation list, shared by the
 // shell and the Thread, so a deep-linked Thread needs nothing from the router.
 @Injectable({ providedIn: 'root' })
 export class MessagesStore {
   private api = inject(MessagesApi);
-
-  readonly me = signal<Me | null>(null);
-  readonly loading = signal(true);
+  private readonly remembered = loadRememberedMe();
+  readonly me = signal<Me | null>(this.remembered);
+  /** Only a cold start with no remembered identity blocks on the loader. */
+  readonly loading = signal(this.remembered === null);
+  /** `/api/me` failed other than by being signed out, with no remembered
+   *  identity: offline, not sign-in. */
+  readonly offline = signal(false);
   readonly conversations = signal<Conversation[]>([]);
-
   private started = false;
 
   /** Load the user then the conversation list. Idempotent (the shell calls it). */
@@ -22,14 +30,30 @@ export class MessagesStore {
     this.api.me().subscribe({
       next: (m) => {
         this.me.set(m);
+        rememberMe(m);
+        this.offline.set(false);
         this.loading.set(false);
         this.refresh();
       },
-      error: () => {
-        this.me.set(null);
+      error: (e: unknown) => {
+        if (signedOut(e)) {
+          this.me.set(null);
+          rememberMe(null);
+        } else {
+          // The network or the server, not a sign-out: the remembered identity
+          // stands, and the list comes from the service worker's cache if it has it.
+          this.offline.set(true);
+          if (this.me() != null) this.refresh();
+        }
         this.loading.set(false);
       },
     });
+  }
+
+  /** Leaving: forget who it was, so the next start asks. */
+  forget(): void {
+    rememberMe(null);
+    this.me.set(null);
   }
 
   /** Re-read the conversation list, when the reader returns to it. On error the
@@ -57,5 +81,42 @@ export class MessagesStore {
     // An empty or whitespace name is no name.
     const name = c.name?.trim() ?? '';
     return name.length > 0 ? name : this.unnamed[c.kind];
+  }
+}
+
+/** A positive sign-out: the server said so. A dropped connection, the service
+ *  worker's offline answer (504) or a server fault is not one. */
+function signedOut(e: unknown): boolean {
+  return e instanceof HttpErrorResponse && (e.status === 401 || e.status === 403);
+}
+
+function isMe(v: unknown): v is Me {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    'user_id' in v &&
+    typeof v.user_id === 'string' &&
+    'display_name' in v &&
+    typeof v.display_name === 'string'
+  );
+}
+
+function loadRememberedMe(): Me | null {
+  try {
+    const raw = localStorage.getItem(ME_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    return isMe(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberMe(me: Me | null): void {
+  try {
+    if (me) localStorage.setItem(ME_KEY, JSON.stringify(me));
+    else localStorage.removeItem(ME_KEY);
+  } catch {
+    // Storage denied or full: the next start asks the server, as before.
   }
 }

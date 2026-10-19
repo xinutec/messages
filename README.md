@@ -43,7 +43,10 @@ source IPs survive k3s servicelb; check before relying on it.
   reaches the internet. It holds no credentials, database or disk.
 - `frontend/` — Angular: conversation list with origin filter, thread view, and
   a composer for IRC and Telegram (one draft per conversation; a paragraph
-  goes to IRC line by line, to Telegram whole). `frontend/src/app/thread-window.ts` keeps a window of a long
+  goes to IRC line by line, to Telegram whole). The service worker keeps the app, the list, the
+  threads opened and their pictures for reading offline (`frontend/ngsw-config.json`,
+  life's policy), and the identity is remembered so it opens offline rather than
+  at sign-in; sending offline refuses and keeps the draft. `frontend/src/app/thread-window.ts` keeps a window of a long
   thread in the DOM; `frontend/src/app/copy-log.ts` copies a selection as an
   irssi log (the inverse of `irclog/`), whether dragged over or picked by hand
   (a long press, then taps, as in Signal; a further long press or Shift-click

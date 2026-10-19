@@ -11,6 +11,18 @@
     "!/logout",
     "!/auth/**"
   ],
+  "dataGroups": [
+    {
+      "name": "api",
+      "urls": ["/api/me", "/api/conversations", "/api/conversations/*/*/messages**"],
+      "cacheConfig": { "strategy": "freshness", "maxSize": 300, "maxAge": "30d", "timeout": "3s" }
+    },
+    {
+      "name": "avatars",
+      "urls": ["/api/conversations/*/*/avatar**"],
+      "cacheConfig": { "strategy": "performance", "maxSize": 200, "maxAge": "30d" }
+    }
+  ],
   "assetGroups": [
     {
       "name": "app",

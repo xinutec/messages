@@ -107,6 +107,13 @@
 
     <div class="pane"><router-outlet /></div>
   </div>
+} @else if (offline()) {
+  <!-- No network and no remembered identity: offline, not signed out. -->
+  <div class="signin">
+    <h1><mat-icon>cloud_off</mat-icon> messages</h1>
+    <p>You're offline. Reconnect to load your messages.</p>
+    <button mat-flat-button type="button" (click)="retry()"><mat-icon>refresh</mat-icon> Try again</button>
+  </div>
 } @else {
   <div class="signin">
     <h1>messages</h1>
