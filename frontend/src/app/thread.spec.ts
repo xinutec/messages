@@ -1,4 +1,5 @@
 import { Location } from '@angular/common';
+import { HttpErrorResponse } from '@angular/common/http';
 import { ComponentRef, provideZonelessChangeDetection } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter, withComponentInputBinding } from '@angular/router';
@@ -869,6 +870,19 @@ describe('Thread — the page the worker kept', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(thread.rendered().map((m) => m.id)).toEqual(['k', 'n']);
     expect(thread.loadingThread()).toBe(false);
+  });
+
+  it('a kept page outlives a network with no answer, and the shell knows the view is stale', async () => {
+    const network = new Subject<MessagesPage>();
+    const { thread, fixture } = await openKept(network, kept());
+    network.error(new HttpErrorResponse({ status: 0 }));
+    await new Promise((r) => setTimeout(r, 0));
+    fixture.detectChanges();
+    expect(thread.rendered().map((m) => m.id)).toEqual(['k']);
+    expect(thread.threadError()).toBe(false);
+    expect(thread.loadingThread()).toBe(false);
+    expect(TestBed.inject(MessagesStore).stale()).toBe(true);
+    expect((fixture.nativeElement as HTMLElement).querySelector('.error')).toBeNull();
   });
 
   it('with nothing kept, the bar stands alone until the page comes', async () => {

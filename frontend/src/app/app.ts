@@ -57,6 +57,8 @@ export class App {
   readonly loading = this.store.loading;
   /** No network and nothing remembered; see messages-store.ts. */
   readonly offline = this.store.offline;
+  /** What is on view is what the service worker kept; see messages-store.ts. */
+  readonly stale = this.store.stale;
   readonly conversations = this.store.conversations;
 
   /** The filter's labels, and its order. */

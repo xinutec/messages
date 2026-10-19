@@ -21,7 +21,20 @@ export class MessagesStore {
    *  identity: offline, not sign-in. */
   readonly offline = signal(false);
   readonly conversations = signal<Conversation[]>([]);
+  /** The last word from the network was no network: what is on view is what
+   *  the service worker kept, and the shell says so. Cleared by any answer. */
+  readonly stale = signal(false);
   private started = false;
+
+  noteAnswer(): void {
+    this.stale.set(false);
+  }
+
+  /** A request failed. Only no network counts as stale: a server fault is
+   *  not "what was last seen". */
+  noteFailure(e: unknown): void {
+    if (noNetwork(e)) this.stale.set(true);
+  }
   /** The network has answered for the list; what the worker kept no longer counts. */
   private fresh = false;
 
@@ -38,6 +51,7 @@ export class MessagesStore {
         this.me.set(m);
         rememberMe(m);
         this.offline.set(false);
+        this.noteAnswer();
         this.loading.set(false);
         this.refresh();
       },
@@ -49,6 +63,7 @@ export class MessagesStore {
           // The network or the server, not a sign-out: the remembered identity
           // stands, and the list comes from the service worker's cache if it has it.
           this.offline.set(true);
+          this.noteFailure(e);
           if (this.me() != null) this.refresh();
         }
         this.loading.set(false);
@@ -68,10 +83,11 @@ export class MessagesStore {
     this.api.conversations().subscribe({
       next: (cs) => {
         this.fresh = true;
+        this.noteAnswer();
         this.conversations.set(cs);
       },
-      // dev-lint: allow-ignored-error keeps the previous list: a stale list beats an empty one
-      error: () => {},
+      // The previous list stays: a stale list beats an empty one, and says so.
+      error: (e: unknown) => this.noteFailure(e),
     });
   }
 
@@ -97,6 +113,11 @@ export class MessagesStore {
  *  worker's offline answer (504) or a server fault is not one. */
 function signedOut(e: unknown): boolean {
   return e instanceof HttpErrorResponse && (e.status === 401 || e.status === 403);
+}
+
+/** A dropped connection (status 0) or the service worker's offline answer (504). */
+function noNetwork(e: unknown): boolean {
+  return e instanceof HttpErrorResponse && (e.status === 0 || e.status === 504);
 }
 
 function isMe(v: unknown): v is Me {

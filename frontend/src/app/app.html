@@ -13,6 +13,11 @@
     </button>
   </mat-menu>
 
+  <!-- No network since the last answer: the list and the threads are as the
+       service worker kept them. Above both panes, so a thread sees it too. -->
+  @if (stale()) {
+    <p class="offline-note"><mat-icon>cloud_off</mat-icon> Offline, showing what was last seen.</p>
+  }
   <div class="shell" [class.has-selection]="active()">
     <aside class="list">
       <form class="search search-pill" role="search" (ngSubmit)="runSearch()">

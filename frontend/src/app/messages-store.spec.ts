@@ -148,3 +148,29 @@ async function kept(): Promise<Conversation[] | null> {
   const res = await caches.match('/api/conversations');
   return res == null ? null : ((await res.json()) as Conversation[]);
 }
+
+describe('MessagesStore — saying when the view is what was kept', () => {
+  it('a refresh with no network makes the view stale; an answer clears it; a server fault is neither', () => {
+    localStorage.clear();
+    const conversations = vi.fn<MessagesApi['conversations']>(() => of(ONE));
+    TestBed.configureTestingModule({
+      providers: [provideZonelessChangeDetection(), { provide: MessagesApi, useValue: fakeApi({ conversations }) }],
+    });
+    const store = TestBed.inject(MessagesStore);
+    store.init();
+    expect(store.stale()).toBe(false);
+    conversations.mockReturnValue(throwError(() => new HttpErrorResponse({ status: 0 })));
+    store.refresh();
+    expect(store.stale()).toBe(true);
+    expect(store.conversations()).toEqual(ONE);
+    conversations.mockReturnValue(of(TWO));
+    store.refresh();
+    expect(store.stale()).toBe(false);
+    conversations.mockReturnValue(throwError(() => new HttpErrorResponse({ status: 500 })));
+    store.refresh();
+    expect(store.stale()).toBe(false);
+    conversations.mockReturnValue(throwError(() => new HttpErrorResponse({ status: 504 })));
+    store.refresh();
+    expect(store.stale()).toBe(true);
+  });
+});

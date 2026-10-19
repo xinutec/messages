@@ -202,3 +202,21 @@ ui-scaffold {
   color: var(--mat-sys-on-surface-variant);
   opacity: 0.7;
 }
+
+// Over both panes while the network is away (app.html): quiet, and no room
+// taken when it is not.
+.offline-note {
+  margin: 0;
+  padding: 0.25rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font: var(--mat-sys-label-medium);
+  color: var(--mat-sys-on-surface-variant);
+  background: var(--mat-sys-surface-container);
+  mat-icon {
+    font-size: 1rem;
+    width: 1rem;
+    height: 1rem;
+  }
+}

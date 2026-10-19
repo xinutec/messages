@@ -427,6 +427,8 @@ export class Thread {
     const at = this.route.snapshot.queryParamMap.get('at');
     const onDay = Number(this.route.snapshot.queryParamMap.get('on')) || null;
     const from = Number(this.route.snapshot.queryParamMap.get('from')) || null;
+    // The kept page on view, if any, as a key; see below.
+    let shown: string | null = null;
     try {
       // `?at` means "put me here" and `?from` "I was here"; `?at` wins, and
       // `commitFromParam` replaces it with `from` on the first scroll.
@@ -437,7 +439,6 @@ export class Thread {
       // under the bar, until the network's page comes; the same page then changes
       // nothing, and a different one replaces it, moving the view only if the
       // reader has not.
-      let shown: string | null = null;
       if (from == null) {
         const kept = await this.api.keptMessages(origin, id, PAGE);
         if (gen !== this.generation) return;
@@ -493,10 +494,15 @@ export class Thread {
       });
       this.win.trimToWindow();
       // `watchContent` holds the bottom as images load.
-    } catch {
+    } catch (e: unknown) {
       if (gen !== this.generation) return;
-      this.threadError.set(true);
       this.loadingThread.set(false);
+      // The kept page stays on view; the shell says it is what was last seen.
+      if (shown != null) {
+        this.store.noteFailure(e);
+        return;
+      }
+      this.threadError.set(true);
     }
   }
 
@@ -576,6 +582,7 @@ export class Thread {
     const gen = this.generation;
     try {
       const page = await firstValueFrom(this.api.messages(o, i, undefined, PAGE));
+      this.store.noteAnswer();
       // The reader may have switched conversations meanwhile.
       if (gen !== this.generation) return;
 
@@ -600,8 +607,9 @@ export class Thread {
       // Follow only a reader already at the end.
       if (wasAtBottom) this.win.withScrollLock(() => this.win.scrollToBottom());
       this.win.trimToWindow();
-    } catch {
-      // Not an error state.
+    } catch (e: unknown) {
+      // Not an error state; a poll with no network is what makes the view stale.
+      this.store.noteFailure(e);
     } finally {
       this.polling = false;
     }

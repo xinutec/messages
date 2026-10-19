@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { App } from './app';
 import { routes } from './app.routes';
 import { MessagesApi } from './messages-api';
+import { MessagesStore } from './messages-store';
 import { type FakeApi, fakeApi } from './test-api';
 import { Conversation, SearchHit } from './models';
 
@@ -248,5 +249,20 @@ describe('App', () => {
   it('has a label for each filter toggle and no orphans', () => {
     const { app } = setup(appApi());
     expect([...app.origins].sort()).toEqual(Object.keys(app.originLabels).sort());
+  });
+});
+
+describe('App — saying when the view is what was kept', () => {
+  it('shows the offline line over both panes while the view is stale, and not otherwise', () => {
+    const fixture = render(appApi());
+    const store = TestBed.inject(MessagesStore);
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('.offline-note')).toBeNull();
+    store.stale.set(true);
+    fixture.detectChanges();
+    expect(root.querySelector('.offline-note')?.textContent).toContain('Offline, showing what was last seen.');
+    store.stale.set(false);
+    fixture.detectChanges();
+    expect(root.querySelector('.offline-note')).toBeNull();
   });
 });

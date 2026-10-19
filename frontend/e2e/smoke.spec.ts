@@ -165,12 +165,15 @@ test("the day on view floats at the top while scrolling, and fades once the read
  *  thread.ts): a list and a page seeded into the Cache API as ngsw stores them
  *  (the readers match by URL across every cache), and a network held back three
  *  seconds. Seen on the phone first: a bar over nothing for the whole round trip. */
-test("a kept list and thread are on screen at once while the network is slow", async ({ page }) => {
+const pageOf = (messages: Message[]) => ({ messages, has_more: false, next_cursor: null, prev_cursor: null }) satisfies MessagesPage;
+
+/** Open the list once, signed in, then seed the Cache API as ngsw stores the
+ *  list and dm:a's newest page (the readers match by URL across every cache). */
+async function withKept(page: Page): Promise<Message[]> {
   await mockApi(page);
   await page.goto("/");
   await page.getByText("Alice").waitFor();
   const kept = multiDayThread().slice(0, 3);
-  const pageOf = (messages: Message[]) => ({ messages, has_more: false, next_cursor: null, prev_cursor: null }) satisfies MessagesPage;
   await page.evaluate(
     async ({ list, thread }) => {
       const c = await caches.open("seed");
@@ -180,6 +183,11 @@ test("a kept list and thread are on screen at once while the network is slow", a
     },
     { list: CONVERSATIONS, thread: pageOf(kept) },
   );
+  return kept;
+}
+
+test("a kept list and thread are on screen at once while the network is slow", async ({ page }) => {
+  const kept = await withKept(page);
   const slow = async (r: Route, json: Conversation[] | MessagesPage) => {
     await new Promise((res) => setTimeout(res, 3000));
     await r.fulfill({ json });
@@ -197,4 +205,18 @@ test("a kept list and thread are on screen at once while the network is slow", a
   await page.goto("/");
   await page.getByText("Alice").waitFor();
   expect(Date.now() - t0).toBeLessThan(2000);
+});
+
+/** With no network at all, the kept thread stays on view, no "couldn't load",
+ *  and the shell says what is on view is what was last seen. */
+test("offline, a kept thread stays on view and the shell says so", async ({ page }) => {
+  const kept = await withKept(page);
+  await page.route("**/api/conversations", (r) => r.abort("internetdisconnected"));
+  await page.route("**/api/conversations/**/messages**", (r) => r.abort("internetdisconnected"));
+  await page.goto("/conversation/signal/dm:a");
+  await page.locator(`.msg[data-id="${kept[0].id}"]`).waitFor();
+  await expect(page.locator(".offline-note")).toHaveText(/Offline, showing what was last seen/);
+  await expect(page.locator(".loading-thread")).toBeHidden();
+  await expect(page.getByText("Couldn't load this conversation")).toBeHidden();
+  await expect(page.locator(`.msg[data-id="${kept[0].id}"]`)).toBeVisible();
 });
