@@ -1,7 +1,7 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 import { expectIconFontLoaded, expectCleanLayout } from "@xinutec/ui-harness";
 
-import type { Conversation, Me, MessagesPage } from "../src/app/models";
+import type { Conversation, Me, Message, MessagesPage } from "../src/app/models";
 import { testMessage } from "../src/app/test-message";
 
 /**
@@ -159,4 +159,42 @@ test("the day on view floats at the top while scrolling, and fades once the read
   // Signal's pill goes once the reader stops; the separators stay in the flow.
   await page.waitForTimeout(1600);
   await expect(pill).not.toHaveClass(/shown/);
+});
+
+/** What the worker kept shows before the network answers (messages-store.ts,
+ *  thread.ts): a list and a page seeded into the Cache API as ngsw stores them
+ *  (the readers match by URL across every cache), and a network held back three
+ *  seconds. Seen on the phone first: a bar over nothing for the whole round trip. */
+test("a kept list and thread are on screen at once while the network is slow", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/");
+  await page.getByText("Alice").waitFor();
+  const kept = multiDayThread().slice(0, 3);
+  const pageOf = (messages: Message[]) => ({ messages, has_more: false, next_cursor: null, prev_cursor: null }) satisfies MessagesPage;
+  await page.evaluate(
+    async ({ list, thread }) => {
+      const c = await caches.open("seed");
+      const json = (v: unknown) => new Response(JSON.stringify(v), { headers: { "content-type": "application/json" } });
+      await c.put(new Request("/api/conversations"), json(list));
+      await c.put(new Request("/api/conversations/signal/dm%3Aa/messages?limit=100"), json(thread));
+    },
+    { list: CONVERSATIONS, thread: pageOf(kept) },
+  );
+  const slow = async (r: Route, json: Conversation[] | MessagesPage) => {
+    await new Promise((res) => setTimeout(res, 3000));
+    await r.fulfill({ json });
+  };
+  await page.route("**/api/conversations", (r) => slow(r, CONVERSATIONS));
+  await page.route("**/api/conversations/**/messages**", (r) => slow(r, pageOf(kept)));
+
+  let t0 = Date.now();
+  await page.goto("/conversation/signal/dm:a");
+  await page.locator(`.msg[data-id="${kept[0].id}"]`).waitFor();
+  expect(Date.now() - t0).toBeLessThan(2000);
+  await expect(page.locator(".loading-thread")).toBeVisible();
+
+  t0 = Date.now();
+  await page.goto("/");
+  await page.getByText("Alice").waitFor();
+  expect(Date.now() - t0).toBeLessThan(2000);
 });
