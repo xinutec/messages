@@ -878,6 +878,18 @@ describe('Thread picking messages by hand', () => {
     // listener finds the step already gone and the double step cannot show.
   });
 
+  it('the scroll depth does not rewrite the URL while picking, and catches up after', async () => {
+    const f = await threeRendered();
+    const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
+    press(f, bubble(f, 'a'));
+    f.componentInstance.commitFromParam();
+    expect(navigate).not.toHaveBeenCalled();
+    f.componentInstance.clearPicked();
+    f.componentInstance.commitFromParam();
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(navigate.mock.calls[0][1]).toMatchObject({ replaceUrl: true });
+  });
+
   it('Escape leaves, and so does opening another conversation', async () => {
     const f = await threeRendered();
     press(f, bubble(f, 'a'));

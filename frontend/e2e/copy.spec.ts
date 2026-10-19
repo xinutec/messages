@@ -114,6 +114,37 @@ test("back ends the picking and stays; after the bar's close, back leaves", asyn
   await expect(page).not.toHaveURL(/\/conversation\//);
 });
 
+/** Scrolling while picking must not cost the step: the thread records its scroll
+ *  depth in the URL by replacing the entry on top, which was the picking's. The
+ *  close then had no step to take away, and the next back was spent on the
+ *  conversation again instead of leaving it. */
+test("after a scroll while picking, the close still leaves one back to leave by", async ({ page }) => {
+  await openThread(page);
+  const many = Array.from({ length: 80 }, (_, i) =>
+    line(`m${i}`, Date.UTC(2026, 7, 13, 10, 0, i), i % 2 ? "simon" : "user", `line ${i}`),
+  );
+  await page.route("**/api/conversations/**/messages**", (r) =>
+    r.fulfill({ json: { messages: many, has_more: false, next_cursor: null, prev_cursor: null } satisfies MessagesPage }),
+  );
+  // From the list, as a reader arrives: a back that leaves the conversation then
+  // lands somewhere else, where opening the thread directly would land on it.
+  await page.goto("/");
+  await page.getByText("#chan").click();
+  await page.locator('.msg[data-id="m79"]').waitFor();
+  await page.locator('.msg[data-id="m79"]').click({ button: "right" });
+  await expect(page.getByText("1 selected")).toBeVisible();
+  await page.mouse.move(200, 400);
+  await page.mouse.wheel(0, -600);
+  // Past the 300 ms in which the depth would have been written.
+  await page.waitForTimeout(600);
+  await page.getByRole("button", { name: "Stop selecting" }).click();
+  await expect(page.getByText("1 selected")).toBeHidden();
+  await page.waitForTimeout(600);
+  await expect(page).toHaveURL(/\/conversation\/irc\/7/);
+  await page.goBack();
+  await expect(page).not.toHaveURL(/\/conversation\//);
+});
+
 /** While picking, what is inside a bubble takes no tap: a link picks the
  *  message rather than opening. The CSS does this, so only a browser can tell. */
 test("while picking, a tap on a link picks its message instead of following it", async ({ page }) => {

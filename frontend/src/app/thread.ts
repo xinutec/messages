@@ -513,11 +513,12 @@ export class Thread {
    *  one and a desk on a right click. A further long press, or Shift-click at a
    *  desk, picks the range from the last message picked through this one, as a
    *  file manager's Shift-click does. Kept as ids; the bar and the copy read
-   *  `picked`, so a message collapsed out of the window drops out. */
+   *  `picked`, in thread order, from every loaded message: one collapsed out of
+   *  the DOM by a long scroll is still picked. */
   readonly pickedIds = signal<ReadonlySet<string>>(new Set());
   readonly picked = computed(() => {
     const ids = this.pickedIds();
-    return this.rendered().filter((m) => ids.has(m.id));
+    return this.messages().filter((m) => ids.has(m.id));
   });
   /** The last message picked: where a range starts. */
   private anchor: string | null = null;
@@ -526,7 +527,10 @@ export class Thread {
 
   clearPicked(): void {
     this.anchor = null;
-    if (this.pickedIds().size > 0) this.setPicked(new Set());
+    if (this.pickedIds().size === 0) return;
+    this.setPicked(new Set());
+    // The scroll depth the URL did not take while picking; see `commitFromParam`.
+    this.scheduleFromParam();
   }
 
   /** Every change to the picked set goes through here, so picking is one
@@ -554,7 +558,7 @@ export class Thread {
   /** Pick from the anchor through `id`, both included; a lone `id` when there
    *  is no anchor on view. */
   private pickThrough(id: string): void {
-    const ids = this.rendered().map((m) => m.id);
+    const ids = this.messages().map((m) => m.id);
     const from = this.anchor == null ? -1 : ids.indexOf(this.anchor);
     const to = ids.indexOf(id);
     if (from < 0 || to < 0) {
@@ -771,6 +775,10 @@ export class Thread {
   }
 
   commitFromParam(): void {
+    // Not while picking: this replaces the history entry on top, which is then
+    // the picking's step (`setPicked`), and back would leave the conversation
+    // instead of ending the picking. `clearPicked` catches up.
+    if (this.picked().length > 0) return;
     // Where the viewport is, whoever moved it. The landing (its marker, `?at`, a
     // picked day) goes only once the reader has: the pages the app loads around
     // it by itself scroll too, and on a phone at once.
