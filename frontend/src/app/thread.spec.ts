@@ -10,6 +10,7 @@ import { Place, declaredUp, resolveUp } from '@xinutec/ui-scaffold';
 import { routes } from './app.routes';
 import { Thread } from './thread';
 import { MessagesApi } from './messages-api';
+import { type FakeApi, fakeApi, fakeApiOf } from './test-api';
 import { MessagesStore } from './messages-store';
 import { Conversation, Message, MessagesPage, ReplyTo } from './models';
 import { testMessage } from './test-message';
@@ -17,25 +18,12 @@ import { MAX_RESTORE_PAGES } from './thread-window';
 
 const msg = (id: string, ts: number): Message => testMessage({ id, ts });
 
-function makeApi() {
-  return {
-    me: vi.fn(() => of({ user_id: 'u1', display_name: 'Test User' })),
-    conversations: vi.fn(() => of([])),
-    messages: vi.fn(() => of({ messages: [msg('1', 100)], has_more: false, next_cursor: null, prev_cursor: null } as MessagesPage)),
-    search: vi.fn(() => of([])),
-    logout: vi.fn(() => of({})),
-    send: vi.fn(() => of({ sent: true, error: null, archived: true })),
-    keptConversations: vi.fn(() => Promise.resolve(null)),
-    keptMessages: vi.fn(() => Promise.resolve(null)),
-  } as unknown as MessagesApi;
-}
-
 function setup(): { thread: Thread; ref: ComponentRef<Thread>; fixture: ComponentFixture<Thread>; router: Router } {
   TestBed.configureTestingModule({
     providers: [
       provideZonelessChangeDetection(),
       provideRouter([]),
-      { provide: MessagesApi, useValue: makeApi() },
+      { provide: MessagesApi, useValue: fakeApi() },
     ],
   });
   // createComponent, since the component injects ElementRef.
@@ -63,7 +51,7 @@ function setupWithQuery(params: Record<string, string>): ComponentFixture<Thread
     providers: [
       provideZonelessChangeDetection(),
       provideRouter([]),
-      { provide: MessagesApi, useValue: makeApi() },
+      { provide: MessagesApi, useValue: fakeApi() },
       {
         provide: ActivatedRoute,
         useValue: {
@@ -80,7 +68,7 @@ function setupWithQuery(params: Record<string, string>): ComponentFixture<Thread
  *  load must finish first: `pollNewer` declines to run during one. */
 async function opened(held: Message[]): Promise<{ thread: Thread; api: { messages: ReturnType<typeof vi.fn> } }> {
   const { thread, ref, fixture } = setup();
-  const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+  const api = fakeApiOf();
   api.messages.mockReturnValue(page(held));
   ref.setInput('origin', 'irc');
   ref.setInput('id', '7');
@@ -164,7 +152,7 @@ describe('Thread', () => {
 
   it('keeps the draft when the send is refused, and clears it only once it went', async () => {
     const { thread, ref, fixture } = setup();
-    const api = TestBed.inject(MessagesApi) as unknown as { send: ReturnType<typeof vi.fn> };
+    const api = fakeApiOf();
     ref.setInput('origin', 'irc');
     ref.setInput('id', '7');
     fixture.detectChanges();
@@ -184,7 +172,7 @@ describe('Thread', () => {
 
   it('says so when a message went but is not in the archive yet', async () => {
     const { thread, ref, fixture } = setup();
-    const api = TestBed.inject(MessagesApi) as unknown as { send: ReturnType<typeof vi.fn> };
+    const api = fakeApiOf();
     ref.setInput('origin', 'irc');
     ref.setInput('id', '7');
     fixture.detectChanges();
@@ -208,7 +196,7 @@ describe('Thread', () => {
 
   it('drops an older page that arrives after the reader switched conversations', async () => {
     const { thread, ref, fixture } = setup();
-    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    const api = fakeApiOf();
     api.messages.mockReturnValue(page([msg('a2', 200)], true, 'older-than-a2'));
     ref.setInput('origin', 'irc');
     ref.setInput('id', '7');
@@ -266,7 +254,7 @@ describe('Thread', () => {
 
   it('does not send an empty or whitespace-only draft', async () => {
     const { thread, ref, fixture } = setup();
-    const api = TestBed.inject(MessagesApi) as unknown as { send: ReturnType<typeof vi.fn> };
+    const api = fakeApiOf();
     ref.setInput('origin', 'irc');
     ref.setInput('id', '7');
     fixture.detectChanges();
@@ -286,7 +274,7 @@ describe('Thread', () => {
  *  Range can be laid across them. */
 async function threeRendered(): Promise<ComponentFixture<Thread>> {
   const { thread, ref, fixture } = setup();
-  const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+  const api = fakeApiOf();
   api.messages.mockReturnValue(
     page([
       { ...msg('a', new Date(2026, 7, 13, 14, 32).getTime()), sender: 'user', body: 'hello there' },
@@ -342,7 +330,7 @@ describe('Thread reply jump', () => {
 
   /** The Thread routed at `url` by the app's own routes, settled on `held`. */
   async function routedAt(url: string, held: Message[]): Promise<{ thread: Thread; router: Router }> {
-    const api = makeApi() as unknown as { messages: ReturnType<typeof vi.fn> };
+    const api = fakeApi();
     api.messages.mockReturnValue(page(held));
     TestBed.configureTestingModule({
       providers: [
@@ -398,7 +386,7 @@ describe('Thread rendering', () => {
   it('draws an action with its star, which the template supplies', async () => {
     // The body is the words alone; the template supplies the star.
     const { thread, ref, fixture } = setup();
-    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    const api = fakeApiOf();
     api.messages.mockReturnValue(
       page([
         { ...msg('m', 100), sender: 'alice', body: 'hello' },
@@ -420,7 +408,7 @@ describe('Thread rendering', () => {
 describe('Thread edit history', () => {
   async function withEdited(): Promise<ComponentFixture<Thread>> {
     const { thread, ref, fixture } = setup();
-    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    const api = fakeApiOf();
     api.messages.mockReturnValue(
       page([
         {
@@ -474,7 +462,7 @@ describe('Thread edit history', () => {
   it('an edited message with no stored history is still marked, without a control', async () => {
     // No versions: the tag must not become a button that opens nothing.
     const { thread, ref, fixture } = setup();
-    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    const api = fakeApiOf();
     api.messages.mockReturnValue(page([{ ...msg('e', 100), edited: true, edits: [] }]));
     ref.setInput('origin', 'gchat');
     ref.setInput('id', 'gc1');
@@ -488,12 +476,9 @@ describe('Thread edit history', () => {
 });
 
 describe('Thread link offers', () => {
-  async function withOffer(): Promise<{ f: ComponentFixture<Thread>; api: { requestLinkImage: ReturnType<typeof vi.fn> } }> {
+  async function withOffer(): Promise<{ f: ComponentFixture<Thread>; api: FakeApi }> {
     const { thread, ref, fixture } = setup();
-    const api = TestBed.inject(MessagesApi) as unknown as {
-      messages: ReturnType<typeof vi.fn>;
-      requestLinkImage: ReturnType<typeof vi.fn>;
-    };
+    const api = fakeApiOf();
     api.messages.mockReturnValue(
       page([
         {
@@ -614,7 +599,7 @@ describe('Thread copy', () => {
   /** Screen and clipboard name an attachment the same way (`attachment.ts`). */
   it('calls a nameless unavailable image what it is, as the clipboard does', async () => {
     const { thread, ref, fixture } = setup();
-    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    const api = fakeApiOf();
     api.messages.mockReturnValue(
       page([
         {
@@ -641,7 +626,7 @@ describe('Thread copy', () => {
  *  reveal. */
 async function withLinkImage(deleted = false): Promise<ComponentFixture<Thread>> {
   const { thread, ref, fixture } = setup();
-  const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+  const api = fakeApiOf();
   const m: Message = {
     ...msg('d', new Date(2026, 7, 13, 14, 33).getTime()),
     body: deleted ? null : 'look at https://cloud.example.org/nc/s/TOKEN',
@@ -664,7 +649,7 @@ async function withLinkImage(deleted = false): Promise<ComponentFixture<Thread>>
  *  deleted one an image instead of a body. */
 async function withDeleted(withImage = false): Promise<ComponentFixture<Thread>> {
   const { thread, ref, fixture } = setup();
-  const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+  const api = fakeApiOf();
   const del: Message = withImage
     ? {
         ...msg('d', new Date(2026, 7, 13, 14, 33).getTime()),
@@ -769,7 +754,7 @@ describe('Thread composer — drafts, lines and what a send does', () => {
 
   it('sends an IRC paragraph as its lines, in order, and keeps what was refused', async () => {
     const { thread, ref, fixture } = setup();
-    const api = TestBed.inject(MessagesApi) as unknown as { send: ReturnType<typeof vi.fn> };
+    const api = fakeApiOf();
     open(ref, fixture, 'irc', '7');
     api.send.mockImplementation((_o: string, _i: string, text: string) =>
       of(text === 'two' ? { sent: false, error: 'refused: flood', archived: false } : { sent: true, error: null, archived: true }),
@@ -787,7 +772,7 @@ describe('Thread composer — drafts, lines and what a send does', () => {
 
   it('sends a Telegram message whole, line breaks and all', async () => {
     const { thread, ref, fixture } = setup();
-    const api = TestBed.inject(MessagesApi) as unknown as { send: ReturnType<typeof vi.fn> };
+    const api = fakeApiOf();
     open(ref, fixture, 'telegram', '4242');
     thread.composer.draft.set('first line\nsecond line');
     await thread.composer.send();
@@ -799,7 +784,7 @@ describe('Thread composer — drafts, lines and what a send does', () => {
     open(ref, fixture, 'irc', '7');
     await settle(thread);
     const poll = vi.spyOn(thread, 'pollNewer').mockResolvedValue();
-    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    const api = fakeApiOf();
     const loads = api.messages.mock.calls.length;
     thread.composer.draft.set('hello');
     await thread.composer.send();
@@ -809,7 +794,7 @@ describe('Thread composer — drafts, lines and what a send does', () => {
 
   it('Enter sends at a desk and breaks the line on a touch screen', async () => {
     const { thread, ref, fixture } = setup();
-    const api = TestBed.inject(MessagesApi) as unknown as { send: ReturnType<typeof vi.fn> };
+    const api = fakeApiOf();
     open(ref, fixture, 'irc', '7');
     thread.composer.draft.set('a line');
     const enter = (): KeyboardEvent => new KeyboardEvent('keydown', { key: 'Enter', cancelable: true });
@@ -829,7 +814,7 @@ describe('Thread composer — drafts, lines and what a send does', () => {
 
   it('leaves the box enabled while sending, so the keyboard stays up', async () => {
     const { thread, ref, fixture } = setup();
-    const api = TestBed.inject(MessagesApi) as unknown as { send: ReturnType<typeof vi.fn> };
+    const api = fakeApiOf();
     api.send.mockReturnValue(new Subject());
     open(ref, fixture, 'irc', '7');
     await settle(thread);
@@ -846,7 +831,7 @@ describe('Thread composer — drafts, lines and what a send does', () => {
 describe('Thread — the page the worker kept', () => {
   async function openKept(network: Subject<MessagesPage>, kept: MessagesPage | null): Promise<{ thread: Thread; fixture: ComponentFixture<Thread> }> {
     const { thread, ref, fixture } = setup();
-    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn>; keptMessages: ReturnType<typeof vi.fn> };
+    const api = fakeApiOf();
     api.messages.mockReturnValue(network);
     api.keptMessages.mockResolvedValue(kept);
     ref.setInput('origin', 'irc');
@@ -1009,7 +994,7 @@ describe('Thread picking messages by hand', () => {
 
   it('a long press on a link leaves the browser its own menu', async () => {
     const { thread, ref, fixture } = setup();
-    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    const api = fakeApiOf();
     api.messages.mockReturnValue(page([{ ...msg('a', 1000), body: 'see https://example.com/x' }]));
     ref.setInput('origin', 'irc');
     ref.setInput('id', '7');
@@ -1110,12 +1095,9 @@ describe('Thread copy — saying what was left out', () => {
 });
 
 describe('Thread composer — typing with an IME', () => {
-  async function composer(): Promise<{ thread: Thread; api: { send: ReturnType<typeof vi.fn> } }> {
+  async function composer(): Promise<{ thread: Thread; api: FakeApi }> {
     const { thread, ref, fixture } = setup();
-    const api = TestBed.inject(MessagesApi) as unknown as {
-      messages: ReturnType<typeof vi.fn>;
-      send: ReturnType<typeof vi.fn>;
-    };
+    const api = fakeApiOf();
     api.messages.mockReturnValue(page([msg('a', 1000)]));
     ref.setInput('origin', 'irc');
     ref.setInput('id', '7');
@@ -1166,7 +1148,7 @@ describe('restoring a saved scroll depth', () => {
    *  another page. */
   async function openWithFrom(from: string): Promise<{ calls: number }> {
     const fixture = setupWithQuery({ from });
-    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    const api = fakeApiOf();
     // Every page is newer than `from`, so only the bound ends the loop. The
     // supply is finite so that removing the bound fails rather than hangs.
     let n = 1000;
@@ -1203,7 +1185,7 @@ describe('landing on a search hit', () => {
     calls: { cursor?: string; dir?: string }[];
   }> {
     const fixture = setupWithQuery({ at });
-    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    const api = fakeApiOf();
     const calls: { cursor?: string; dir?: string }[] = [];
     api.messages.mockImplementation(
       (_o: unknown, _i: unknown, cursor?: string, _limit?: number, dir?: string) => {
@@ -1261,7 +1243,7 @@ describe('landing again without changing conversation', () => {
       providers: [
         provideZonelessChangeDetection(),
         provideRouter([]),
-        { provide: MessagesApi, useValue: makeApi() },
+        { provide: MessagesApi, useValue: fakeApi() },
         {
           provide: ActivatedRoute,
           useValue: {
@@ -1274,7 +1256,7 @@ describe('landing again without changing conversation', () => {
       ],
     });
     const fixture = TestBed.createComponent(Thread);
-    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    const api = fakeApiOf();
     let loads = 0;
     api.messages.mockImplementation((_o: unknown, _i: unknown, _c?: string, _l?: number, dir?: string) => {
       if (dir === 'at') loads++;
@@ -1300,7 +1282,7 @@ describe('growing a landing forwards', () => {
     dirs: (string | undefined)[];
   }> {
     const fixture = setupWithQuery({ at: '5000_9' });
-    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    const api = fakeApiOf();
     const dirs: (string | undefined)[] = [];
     let n = 0;
     api.messages.mockImplementation(
@@ -1360,7 +1342,7 @@ describe('growing a landing forwards', () => {
 describe('landing with a cursor the server could not read', () => {
   it('falls back to the newest page rather than joining two ends', async () => {
     const fixture = setupWithQuery({ at: 'not-a-cursor' });
-    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    const api = fakeApiOf();
     api.messages.mockImplementation(
       (_o: unknown, _i: unknown, cursor?: string, _l?: number, dir?: string) => {
         if (dir === 'at') return page([msg('oldest', 1000)], true, null, 'c');
@@ -1385,7 +1367,7 @@ describe('landing with a cursor the server could not read', () => {
 describe('marking the message that was landed on', () => {
   async function land(): Promise<{ thread: Thread; host: HTMLElement }> {
     const fixture = setupWithQuery({ at: '5000_9' });
-    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    const api = fakeApiOf();
     api.messages.mockImplementation(
       (_o: unknown, _i: unknown, _c?: string, _l?: number, dir?: string) =>
         dir === 'at'
@@ -1437,10 +1419,7 @@ describe('the delivery tag', () => {
 
   async function render(messages: Message[], conversations: Conversation[] = []) {
     const { thread, ref, fixture } = setup();
-    const api = TestBed.inject(MessagesApi) as unknown as {
-      messages: ReturnType<typeof vi.fn>;
-      conversations: ReturnType<typeof vi.fn>;
-    };
+    const api = fakeApiOf();
     api.conversations.mockReturnValue(of(conversations));
     api.messages.mockReturnValue(page(messages));
     TestBed.inject(MessagesStore).refresh();
@@ -1518,10 +1497,7 @@ describe('the delivery tag', () => {
 describe('the sender line', () => {
   async function render(messages: Message[], kind: Conversation['kind']) {
     const { thread, ref, fixture } = setup();
-    const api = TestBed.inject(MessagesApi) as unknown as {
-      messages: ReturnType<typeof vi.fn>;
-      conversations: ReturnType<typeof vi.fn>;
-    };
+    const api = fakeApiOf();
     api.conversations.mockReturnValue(
       of([{ origin: 'signal', id: 'dm:a', name: 'Chat', kind, network: null, message_count: 1, last_ts: 1, last: null, unread: 0, avatar: null }]),
     );

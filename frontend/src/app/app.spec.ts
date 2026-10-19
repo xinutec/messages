@@ -8,10 +8,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { App } from './app';
 import { routes } from './app.routes';
 import { MessagesApi } from './messages-api';
-import { Conversation, Me, Message, MessagesPage, SearchHit } from './models';
-import { testMessage } from './test-message';
-
-const msg = (id: string, ts: number): Message => testMessage({ id, ts });
+import { type FakeApi, fakeApi } from './test-api';
+import { Conversation, SearchHit } from './models';
 
 const CONVS: Conversation[] = [
   { origin: 'signal', id: 'dm:a', name: 'Alice', kind: 'dm', network: null, message_count: 5, last_ts: 200, last: null, unread: 0, avatar: null },
@@ -25,22 +23,8 @@ const TWO_NETWORKS: Conversation[] = [
   { origin: 'gchat', id: 'gc1', name: 'Bob', kind: 'dm', network: null, message_count: 3, last_ts: 300, last: null, unread: 0, avatar: null },
 ];
 
-const ME: Me = { user_id: 'u1', display_name: 'Test User' };
-
-function makeApi(over: { search?: ReturnType<typeof vi.fn>; conversations?: ReturnType<typeof vi.fn> } = {}) {
-  return {
-    me: vi.fn(() => of(ME)),
-    conversations: over.conversations ?? vi.fn(() => of(CONVS)),
-    messages: vi.fn(() => of({ messages: [msg('1', 100)], has_more: false, next_cursor: null, prev_cursor: null } as MessagesPage)),
-    search: over.search ?? vi.fn(() => of([] as SearchHit[])),
-    logout: vi.fn(() => of({})),
-    keptConversations: vi.fn(() => Promise.resolve(null)),
-    keptMessages: vi.fn(() => Promise.resolve(null)),
-  } as unknown as MessagesApi;
-}
-
 /** The search list, rendered: where the retraction rule is applied. */
-function render(api: MessagesApi): ComponentFixture<App> {
+function render(api: FakeApi): ComponentFixture<App> {
   TestBed.configureTestingModule({
     providers: [
       provideZonelessChangeDetection(),
@@ -56,7 +40,12 @@ function render(api: MessagesApi): ComponentFixture<App> {
   return fixture;
 }
 
-function setup(api: MessagesApi): { app: App; router: Router } {
+/** The shared fake, with this spec's list as the default. */
+function appApi(over: Partial<FakeApi> = {}): FakeApi {
+  return fakeApi({ conversations: vi.fn<MessagesApi['conversations']>(() => of(CONVS)), ...over });
+}
+
+function setup(api: FakeApi): { app: App; router: Router } {
   TestBed.configureTestingModule({
     providers: [
       provideZonelessChangeDetection(),
@@ -80,20 +69,20 @@ async function urlAfter(router: Router, act: () => void): Promise<string> {
 
 describe('App', () => {
   it('loads the user and conversations on init', () => {
-    const { app } = setup(makeApi());
+    const { app } = setup(appApi());
     expect(app.me()?.user_id).toBe('u1');
     expect(app.conversations().length).toBe(2);
   });
 
   it('shows all conversations by default (no origin filter in the URL)', () => {
-    const { app } = setup(makeApi());
+    const { app } = setup(appApi());
     expect(app.originFilter()).toBe('all');
     expect(app.visibleConversations().length).toBe(2);
   });
 
   // Opening a conversation and the filter are in e2e/routing.spec.ts.
   it('openHit lands on the hit in its conversation, keeping the filter and dropping the paged depth', async () => {
-    const { app, router } = setup(makeApi());
+    const { app, router } = setup(appApi());
     await router.navigateByUrl('/conversation/signal/dm:a?origin=gchat&from=9');
     const url = await urlAfter(router, () =>
       app.openHit({ origin: 'gchat', conversation_id: 'gc1', conversation_name: 'Bob', ts: 1, sender: 's', snippet: 'x', deleted: false, cursor: '1_1' }),
@@ -104,7 +93,7 @@ describe('App', () => {
   /** A hit opens from its own origin and id, before the list has loaded. */
   it('opens a hit even when the conversation list never loaded', async () => {
     const conversations = vi.fn(() => throwError(() => new Error('offline')));
-    const { app, router } = setup(makeApi({ conversations }));
+    const { app, router } = setup(appApi({ conversations }));
     expect(app.conversations()).toEqual([]); // the precondition, not an assumption
     const url = await urlAfter(router, () =>
       app.openHit({ origin: 'irc', conversation_id: '7', conversation_name: '#chan', ts: 1, sender: 's', snippet: 'x', deleted: false, cursor: '1_1' }),
@@ -115,7 +104,7 @@ describe('App', () => {
   /** Search names a conversation as the list does, whitespace-only names
    *  included. */
   it('names a hit the way the conversation list names it', () => {
-    const { app } = setup(makeApi());
+    const { app } = setup(appApi());
     const hit = { origin: 'signal' as const, conversation_id: 'dm:a', conversation_name: null, ts: 1, sender: 's', snippet: 'x', deleted: false, cursor: '1_1' };
     // Named from the list, though the hit carries no name.
     expect(app.hitTitle(hit)).toBe('Alice');
@@ -125,7 +114,7 @@ describe('App', () => {
 
   /** Search rows show the network, as the list does. */
   it('says which network a hit came from, where there is one', () => {
-    const { app } = setup(makeApi({ conversations: vi.fn(() => of(TWO_NETWORKS)) }));
+    const { app } = setup(appApi({ conversations: vi.fn(() => of(TWO_NETWORKS)) }));
     const hit = { conversation_name: 's_20', ts: 1, sender: 's', snippet: 'x', deleted: false, cursor: '1_1' };
     expect(app.hitNetwork({ ...hit, origin: 'irc', conversation_id: '8' })).toBe('xinutec');
     expect(app.hitNetwork({ ...hit, origin: 'irc', conversation_id: '9' })).toBe('euirc');
@@ -138,7 +127,7 @@ describe('App', () => {
   it('runs a search and clears it', () => {
     const hit: SearchHit = { origin: 'signal', conversation_id: 'dm:a', conversation_name: 'Alice', ts: 1, sender: 's', snippet: 'hi', deleted: false, cursor: '1_1' };
     const search = vi.fn(() => of([hit]));
-    const { app } = setup(makeApi({ search }));
+    const { app } = setup(appApi({ search }));
     app.query.set('hi');
     app.runSearch();
     expect(app.results()).toEqual([hit]);
@@ -149,7 +138,7 @@ describe('App', () => {
 
   it('ignores a blank search', () => {
     const search = vi.fn(() => of([] as SearchHit[]));
-    const { app } = setup(makeApi({ search }));
+    const { app } = setup(appApi({ search }));
     app.query.set('   ');
     app.runSearch();
     expect(search).not.toHaveBeenCalled();
@@ -160,7 +149,7 @@ describe('App', () => {
    *  show it. */
   it('does not print what a retracted message said', async () => {
     const hit: SearchHit = { origin: 'signal', conversation_id: 'dm:a', conversation_name: 'Alice', ts: 5, sender: 'alice', snippet: 'withdrawn text', deleted: true, cursor: '1_1' };
-    const fixture = render(makeApi({ search: vi.fn(() => of([hit])) }));
+    const fixture = render(appApi({ search: vi.fn(() => of([hit])) }));
     fixture.componentInstance.query.set('withdrawn');
     fixture.componentInstance.runSearch();
     await fixture.whenStable();
@@ -177,7 +166,7 @@ describe('App', () => {
   /** An ordinary snippet is shown, or hiding every snippet would pass above. */
   it('prints an ordinary hit in full', async () => {
     const hit: SearchHit = { origin: 'signal', conversation_id: 'dm:a', conversation_name: 'Alice', ts: 5, sender: 'alice', snippet: 'still here', deleted: false, cursor: '1_1' };
-    const fixture = render(makeApi({ search: vi.fn(() => of([hit])) }));
+    const fixture = render(appApi({ search: vi.fn(() => of([hit])) }));
     fixture.componentInstance.query.set('still');
     fixture.componentInstance.runSearch();
     await fixture.whenStable();
@@ -201,7 +190,7 @@ describe('App', () => {
     const spy = vi.spyOn(console, 'warn').mockImplementation((...a) => { warnings.push(a.map(String).join(' ')); });
     const err = vi.spyOn(console, 'error').mockImplementation((...a) => { warnings.push(a.map(String).join(' ')); });
     try {
-      const fixture = render(makeApi({ search: vi.fn(() => of(both)) }));
+      const fixture = render(appApi({ search: vi.fn(() => of(both)) }));
       fixture.componentInstance.query.set('line');
       fixture.componentInstance.runSearch();
       await fixture.whenStable();
@@ -218,7 +207,7 @@ describe('App', () => {
   });
 
   it('title falls back when a conversation is unnamed', () => {
-    const { app } = setup(makeApi());
+    const { app } = setup(appApi());
     expect(app.title({ ...CONVS[0], name: null })).toBe('Direct message');
     expect(app.title({ ...CONVS[0], name: '', kind: 'group' })).toBe('Group');
     expect(app.title(CONVS[0])).toBe('Alice');
@@ -227,7 +216,7 @@ describe('App', () => {
   /** An Android resume fires `visibilitychange`, not the router. */
   it('re-reads the list when the app returns to the foreground', () => {
     const conversations = vi.fn(() => of(CONVS));
-    setup(makeApi({ conversations }));
+    setup(appApi({ conversations }));
     expect(conversations).toHaveBeenCalledTimes(1); // the initial load
 
     document.dispatchEvent(new Event('visibilitychange')); // jsdom: 'visible'
@@ -236,7 +225,7 @@ describe('App', () => {
 
   it('does not re-read when the app goes to the background', () => {
     const conversations = vi.fn(() => of(CONVS));
-    setup(makeApi({ conversations }));
+    setup(appApi({ conversations }));
     const hidden = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
     try {
       document.dispatchEvent(new Event('visibilitychange'));
@@ -249,7 +238,7 @@ describe('App', () => {
   /** The listener is removed with the component. */
   it('stops listening once the component is destroyed', () => {
     const conversations = vi.fn(() => of(CONVS));
-    setup(makeApi({ conversations }));
+    setup(appApi({ conversations }));
     TestBed.resetTestingModule(); // destroys the injector the component was made in
     document.dispatchEvent(new Event('visibilitychange'));
     expect(conversations).toHaveBeenCalledTimes(1);
@@ -257,7 +246,7 @@ describe('App', () => {
 
   /** Every filterable origin has a label. */
   it('has a label for each filter toggle and no orphans', () => {
-    const { app } = setup(makeApi());
+    const { app } = setup(appApi());
     expect([...app.origins].sort()).toEqual(Object.keys(app.originLabels).sort());
   });
 });

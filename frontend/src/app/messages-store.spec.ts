@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
+import { type FakeApi, fakeApi } from './test-api';
 import { Conversation } from './models';
 
 const ONE: Conversation[] = [
@@ -15,18 +16,14 @@ const TWO: Conversation[] = [
   { origin: 'irc', id: '7', name: '#chan', kind: 'group', network: 'xinutec', message_count: 2, last_ts: 200, last: null, unread: 0, avatar: null },
 ];
 
-function setup(): { store: MessagesStore; api: { conversations: ReturnType<typeof vi.fn> } } {
-  const api = {
-    me: vi.fn(() => of({ user_id: 'u1', display_name: 'Test User' })),
-    conversations: vi.fn(() => of(ONE)),
-    keptConversations: vi.fn(() => Promise.resolve(null)),
-  } as unknown as MessagesApi;
+function setup(): { store: MessagesStore; api: FakeApi } {
+  const api = fakeApi({ conversations: vi.fn<MessagesApi['conversations']>(() => of(ONE)) });
   TestBed.configureTestingModule({
     providers: [provideZonelessChangeDetection(), { provide: MessagesApi, useValue: api }],
   });
   return {
     store: TestBed.inject(MessagesStore),
-    api: api as unknown as { conversations: ReturnType<typeof vi.fn> },
+    api,
   };
 }
 
@@ -56,12 +53,12 @@ describe('MessagesStore', () => {
 describe('MessagesStore — opening offline', () => {
   const remembered = { user_id: 'u1', display_name: 'Test User' };
   const failing = (status: number) =>
-    vi.fn(() => throwError(() => new HttpErrorResponse({ status, statusText: status === 0 ? 'Unknown Error' : 'Error' })));
+    vi.fn<MessagesApi['me']>(() => throwError(() => new HttpErrorResponse({ status, statusText: status === 0 ? 'Unknown Error' : 'Error' })));
 
-  function setupWith(me: ReturnType<typeof vi.fn>): { store: MessagesStore; conversations: ReturnType<typeof vi.fn> } {
-    const conversations = vi.fn(() => of(ONE));
+  function setupWith(me: FakeApi['me']): { store: MessagesStore; conversations: FakeApi['conversations'] } {
+    const conversations = vi.fn<MessagesApi['conversations']>(() => of(ONE));
     TestBed.configureTestingModule({
-      providers: [provideZonelessChangeDetection(), { provide: MessagesApi, useValue: { me, conversations, keptConversations: () => Promise.resolve(null) } }],
+      providers: [provideZonelessChangeDetection(), { provide: MessagesApi, useValue: fakeApi({ me, conversations }) }],
     });
     return { store: TestBed.inject(MessagesStore), conversations };
   }
@@ -130,7 +127,7 @@ describe('MessagesStore — the list the worker kept', () => {
     TestBed.configureTestingModule({
       providers: [
         provideZonelessChangeDetection(),
-        { provide: MessagesApi, useValue: { me: vi.fn(() => of({ user_id: 'u1', display_name: 'Test User' })), conversations: vi.fn(() => network), keptConversations: () => kept() } },
+        { provide: MessagesApi, useValue: fakeApi({ conversations: vi.fn<MessagesApi['conversations']>(() => network), keptConversations: vi.fn<MessagesApi['keptConversations']>(() => kept()) }) },
       ],
     });
     const store = TestBed.inject(MessagesStore);
