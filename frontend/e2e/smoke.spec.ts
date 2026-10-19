@@ -136,7 +136,7 @@ test("a scrolled multi-day thread does not stack date separators", async ({ page
   await expectCleanLayout(page, testInfo);
 });
 
-test("the current day's date stays pinned at the top while scrolling", async ({ page }) => {
+test("the day on view floats at the top while scrolling, and fades once the reader stops", async ({ page }) => {
   await mockApi(page);
   await page.route("**/api/conversations/**/messages**", (r) =>
     r.fulfill({ json: { messages: multiDayThread(), has_more: false, next_cursor: null, prev_cursor: null } satisfies MessagesPage }),
@@ -145,12 +145,18 @@ test("the current day's date stays pinned at the top while scrolling", async ({ 
   await page.getByText("msg 0-0", { exact: true }).waitFor();
   await scrollThread(page, 400);
   await page.waitForTimeout(150);
-  // Day 1's header is pinned at the top of the thread, under the bar.
-  const threadTop = await page.locator(".thread").evaluate((e) => e.getBoundingClientRect().top);
+  // Day 1's pill floats at the top of the thread, under the bar; its in-flow
+  // separator has scrolled off above.
+  const pill = page.locator(".day.floating");
+  await expect(pill).toHaveClass(/shown/);
   // en-GB `fullDate`, from LOCALE_ID in app.config.ts; Angular defaults to en-US.
-  const box = await page.getByText("Thursday, 1 January 2026", { exact: true }).boundingBox();
-  expect(box).not.toBeNull();
+  await expect(pill).toHaveText("Thursday, 1 January 2026");
+  const threadTop = await page.locator(".thread").evaluate((e) => e.getBoundingClientRect().top);
+  const box = await pill.locator("span").boundingBox();
   const offset = (box?.y ?? -999) - threadTop;
-  expect(offset).toBeGreaterThanOrEqual(0); // pinned, not scrolled off
-  expect(offset).toBeLessThan(40); // pinned, not at its in-flow position far down
+  expect(offset).toBeGreaterThanOrEqual(0);
+  expect(offset).toBeLessThan(40);
+  // Signal's pill goes once the reader stops; the separators stay in the flow.
+  await page.waitForTimeout(1600);
+  await expect(pill).not.toHaveClass(/shown/);
 });

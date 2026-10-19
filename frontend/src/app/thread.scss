@@ -97,17 +97,29 @@
   padding: 0.25rem 0;
 }
 
-// Each day is a section, so its sticky header pins only within that day and
-// is replaced by the next.
+// Each day is a section with its separator in the flow. The day on view floats
+// at the top only while the reader scrolls (`.floating`; thread.ts `scrolling`),
+// as Signal draws it, and fades once they stop.
 .day {
-  position: sticky;
-  top: 0.25rem;
-  z-index: 2;
   text-align: center;
   margin: 0.5rem 0;
   pointer-events: none; // a floating label; let clicks reach messages beneath
   // Furniture, not content; see `.meta`.
   user-select: none;
+
+  &.floating {
+    position: sticky;
+    top: 0.25rem;
+    z-index: 2;
+    // No room of its own: the pill hangs over the messages below.
+    height: 0;
+    margin: 0;
+    opacity: 0;
+    transition: opacity 0.3s;
+    &.shown {
+      opacity: 1;
+    }
+  }
 
   span {
     display: inline-block;

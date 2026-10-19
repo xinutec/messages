@@ -43,6 +43,9 @@ import { Attachment, Conversation, Delivery, Message, Origin, ReplyTo, SearchHit
 /** How often an open, visible thread checks for newer messages. */
 const POLL_MS = 5000;
 
+/** How long after the last scroll the floating day pill stays. */
+const SCROLL_IDLE_MS = 1200;
+
 @Component({
   selector: 'app-thread',
   templateUrl: './thread.html',
@@ -261,6 +264,7 @@ export class Thread {
     destroyRef.onDestroy(() => popped.unsubscribe());
     destroyRef.onDestroy(() => {
       if (this.recheck != null) clearTimeout(this.recheck);
+      if (this.scrollIdle != null) clearTimeout(this.scrollIdle);
       // The `?from` debounce navigates, so it must not fire after leaving.
       if (this.fromTimer != null) clearTimeout(this.fromTimer);
       this.fetches.reset();
@@ -603,6 +607,7 @@ export class Thread {
   onScroll(): void {
     // Before any early return; see `ThreadWindow.noteScroll`.
     this.win.noteScroll();
+    this.noteFloatingDay();
     if (this.threadError() || !this.routed()) return;
     // Deferred, not dropped: a programmatic scroll delivers one event, and the
     // fetch or `?from` it calls for must still happen once the guard clears.
@@ -614,6 +619,25 @@ export class Thread {
     if (needOlder) this.fetchOlder();
     if (needNewer) this.fetchNewer();
     this.scheduleFromParam();
+  }
+
+  // ---- the day on view, while scrolling --------------------------------------
+
+  /** The day of the message at the top of the view, and whether the reader is
+   *  scrolling now: the floating day pill (thread.html) shows the one while the
+   *  other holds, and fades `SCROLL_IDLE_MS` after the last scroll, as Signal's
+   *  does. */
+  readonly floatingDay = signal<number | null>(null);
+  readonly scrolling = signal(false);
+  private scrollIdle: ReturnType<typeof setTimeout> | null = null;
+
+  private noteFloatingDay(): void {
+    const top = this.win.topAnchor();
+    const m = top == null ? undefined : this.messages().find((x) => x.id === top.id);
+    this.floatingDay.set(m?.ts ?? null);
+    this.scrolling.set(true);
+    if (this.scrollIdle != null) clearTimeout(this.scrollIdle);
+    this.scrollIdle = setTimeout(() => this.scrolling.set(false), SCROLL_IDLE_MS);
   }
 
   /** Re-run `onScroll` once the guard that skipped it clears; one timer at a time. */

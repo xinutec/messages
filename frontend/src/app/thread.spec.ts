@@ -745,6 +745,25 @@ describe('Thread deleted messages', () => {
   });
 });
 
+describe('Thread floating day', () => {
+  it('names the day of the message at the top while scrolling, and lets go after a pause', async () => {
+    const f = await threeRendered();
+    const thread = f.componentInstance;
+    expect(thread.floatingDay()).toBeNull();
+    expect(thread.scrolling()).toBe(false);
+    (f.nativeElement as HTMLElement).dispatchEvent(new Event('scroll'));
+    f.detectChanges();
+    expect(thread.scrolling()).toBe(true);
+    // jsdom lays nothing out, so the first rendered message is the top one.
+    expect(thread.floatingDay()).toBe(thread.rendered()[0].ts);
+    expect((f.nativeElement as HTMLElement).querySelector('.day.floating.shown')).not.toBeNull();
+    await new Promise((r) => setTimeout(r, 1400));
+    f.detectChanges();
+    expect(thread.scrolling()).toBe(false);
+    expect((f.nativeElement as HTMLElement).querySelector('.day.floating.shown')).toBeNull();
+  });
+});
+
 describe('Thread picking messages by hand', () => {
   const bubble = (f: ComponentFixture<Thread>, id: string): HTMLElement =>
     (f.nativeElement as HTMLElement).querySelector(`.msg[data-id="${id}"]`)!;

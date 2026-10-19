@@ -80,6 +80,11 @@
     @if (loadingOlder()) {
       <div class="loading-older"><mat-progress-bar mode="indeterminate" /></div>
     }
+    <!-- The day at the top of the view, floated while the reader scrolls, as Signal
+         draws it; the separators in the flow stay put. -->
+    @if (floatingDay(); as d) {
+      <div class="day floating" [class.shown]="scrolling()"><span>{{ d | date: 'fullDate' }}</span></div>
+    }
     <!-- Stands in for older messages collapsed out of the DOM (see thread.ts). -->
     <div [style.height.px]="topSpacer()"></div>
 

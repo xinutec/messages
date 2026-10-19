@@ -237,3 +237,20 @@ test("pictures loading above the reader do not move what they are reading", asyn
   }
   expect(moved).toEqual([]);
 });
+
+/** The day on view floats at the top while the reader scrolls and fades once
+ *  they stop, as Signal draws it; the separators stay in the flow. */
+test("the floating day shows while scrolling and fades after", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/conversation/signal/dm:a");
+  await page.locator('.msg[data-id="99"]').waitFor();
+  const pill = page.locator(".day.floating");
+  await expect(pill).not.toHaveClass(/shown/);
+  await page.mouse.move(200, 500);
+  await page.mouse.wheel(0, -800);
+  await expect(pill).toHaveClass(/shown/);
+  await expect(pill).toHaveText(/January 2026/);
+  // Past the idle pause.
+  await page.waitForTimeout(1600);
+  await expect(pill).not.toHaveClass(/shown/);
+});
