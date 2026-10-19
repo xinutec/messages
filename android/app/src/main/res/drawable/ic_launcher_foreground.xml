@@ -4,12 +4,14 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
     <!-- Material "chat" glyph (a speech bubble — for the messages archive), scaled
-         and centred within the 108x108 adaptive-icon safe zone. -->
+         and centred. Only a 66dp circle of the 108dp canvas is sure to show; the
+         glyph spans 20 of its 24 units, so at 2.3 its sharp tail corner sits at
+         23·√2 ≈ 32.5dp from the centre, inside it. At 2.7 the circle cut it. -->
     <group
-        android:scaleX="2.7"
-        android:scaleY="2.7"
-        android:translateX="21.6"
-        android:translateY="21.6">
+        android:scaleX="2.3"
+        android:scaleY="2.3"
+        android:translateX="26.4"
+        android:translateY="26.4">
         <path
             android:fillColor="#FFFFFF"
             android:pathData="M20,2H4c-1.1,0 -1.99,0.9 -1.99,2L2,22l4,-4h14c1.1,0 2,-0.9 2,-2V4c0,-1.1 -0.9,-2 -2,-2zM6,9h12v2H6V9zM14,14H6v-2h8v2zM18,8H6V6h12v2z" />
