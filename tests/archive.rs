@@ -3275,3 +3275,64 @@ async fn a_telegram_send_reports_the_feeds_answer() {
         Outcome::Unanswered
     );
 }
+
+/// Telegram moves `edit_date` for a reaction. A history in which every version
+/// reads as the text is that, and not an edit; one with no history was edited
+/// before the archive saw it, and stays edited; a real edit's history leaves out
+/// the version a later reaction filed.
+#[tokio::test]
+async fn a_telegram_reaction_is_not_an_edit() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    sqlx::query("INSERT INTO telegram_conversations (id, kind, name) VALUES (4343, 'dm', 'Rea')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO telegram_messages
+            (conversation_id, msg_id, sent_at, sender_id, sender_name, is_outgoing, kind, text, edited_at, deleted)
+         VALUES
+            (4343, 1, 1700000000, 4343, 'Rea', 0, 'message', 'same', 1700000700, 0),
+            (4343, 2, 1700000060, 4343, 'Rea', 0, 'message', 'now', 1700000800, 0),
+            (4343, 3, 1700000120, 4343, 'Rea', 0, 'message', 'before capture', 1700000130, 0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO telegram_message_edits (conversation_id, msg_id, was_edited_at, text) VALUES
+            (4343, 1, NULL, 'same'),
+            (4343, 2, NULL, 'then'),
+            (4343, 2, 1700000650, 'now')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let page = archive::messages_page(&pool, Origin::Telegram, "4343", None, 50, PageDir::Older)
+        .await
+        .unwrap();
+    let by = |n: &str| {
+        page.messages
+            .iter()
+            .find(|m| m.body.as_deref() == Some(n))
+            .unwrap()
+    };
+    assert!(!by("same").edited, "a reaction's move of the date");
+    assert!(by("same").edits.is_empty());
+    assert!(by("now").edited, "the words changed once");
+    assert_eq!(
+        by("now")
+            .edits
+            .iter()
+            .map(|e| e.body.as_deref())
+            .collect::<Vec<_>>(),
+        vec![Some("then")],
+        "the version a reaction filed is left out"
+    );
+    assert!(
+        by("before capture").edited,
+        "no history: Telegram's word stands"
+    );
+}

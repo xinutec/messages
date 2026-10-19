@@ -90,6 +90,9 @@ pub(super) async fn page(
                      m.sender_name AS sender, m.is_outgoing AS is_outgoing, CAST(m.sender_id AS CHAR) AS sender_key,
                      m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at,
                      m.edit_hidden AS edit_hidden,
+                     COALESCE((SELECT MAX(NOT (e.text <=> m.text)) FROM telegram_message_edits e
+                                WHERE e.conversation_id = m.conversation_id AND e.msg_id = m.msg_id), 1)
+                       AS edit_changed_text,
                      m.reply_to_msg_id AS reply_to_msg_id, m.kind AS kind,
                      m.grouped_id AS grouped_id,
                      c.duration_s AS call_duration_s, c.reason AS call_reason,
@@ -107,6 +110,9 @@ pub(super) async fn page(
                      m.sender_name AS sender, m.is_outgoing AS is_outgoing, CAST(m.sender_id AS CHAR) AS sender_key,
                      m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at,
                      m.edit_hidden AS edit_hidden,
+                     COALESCE((SELECT MAX(NOT (e.text <=> m.text)) FROM telegram_message_edits e
+                                WHERE e.conversation_id = m.conversation_id AND e.msg_id = m.msg_id), 1)
+                       AS edit_changed_text,
                      m.reply_to_msg_id AS reply_to_msg_id, m.kind AS kind,
                      m.grouped_id AS grouped_id,
                      c.duration_s AS call_duration_s, c.reason AS call_reason,
@@ -124,6 +130,9 @@ pub(super) async fn page(
                      m.sender_name AS sender, m.is_outgoing AS is_outgoing, CAST(m.sender_id AS CHAR) AS sender_key,
                      m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at,
                      m.edit_hidden AS edit_hidden,
+                     COALESCE((SELECT MAX(NOT (e.text <=> m.text)) FROM telegram_message_edits e
+                                WHERE e.conversation_id = m.conversation_id AND e.msg_id = m.msg_id), 1)
+                       AS edit_changed_text,
                      m.reply_to_msg_id AS reply_to_msg_id, m.kind AS kind,
                      m.grouped_id AS grouped_id,
                      c.duration_s AS call_duration_s, c.reason AS call_reason,
@@ -163,7 +172,12 @@ pub(super) async fn page(
         // `edit_hide` asks for the message to be shown unmodified despite its
         // `edit_date`. NULL, on rows stored before the column, reads as not hidden.
         let edit_hidden: Option<i8> = r.try_get("edit_hidden")?;
-        let edited = edited_at.is_some() && edit_hidden.unwrap_or(0) == 0;
+        // Telegram moves `edit_date` for a reaction too. A history in which no
+        // version differs from the text is such a move, not an edit; a message
+        // with no history was edited before the archive saw it, and Telegram's
+        // word stands.
+        let edit_changed_text: i64 = r.try_get("edit_changed_text")?;
+        let edited = edited_at.is_some() && edit_hidden.unwrap_or(0) == 0 && edit_changed_text != 0;
         let is_service = r.try_get::<String, _>("kind")? == "service";
         // A call's stored text is the label "a call"; compose it from the call's
         // columns instead.
@@ -473,7 +487,10 @@ async fn attach_entities(
 
 /// Telegram's edit history. Each superseded version is filed under the
 /// `edit_date` it carried; the original carried none, so NULL sorts first.
-/// `m.edited` already honours `edit_hide`, which hides the history too.
+/// `m.edited` already honours `edit_hide`, which hides the history too. A
+/// version that reads as the one after it is left out: a reaction moved the
+/// `edit_date`, and the archive filed the unchanged words (before the archiver
+/// learned to tell).
 pub(super) async fn attach_edits(
     pool: &MySqlPool,
     conversation_id: &str,
@@ -518,6 +535,22 @@ pub(super) async fn attach_edits(
         if let Some(m) = msgs.iter_mut().find(|m| m.id == row_id) {
             m.edits.push(edit);
         }
+    }
+    // In order, so each version is compared with the one that replaced it; the
+    // last with the text itself.
+    for m in msgs.iter_mut().filter(|m| !m.edits.is_empty()) {
+        let keep: Vec<bool> = (0..m.edits.len())
+            .map(|i| {
+                let next = m
+                    .edits
+                    .get(i + 1)
+                    .map(|e| e.body.as_deref())
+                    .unwrap_or(m.body.as_deref());
+                m.edits[i].body.as_deref() != next
+            })
+            .collect();
+        let mut keep = keep.into_iter();
+        m.edits.retain(|_| keep.next().unwrap_or(true));
     }
     Ok(())
 }

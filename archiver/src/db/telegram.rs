@@ -37,7 +37,8 @@ impl Db {
     ///
     /// Telegram edits in place, so the old text is appended to
     /// `telegram_message_edits` in the same transaction as the update. An
-    /// unchanged `edit_date` makes replay a no-op.
+    /// unchanged `edit_date` makes replay a no-op; one moved with the text
+    /// unchanged is a reaction, and files nothing.
     ///
     /// No `SELECT … FOR UPDATE`: a locking read of a missing row takes an InnoDB
     /// gap lock, and the backfill and live stream then deadlock. The edit is a
@@ -178,6 +179,26 @@ impl Db {
             // Gone between the insert and the read; the next delivery inserts it.
             None => TelegramStored::Unchanged,
             Some((_, stored_edit)) if stored_edit == row.edited_at => {
+                if enriched {
+                    TelegramStored::Enriched
+                } else {
+                    TelegramStored::Unchanged
+                }
+            }
+            // Telegram moves `edit_date` for a reaction too. The words did not
+            // change, so there is no version to file; the date is kept as
+            // Telegram has it, and the viewer reads "edited" off the history.
+            Some((stored_text, stored_edit)) if stored_text == row.text => {
+                sqlx::query(
+                    "UPDATE telegram_messages SET edited_at = ?
+                      WHERE conversation_id = ? AND msg_id = ? AND edited_at <=> ?",
+                )
+                .bind(row.edited_at)
+                .bind(row.conversation_id)
+                .bind(row.msg_id)
+                .bind(stored_edit)
+                .execute(&mut *tx)
+                .await?;
                 if enriched {
                     TelegramStored::Enriched
                 } else {

@@ -1174,3 +1174,64 @@ async fn the_outbox_sends_each_fresh_row_at_most_once() {
         "nothing is retried"
     );
 }
+
+/// A reaction moves Telegram's `edit_date` with the words unchanged: the date is
+/// kept, nothing is filed as a version, and the message does not read as edited.
+#[tokio::test]
+async fn a_reaction_moving_the_edit_date_files_no_version() {
+    let Some((db, pool)) = connect().await else {
+        return;
+    };
+    let id = ids(19);
+    let msg = id.msg_base + 1;
+    let edited_at = |pool: &MySqlPool| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, Option<i64>>(
+                "SELECT edited_at FROM telegram_messages WHERE conversation_id = ? AND msg_id = ?",
+            )
+            .bind(id.conversation)
+            .bind(msg)
+            .fetch_one(&pool)
+            .await
+            .expect("read edited_at")
+        }
+    };
+
+    db.store_telegram_message(&row(id.conversation, PeerSpace::User, msg, "hello"), None)
+        .await
+        .expect("insert");
+    let reacted = Row {
+        edited_at: Some(1_700_000_300),
+        ..row(id.conversation, PeerSpace::User, msg, "hello")
+    };
+    assert_eq!(
+        db.store_telegram_message(&reacted, None)
+            .await
+            .expect("reaction"),
+        TelegramStored::Unchanged
+    );
+    assert!(history(&pool, id.conversation, msg).await.is_empty());
+    assert_eq!(
+        edited_at(&pool).await,
+        Some(1_700_000_300),
+        "Telegram's date, as it has it"
+    );
+
+    // A real edit after it files the words it replaces, under that date.
+    let edited = Row {
+        edited_at: Some(1_700_000_600),
+        text: Some("hello there".to_owned()),
+        ..row(id.conversation, PeerSpace::User, msg, "hello there")
+    };
+    assert_eq!(
+        db.store_telegram_message(&edited, None)
+            .await
+            .expect("edit"),
+        TelegramStored::Edited
+    );
+    assert_eq!(
+        history(&pool, id.conversation, msg).await,
+        vec![(Some(1_700_000_300), "hello".to_owned())]
+    );
+}
