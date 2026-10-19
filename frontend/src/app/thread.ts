@@ -1,6 +1,6 @@
 import { ApplicationRef, Component, DestroyRef, ElementRef, LOCALE_ID, computed, effect, inject, input, signal, viewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { DatePipe, NgTemplateOutlet } from '@angular/common';
+import { DatePipe, Location, NgTemplateOutlet } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -10,9 +10,9 @@ import { MatMenuModule } from '@angular/material/menu';
 import { MatCalendar } from '@angular/material/datepicker';
 import { FormsModule } from '@angular/forms';
 import { MatSnackBar } from '@angular/material/snack-bar';
-import { Pictures, ScaffoldActions, ScaffoldContext, ScaffoldLeading, scaffoldTitle } from '@xinutec/ui-scaffold';
+import { Pictures, ScaffoldActions, ScaffoldContext, ScaffoldLeading, scaffoldTitle, wireBack } from '@xinutec/ui-scaffold';
 
-import { firstValueFrom } from 'rxjs';
+import { Subject, firstValueFrom } from 'rxjs';
 
 import { attachmentName, attachmentNoun, isAudio, isImage, isVideo } from './attachment';
 import { Avatar } from './avatar';
@@ -85,6 +85,7 @@ export class Thread {
   private store = inject(MessagesStore);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
+  private location = inject(Location);
   private appRef = inject(ApplicationRef);
   private locale = inject(LOCALE_ID);
   private host = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
@@ -255,6 +256,9 @@ export class Thread {
     const destroyRef = inject(DestroyRef);
     // Intervals and timers go with the component.
     destroyRef.onDestroy(() => clearInterval(poll));
+    // Back while picking pops the entry `setPicked` added, and ends the picking.
+    const popped = this.location.subscribe(() => this.clearPicked());
+    destroyRef.onDestroy(() => popped.unsubscribe());
     destroyRef.onDestroy(() => {
       if (this.recheck != null) clearTimeout(this.recheck);
       // The `?from` debounce navigates, so it must not fire after leaving.
@@ -517,10 +521,23 @@ export class Thread {
   });
   /** The last message picked: where a range starts. */
   private anchor: string | null = null;
+  /** Picking ended other than by back; see `setPicked`. */
+  private readonly pickingClosed = new Subject<void>();
 
-  protected clearPicked(): void {
+  clearPicked(): void {
     this.anchor = null;
-    if (this.pickedIds().size > 0) this.pickedIds.set(new Set());
+    if (this.pickedIds().size > 0) this.setPicked(new Set());
+  }
+
+  /** Every change to the picked set goes through here, so picking is one
+   *  overlay to history (`wireBack`, as a dialog is): starting it adds the entry
+   *  back spends itself on, and ending it any other way takes the entry away. */
+  private setPicked(next: ReadonlySet<string>): void {
+    const was = this.pickedIds().size > 0;
+    this.pickedIds.set(next);
+    const is = next.size > 0;
+    if (is && !was) wireBack(this.location, this.pickingClosed);
+    else if (was && !is) this.pickingClosed.next();
   }
 
   private togglePicked(id: string): void {
@@ -529,7 +546,7 @@ export class Thread {
       next.add(id);
       this.anchor = id;
     }
-    this.pickedIds.set(next);
+    this.setPicked(next);
   }
 
   /** Pick from the anchor through `id`, both included; a lone `id` when there
@@ -544,7 +561,7 @@ export class Thread {
     }
     const next = new Set(this.pickedIds());
     for (const i of ids.slice(Math.min(from, to), Math.max(from, to) + 1)) next.add(i);
-    this.pickedIds.set(next);
+    this.setPicked(next);
     this.anchor = id;
   }
 

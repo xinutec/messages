@@ -1,3 +1,4 @@
+import { Location } from '@angular/common';
 import { ComponentRef, provideZonelessChangeDetection } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter, withComponentInputBinding } from '@angular/router';
@@ -848,6 +849,30 @@ describe('Thread picking messages by hand', () => {
     const link = bubble(fixture, 'a').querySelector('a')!;
     expect(press(fixture, link)).toBe(false);
     expect(pickedIds(fixture)).toEqual([]);
+  });
+
+  it('picking is one step in history: back ends it and stays; ending it otherwise takes the step away', async () => {
+    const f = await threeRendered();
+    // The TestBed's history is a mock behind Angular's `Location`, which is what
+    // `wireBack` drives; its back is immediate.
+    const history = TestBed.inject(Location);
+    const overlay = (): boolean => {
+      const s: unknown = history.getState();
+      return typeof s === 'object' && s !== null && 'overlay' in s;
+    };
+    expect(overlay()).toBe(false);
+    press(f, bubble(f, 'a'));
+    expect(overlay()).toBe(true);
+    // Back: the step goes, and so does the picking, nothing else.
+    history.back();
+    f.detectChanges();
+    expect(pickedIds(f)).toEqual([]);
+    expect(overlay()).toBe(false);
+    // Closed from the bar: the step is taken away for us.
+    press(f, bubble(f, 'a'));
+    expect(overlay()).toBe(true);
+    f.componentInstance.clearPicked();
+    expect(overlay()).toBe(false);
   });
 
   it('Escape leaves, and so does opening another conversation', async () => {

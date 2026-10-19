@@ -90,6 +90,25 @@ test("picked messages copy as the log from the bar, then the picking ends", asyn
   await expect(page.getByText("2 selected")).toBeHidden();
 });
 
+/** Picking is a step in history, as a dialog is: back ends it and stays in the
+ *  conversation; closing it from the bar takes the step away, so the next back
+ *  leaves as it would have. */
+test("back ends the picking and stays; after the bar's close, back leaves", async ({ page }) => {
+  await openThread(page);
+  await page.locator('.msg[data-id="a"]').click({ button: "right" });
+  await expect(page.getByText("1 selected")).toBeVisible();
+  await page.goBack();
+  await expect(page.getByText("1 selected")).toBeHidden();
+  await expect(page).toHaveURL(/\/conversation\/irc\/7/);
+
+  await page.locator('.msg[data-id="a"]').click({ button: "right" });
+  await expect(page.getByText("1 selected")).toBeVisible();
+  await page.getByRole("button", { name: "Stop selecting" }).click();
+  await expect(page.getByText("1 selected")).toBeHidden();
+  await page.goBack();
+  await expect(page).not.toHaveURL(/\/conversation\//);
+});
+
 /** While picking, what is inside a bubble takes no tap: a link picks the
  *  message rather than opening. The CSS does this, so only a browser can tell. */
 test("while picking, a tap on a link picks its message instead of following it", async ({ page }) => {
