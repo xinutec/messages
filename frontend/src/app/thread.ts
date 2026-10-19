@@ -506,22 +506,46 @@ export class Thread {
   /** Messages picked for a copy, Signal's way: a long press picks the first and
    *  enters the mode, taps pick and unpick others, unpicking the last leaves.
    *  The long press is the `contextmenu` event, which a touch screen fires on
-   *  one and a desk on a right click. Kept as ids; the bar and the copy read
+   *  one and a desk on a right click. A further long press, or Shift-click at a
+   *  desk, picks the range from the last message picked through this one, as a
+   *  file manager's Shift-click does. Kept as ids; the bar and the copy read
    *  `picked`, so a message collapsed out of the window drops out. */
   readonly pickedIds = signal<ReadonlySet<string>>(new Set());
   readonly picked = computed(() => {
     const ids = this.pickedIds();
     return this.rendered().filter((m) => ids.has(m.id));
   });
+  /** The last message picked: where a range starts. */
+  private anchor: string | null = null;
 
   protected clearPicked(): void {
+    this.anchor = null;
     if (this.pickedIds().size > 0) this.pickedIds.set(new Set());
   }
 
   private togglePicked(id: string): void {
     const next = new Set(this.pickedIds());
-    if (!next.delete(id)) next.add(id);
+    if (!next.delete(id)) {
+      next.add(id);
+      this.anchor = id;
+    }
     this.pickedIds.set(next);
+  }
+
+  /** Pick from the anchor through `id`, both included; a lone `id` when there
+   *  is no anchor on view. */
+  private pickThrough(id: string): void {
+    const ids = this.rendered().map((m) => m.id);
+    const from = this.anchor == null ? -1 : ids.indexOf(this.anchor);
+    const to = ids.indexOf(id);
+    if (from < 0 || to < 0) {
+      if (!this.pickedIds().has(id)) this.togglePicked(id);
+      return;
+    }
+    const next = new Set(this.pickedIds());
+    for (const i of ids.slice(Math.min(from, to), Math.max(from, to) + 1)) next.add(i);
+    this.pickedIds.set(next);
+    this.anchor = id;
   }
 
   /** The message a pointer event is on, by its bubble. */
@@ -538,7 +562,8 @@ export class Thread {
     e.preventDefault();
     // A touch screen's long press may have started selecting the words too.
     document.getSelection()?.removeAllRanges();
-    this.togglePicked(id);
+    if (this.picked().length > 0) this.pickThrough(id);
+    else this.togglePicked(id);
   }
 
   /** While picking, a tap anywhere on a bubble is a pick; thread.scss keeps
@@ -548,7 +573,8 @@ export class Thread {
     const id = this.messageAt(e);
     if (id == null) return;
     e.preventDefault();
-    this.togglePicked(id);
+    if (e.shiftKey) this.pickThrough(id);
+    else this.togglePicked(id);
   }
 
   async copyPicked(): Promise<void> {

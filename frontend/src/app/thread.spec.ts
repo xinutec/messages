@@ -788,6 +788,28 @@ describe('Thread picking messages by hand', () => {
     expect(root(f).querySelector('.messages.picking')).toBeNull();
   });
 
+  it('a further long press, or a Shift-tap, picks the range from the last pick', async () => {
+    const f = await threeRendered();
+    press(f, bubble(f, 'a'));
+    press(f, bubble(f, 'c'));
+    expect(pickedIds(f)).toEqual(['a', 'b', 'c']);
+    // A plain tap still carves one out; the next range starts from the last pick.
+    tap(f, bubble(f, 'b'));
+    tap(f, bubble(f, 'a'));
+    expect(pickedIds(f)).toEqual(['c']);
+    bubble(f, 'a').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: true }));
+    f.detectChanges();
+    expect(pickedIds(f)).toEqual(['a', 'b', 'c']);
+    // Backwards too: the range runs either way from the anchor.
+    tap(f, bubble(f, 'a'));
+    tap(f, bubble(f, 'b'));
+    tap(f, bubble(f, 'c'));
+    expect(pickedIds(f)).toEqual([]);
+    press(f, bubble(f, 'c'));
+    press(f, bubble(f, 'a'));
+    expect(pickedIds(f)).toEqual(['a', 'b', 'c']);
+  });
+
   it('a tap picks nothing until a long press has', async () => {
     const f = await threeRendered();
     tap(f, bubble(f, 'a'));

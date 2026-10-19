@@ -181,5 +181,8 @@ test.describe("on a touch screen", () => {
     await page.locator('.msg[data-id="b"]').click({ button: "right" });
     await expect(page.getByText("1 selected")).toBeVisible();
     expect(await page.evaluate(() => document.getSelection()?.toString() ?? "")).toBe("");
+    // A further long press picks the range: b, d and c.
+    await page.locator('.msg[data-id="c"]').click({ button: "right" });
+    await expect(page.getByText("3 selected")).toBeVisible();
   });
 });
