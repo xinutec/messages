@@ -42,7 +42,8 @@ source IPs survive k3s servicelb; check before relying on it.
 - `src/bin/link-fetch.rs` — the link-picture fetch service, the only part that
   reaches the internet. It holds no credentials, database or disk.
 - `frontend/` — Angular: conversation list with origin filter, thread view, and
-  an IRC composer. `frontend/src/app/thread-window.ts` keeps a window of a long
+  a composer for IRC and Telegram (one draft per conversation; a paragraph
+  goes to IRC line by line, to Telegram whole). `frontend/src/app/thread-window.ts` keeps a window of a long
   thread in the DOM; `frontend/src/app/copy-log.ts` copies a selection as an
   irssi log (the inverse of `irclog/`), whether dragged over or picked by hand
   (a long press, then taps, as in Signal; a further long press or Shift-click

@@ -304,19 +304,22 @@
        thread. -->
   @if (canSend() && !threadError()) {
     <form class="composer" (submit)="$event.preventDefault(); composer.send()">
-      <input
-        type="text"
+      <!-- Grows with the draft, to six lines. Never disabled: a disabled box loses
+           focus, and with it the phone's keyboard, on every send. -->
+      <textarea
         name="draft"
+        rows="1"
+        cdkTextareaAutosize
+        cdkAutosizeMaxRows="6"
         [value]="composer.draft()"
         (input)="composer.draft.set($any($event.target).value)"
         (keydown)="composer.onKey($event)"
         (compositionstart)="composer.composing.set(true)"
         (compositionend)="composer.composing.set(false)"
-        [disabled]="composer.sending()"
         placeholder="Message"
         aria-label="Message"
         autocomplete="off"
-      />
+      ></textarea>
       <button mat-icon-button type="submit" [disabled]="composer.sending() || !composer.draft().trim()" aria-label="Send">
         <mat-icon>send</mat-icon>
       </button>

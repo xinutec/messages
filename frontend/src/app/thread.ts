@@ -8,6 +8,7 @@ import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatListModule } from '@angular/material/list';
 import { MatMenuModule } from '@angular/material/menu';
 import { MatCalendar } from '@angular/material/datepicker';
+import { TextFieldModule } from '@angular/cdk/text-field';
 import { FormsModule } from '@angular/forms';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { Pictures, ScaffoldActions, ScaffoldContext, ScaffoldLeading, scaffoldTitle } from '@xinutec/ui-scaffold';
@@ -81,6 +82,7 @@ const SCROLL_IDLE_MS = 1200;
     Avatar,
     MatMenuModule,
     MatCalendar,
+    TextFieldModule,
   ],
 })
 export class Thread {
@@ -235,6 +237,7 @@ export class Thread {
       if (key === loadedKey) return;
       loadedKey = key;
       this.picking.clear();
+      this.composer.switchTo(key);
       if (o != null && i != null) void this.loadThread(o, i);
       else this.resetState();
     });
@@ -592,9 +595,17 @@ export class Thread {
     const kind = this.conversation()?.kind;
     return this.origin() === 'telegram' && (kind === 'dm' || kind === 'group');
   });
-  /** The draft and its sending; see composer.ts. A sent message that is
-   *  already archived reloads the thread, to show it. */
-  readonly composer = new Composer(this.api, this.origin, this.id, () => this.reloadNow());
+  /** The draft and its sending; see composer.ts. */
+  readonly composer = new Composer(this.api, this.origin, this.id, () => this.afterSend());
+
+  /** Show what was just sent: the newest page merged in and the view at the
+   *  end, with no reload; a window floating in the past is reloaded into the
+   *  present instead, as `pollNewer` would not run there. */
+  private async afterSend(): Promise<void> {
+    if (this.floating()) return this.reloadNow();
+    await this.pollNewer();
+    this.win.scrollToBottom();
+  }
 
   // ---- what the reader asks to be fetched ----------------------------------
 

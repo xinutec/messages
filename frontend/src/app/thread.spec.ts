@@ -745,6 +745,102 @@ describe('Thread deleted messages', () => {
   });
 });
 
+describe('Thread composer — drafts, lines and what a send does', () => {
+  function open(ref: ComponentRef<Thread>, fixture: ComponentFixture<Thread>, origin: string, id: string): void {
+    ref.setInput('origin', origin);
+    ref.setInput('id', id);
+    fixture.detectChanges();
+  }
+
+  it('keeps a draft per conversation, and never carries one into another', () => {
+    const { thread, ref, fixture } = setup();
+    open(ref, fixture, 'irc', '7');
+    thread.composer.draft.set('to seven, half typed');
+    open(ref, fixture, 'irc', '8');
+    expect(thread.composer.draft()).toBe('');
+    thread.composer.draft.set('to eight');
+    open(ref, fixture, 'irc', '7');
+    expect(thread.composer.draft()).toBe('to seven, half typed');
+    open(ref, fixture, 'irc', '8');
+    expect(thread.composer.draft()).toBe('to eight');
+  });
+
+  it('sends an IRC paragraph as its lines, in order, and keeps what was refused', async () => {
+    const { thread, ref, fixture } = setup();
+    const api = TestBed.inject(MessagesApi) as unknown as { send: ReturnType<typeof vi.fn> };
+    open(ref, fixture, 'irc', '7');
+    api.send.mockImplementation((_o: string, _i: string, text: string) =>
+      of(text === 'two' ? { sent: false, error: 'refused: flood', archived: false } : { sent: true, error: null, archived: true }),
+    );
+    thread.composer.draft.set('one\ntwo\n\nthree');
+    await thread.composer.send();
+    expect(api.send.mock.calls.map((c) => String(c[2]))).toEqual(['one', 'two']);
+    expect(thread.composer.draft()).toBe('two\nthree');
+    expect(thread.composer.error()).toContain('flood');
+    api.send.mockImplementation(() => of({ sent: true, error: null, archived: true }));
+    await thread.composer.send();
+    expect(api.send.mock.calls.slice(2).map((c) => String(c[2]))).toEqual(['two', 'three']);
+    expect(thread.composer.draft()).toBe('');
+  });
+
+  it('sends a Telegram message whole, line breaks and all', async () => {
+    const { thread, ref, fixture } = setup();
+    const api = TestBed.inject(MessagesApi) as unknown as { send: ReturnType<typeof vi.fn> };
+    open(ref, fixture, 'telegram', '4242');
+    thread.composer.draft.set('first line\nsecond line');
+    await thread.composer.send();
+    expect(api.send.mock.calls.map((c) => String(c[2]))).toEqual(['first line\nsecond line']);
+  });
+
+  it('merges the newest page in after a send rather than reloading the thread', async () => {
+    const { thread, ref, fixture } = setup();
+    open(ref, fixture, 'irc', '7');
+    await settle(thread);
+    const poll = vi.spyOn(thread, 'pollNewer').mockResolvedValue();
+    const api = TestBed.inject(MessagesApi) as unknown as { messages: ReturnType<typeof vi.fn> };
+    const loads = api.messages.mock.calls.length;
+    thread.composer.draft.set('hello');
+    await thread.composer.send();
+    expect(poll).toHaveBeenCalledTimes(1);
+    expect(api.messages.mock.calls.length).toBe(loads);
+  });
+
+  it('Enter sends at a desk and breaks the line on a touch screen', async () => {
+    const { thread, ref, fixture } = setup();
+    const api = TestBed.inject(MessagesApi) as unknown as { send: ReturnType<typeof vi.fn> };
+    open(ref, fixture, 'irc', '7');
+    thread.composer.draft.set('a line');
+    const enter = (): KeyboardEvent => new KeyboardEvent('keydown', { key: 'Enter', cancelable: true });
+    vi.stubGlobal('matchMedia', () => ({ matches: true }));
+    const onPhone = enter();
+    thread.composer.onKey(onPhone);
+    expect(onPhone.defaultPrevented).toBe(false);
+    expect(api.send).not.toHaveBeenCalled();
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    const atDesk = enter();
+    thread.composer.onKey(atDesk);
+    expect(atDesk.defaultPrevented).toBe(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.send).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it('leaves the box enabled while sending, so the keyboard stays up', async () => {
+    const { thread, ref, fixture } = setup();
+    const api = TestBed.inject(MessagesApi) as unknown as { send: ReturnType<typeof vi.fn> };
+    api.send.mockReturnValue(new Subject());
+    open(ref, fixture, 'irc', '7');
+    await settle(thread);
+    thread.composer.draft.set('still going');
+    void thread.composer.send();
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    expect(thread.composer.sending()).toBe(true);
+    expect(root.querySelector<HTMLTextAreaElement>('textarea[name=draft]')!.disabled).toBe(false);
+    expect(root.querySelector<HTMLButtonElement>('button[aria-label=Send]')!.disabled).toBe(true);
+  });
+});
+
 describe('Thread floating day', () => {
   it('names the day of the message at the top while scrolling, and lets go after a pause', async () => {
     const f = await threeRendered();

@@ -285,23 +285,29 @@
   // Takes the slack in a short conversation; sticky takes over once it overflows.
   margin-top: auto;
   display: flex;
-  align-items: center;
+  // The button stays by the last line as the box grows.
+  align-items: flex-end;
   gap: 0.25rem;
   padding: 0.4rem 0;
   background: var(--mat-sys-surface);
-  input {
+  textarea {
     flex: 1;
     // A flex item's minimum is its content, so a long draft would push the
     // button off.
     min-width: 0;
-    // The search boxes' pill (styles.scss): the same surface, shape and focus ring.
-    height: 40px;
+    // The search boxes' pill (styles.scss): the same surface, shape and focus
+    // ring, one line tall until the draft needs more (`cdkTextareaAutosize`).
+    box-sizing: border-box;
+    min-height: 40px;
+    resize: none;
     font: var(--mat-sys-body-large);
+    // After the shorthand, which would reset it: a 24px line in a 40px box.
+    line-height: 24px;
     color: var(--mat-sys-on-surface);
     background: var(--mat-sys-surface-container-high);
     border: none;
     border-radius: 20px;
-    padding: 0 0.9rem;
+    padding: 8px 0.9rem;
     &:focus {
       outline: 2px solid var(--mat-sys-primary);
     }

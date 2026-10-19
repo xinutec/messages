@@ -817,33 +817,63 @@ test("the served page asks the keyboard to shrink the layout viewport", async ({
   expect(content).toContain("interactive-widget=resizes-content");
 });
 
-/** A real IME composition (`Input.imeSetComposition`), so the Enter carries
- *  `isComposing` as Gboard's would. */
-test("Enter while the IME is composing does not send @ phone width", async ({ page, context }) => {
+/** On a touch screen the return key breaks the line and only the button sends,
+ *  as in Signal; the message goes with its breaks. */
+test("the return key makes a line and the button sends @ phone width", async ({ page }) => {
   await mockApi(page);
-  let sends = 0;
+  const sent: string[] = [];
   await page.route("**/api/conversations/*/*/send", async (r) => {
-    sends += 1;
+    const body: unknown = r.request().postDataJSON();
+    if (typeof body === "object" && body !== null && "text" in body) sent.push(String(body.text));
     await r.fulfill({ json: { sent: true, error: null, archived: true } satisfies SendResult });
   });
   await page.goto("/conversation/irc/7");
   const input = page.getByLabel("Message", { exact: true });
   await input.click();
+  await page.keyboard.type("first line");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("second line");
+  expect(sent).toEqual([]);
+  await expect(input).toHaveValue("first line\nsecond line");
+  await page.getByRole("button", { name: "Send" }).click();
+  // IRC carries one line per message.
+  await expect.poll(() => sent).toEqual(["first line", "second line"]);
+  await expect(input).toHaveValue("");
+});
 
-  const cdp = await context.newCDPSession(page);
-  await cdp.send("Input.imeSetComposition", {
-    text: "hello wor",
-    selectionStart: 9,
-    selectionEnd: 9,
+test.describe("at a desk", () => {
+  test.use({ hasTouch: false });
+
+  /** A real IME composition (`Input.imeSetComposition`), so the Enter carries
+   *  `isComposing` as Gboard's would. At a desk, where Enter sends. */
+  test("Enter while the IME is composing does not send; a plain Enter does", async ({ page, context }) => {
+    await mockApi(page);
+    let sends = 0;
+    await page.route("**/api/conversations/*/*/send", async (r) => {
+      sends += 1;
+      await r.fulfill({ json: { sent: true, error: null, archived: true } satisfies SendResult });
+    });
+    await page.goto("/conversation/irc/7");
+    const input = page.getByLabel("Message", { exact: true });
+    await input.click();
+
+    const cdp = await context.newCDPSession(page);
+    await cdp.send("Input.imeSetComposition", {
+      text: "hello wor",
+      selectionStart: 9,
+      selectionEnd: 9,
+    });
+    await page.keyboard.press("Enter");
+    expect(sends).toBe(0);
+
+    // A plain Enter sends; Shift+Enter breaks the line first.
+    await cdp.send("Input.imeSetComposition", { text: "", selectionStart: 0, selectionEnd: 0 });
+    await input.fill("a finished sentence");
+    await page.keyboard.press("Shift+Enter");
+    await expect(input).toHaveValue("a finished sentence\n");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => sends).toBe(1);
   });
-  await page.keyboard.press("Enter");
-  expect(sends).toBe(0);
-
-  // A plain Enter still sends.
-  await cdp.send("Input.imeSetComposition", { text: "", selectionStart: 0, selectionEnd: 0 });
-  await input.fill("a finished sentence");
-  await page.keyboard.press("Enter");
-  await expect.poll(() => sends).toBe(1);
 });
 
 /** Search results: two ordinary hits and a retracted one whose `snippet` still
