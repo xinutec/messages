@@ -39,7 +39,7 @@ import { ThreadSearch } from './thread-search';
 import { Composer } from './composer';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
-import { Attachment, Conversation, Delivery, Message, Origin, ReplyTo, SearchHit } from './models';
+import { Attachment, Conversation, Delivery, Message, MessagesPage, Origin, ReplyTo, SearchHit } from './models';
 
 /** How often an open, visible thread checks for newer messages. */
 const POLL_MS = 5000;
@@ -427,7 +427,7 @@ export class Thread {
     const at = this.route.snapshot.queryParamMap.get('at');
     const onDay = Number(this.route.snapshot.queryParamMap.get('on')) || null;
     const from = Number(this.route.snapshot.queryParamMap.get('from')) || null;
-    // The kept page on view, if any, as a key; see below.
+    // The kept page on view, if any, as a key; see `showKept`.
     let shown: string | null = null;
     try {
       // `?at` means "put me here" and `?from` "I was here"; `?at` wins, and
@@ -435,56 +435,22 @@ export class Thread {
       if (at != null && (await this.loadAround(origin, id, { at }))) return;
       // `?on`, a picked date, likewise.
       if (onDay != null && (await this.loadAround(origin, id, { onDay }))) return;
-      // A plain open shows the newest page as the service worker last kept it,
-      // under the bar, until the network's page comes; the same page then changes
-      // nothing, and a different one replaces it, moving the view only if the
-      // reader has not.
       if (from == null) {
-        const kept = await this.api.keptMessages(origin, id, PAGE);
+        shown = await this.showKept(origin, id, gen);
         if (gen !== this.generation) return;
-        if (kept != null && kept.messages.length > 0) {
-          this.messages.set(kept.messages);
-          this.fetches.watchInFlight(kept.messages);
-          this.appRef.tick();
-          this.win.withScrollLock(() => this.win.scrollToBottom());
-          shown = JSON.stringify(kept.messages);
-        }
       }
-      const first = await firstValueFrom(this.api.messages(origin, id, undefined, PAGE));
-      if (gen !== this.generation) return;
-      let msgs = first.messages;
-      let hasMore = first.has_more;
-      let cursor = first.next_cursor;
-      // Page older to the saved depth, at most `MAX_RESTORE_PAGES`: `from` is a
-      // timestamp, possibly thousands of pages back. `scrollToTs` falls back to
-      // the oldest loaded message.
-      let pages = 0;
-      while (
-        from != null &&
-        hasMore &&
-        cursor != null &&
-        msgs.length > 0 &&
-        msgs[0].ts > from &&
-        pages < MAX_RESTORE_PAGES
-      ) {
-        pages++;
-        const older = await firstValueFrom(this.api.messages(origin, id, cursor, PAGE));
-        if (gen !== this.generation) return;
-        if (older.messages.length === 0) break;
-        msgs = [...older.messages, ...msgs];
-        hasMore = older.has_more;
-        cursor = older.next_cursor;
-      }
-      this.hasMore.set(hasMore);
-      this.cursor = cursor;
-      if (shown != null && shown === JSON.stringify(msgs)) {
+      const page = await this.fetchToDepth(origin, id, from, gen);
+      if (page == null) return;
+      this.hasMore.set(page.has_more);
+      this.cursor = page.next_cursor;
+      if (shown != null && shown === JSON.stringify(page.messages)) {
         // What is on view is the network's page already.
         this.loadingThread.set(false);
         return;
       }
       const moved = shown != null && this.readerMoved;
-      this.messages.set(msgs);
-      this.fetches.watchInFlight(msgs);
+      this.messages.set(page.messages);
+      this.fetches.watchInFlight(page.messages);
       this.loadingThread.set(false);
       this.appRef.tick();
       // Position the viewport, then bound the DOM around it.
@@ -504,6 +470,53 @@ export class Thread {
       }
       this.threadError.set(true);
     }
+  }
+
+  /** A plain open shows the newest page as the service worker last kept it,
+   *  under the bar, until the network's page comes; the same page then changes
+   *  nothing, and a different one replaces it, moving the view only if the
+   *  reader has not. Returns what it put on view, as a key, or null. */
+  private async showKept(origin: Origin, id: string, gen: number): Promise<string | null> {
+    const kept = await this.api.keptMessages(origin, id, PAGE);
+    if (gen !== this.generation || kept == null || kept.messages.length === 0) return null;
+    this.messages.set(kept.messages);
+    this.fetches.watchInFlight(kept.messages);
+    this.appRef.tick();
+    this.win.withScrollLock(() => this.win.scrollToBottom());
+    return JSON.stringify(kept.messages);
+  }
+
+  /** The newest page, paged older to the saved depth `from`, at most
+   *  `MAX_RESTORE_PAGES`: `from` is a timestamp, possibly thousands of pages
+   *  back, and `scrollToTs` falls back to the oldest loaded message. Null when
+   *  another load took over meanwhile. */
+  private async fetchToDepth(
+    origin: Origin,
+    id: string,
+    from: number | null,
+    gen: number,
+  ): Promise<MessagesPage | null> {
+    const first = await firstValueFrom(this.api.messages(origin, id, undefined, PAGE));
+    if (gen !== this.generation) return null;
+    let { messages, has_more, next_cursor } = first;
+    let pages = 0;
+    while (
+      from != null &&
+      has_more &&
+      next_cursor != null &&
+      messages.length > 0 &&
+      messages[0].ts > from &&
+      pages < MAX_RESTORE_PAGES
+    ) {
+      pages++;
+      const older = await firstValueFrom(this.api.messages(origin, id, next_cursor, PAGE));
+      if (gen !== this.generation) return null;
+      if (older.messages.length === 0) break;
+      messages = [...older.messages, ...messages];
+      has_more = older.has_more;
+      next_cursor = older.next_cursor;
+    }
+    return { ...first, messages, has_more, next_cursor };
   }
 
   reload(): void {

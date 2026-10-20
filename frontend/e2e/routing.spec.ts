@@ -164,7 +164,9 @@ test("leaving during the ?from debounce does not navigate back into the thread",
 test("reloading restores the older messages that were paged in", async ({ page }) => {
   await mockApiPaged(page);
   await page.goto("/conversation/signal/dm:a?from=1000"); // as if reloaded after scrolling back
-  await page.getByText("antique0", { exact: true }).waitFor({ state: "attached" }); // restored, no scroll
+  // On screen, not merely loaded: reaching the top loads the older page too, so
+  // "attached" passed with the restore gone. Nothing here scrolls.
+  await expect(page.getByText("antique0", { exact: true })).toBeInViewport();
   await page.getByText("fresh0", { exact: true }).waitFor({ state: "attached" });
 });
 
