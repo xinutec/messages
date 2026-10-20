@@ -61,7 +61,7 @@ pub async fn wait(pool: &MySqlPool, id: i64) -> Result<Outcome> {
     wait_for(pool, id, WAIT).await
 }
 
-/// [`wait`], for `patience` rather than [`WAIT`].
+/// [`wait`], for `patience` rather than `WAIT`.
 pub async fn wait_for(pool: &MySqlPool, id: i64, patience: Duration) -> Result<Outcome> {
     let deadline = tokio::time::Instant::now() + patience;
     loop {
