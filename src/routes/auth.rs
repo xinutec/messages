@@ -128,13 +128,13 @@ async fn finish_sign_in(
     jar: CookieJar,
     q: CallbackQuery,
 ) -> Result<(CookieJar, Redirect), AppError> {
-    let pending = match pending_login::accept(
+    let (pending, proof) = match pending_login::accept(
         &app.cfg.session_secret,
         jar.get(pending_login::COOKIE_NAME).map(Cookie::value),
         q.state.as_deref(),
         Utc::now(),
     ) {
-        Some(Callback::Accept(pending)) => pending,
+        Some(Callback::Accept(pending, proof)) => (pending, proof),
         Some(Callback::Retry(pending)) => {
             // The code is not exchanged: without `state` nothing ties it to
             // this browser. Nextcloud now has a session, so `state` returns.
@@ -152,7 +152,7 @@ async fn finish_sign_in(
         .code
         .ok_or_else(|| anyhow!("missing authorization code"))?;
 
-    let token = identity::exchange_code(&app.http, &app.cfg, &code).await?;
+    let token = identity::exchange_code(&app.http, &app.cfg, &code, proof).await?;
     let nc_user = identity::fetch_user(&app.http, &app.cfg, &token).await?;
 
     if !app.cfg.is_allowed(&nc_user.id) {

@@ -24,13 +24,35 @@ pub fn authorize_url(cfg: &Config, state: &str) -> String {
     url.to_string()
 }
 
+/// Proof that a callback's `state` equalled the nonce this server stored for
+/// the sign-in. [`exchange_code`] takes one by value and only
+/// [`StateMatched::check`] makes one, so no code is redeemed on a path that
+/// skipped the comparison (RFC 6749 §10.12; dev-lint
+/// DL-RUST-OAUTH-EXCHANGE-UNPROVEN checks the shape).
+#[derive(Debug, PartialEq, Eq)]
+pub struct StateMatched(());
+
+impl StateMatched {
+    /// The proof, when `url_state` is present and equals `stored`.
+    pub fn check(url_state: &str, stored: &str) -> Option<Self> {
+        use subtle::ConstantTimeEq;
+        let equal: bool = url_state.as_bytes().ct_eq(stored.as_bytes()).into();
+        (!url_state.is_empty() && equal).then_some(Self(()))
+    }
+}
+
 #[derive(Deserialize)]
 struct TokenResponse {
     access_token: String,
 }
 
 /// Exchange an authorization `code` for an access token.
-pub async fn exchange_code(http: &reqwest::Client, cfg: &Config, code: &str) -> Result<String> {
+pub async fn exchange_code(
+    http: &reqwest::Client,
+    cfg: &Config,
+    code: &str,
+    _proof: StateMatched,
+) -> Result<String> {
     let res = http
         .post(format!(
             "{}/index.php/apps/oauth2/api/v1/token",

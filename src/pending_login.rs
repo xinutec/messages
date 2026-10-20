@@ -18,6 +18,7 @@
 use chrono::{DateTime, Duration, Utc};
 use rand::Rng;
 
+use crate::nextcloud::identity::StateMatched;
 use crate::session::{sign_value, verify_value};
 
 /// Cookie holding the login in progress. Short-lived; cleared at the callback.
@@ -40,10 +41,10 @@ pub struct PendingLogin {
 }
 
 /// What a callback may do with the pending login it carries.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Callback {
     /// `state` matched: exchange the code.
-    Accept(PendingLogin),
+    Accept(PendingLogin, StateMatched),
     /// `state` was empty: drop the code and authorize again ([`retry`]).
     Retry(PendingLogin),
 }
@@ -126,7 +127,9 @@ pub fn accept(
         return None;
     }
     match state {
-        Some(s) if !s.is_empty() => (s == pending.nonce).then_some(Callback::Accept(pending)),
+        Some(s) if !s.is_empty() => {
+            StateMatched::check(s, &pending.nonce).map(|proof| Callback::Accept(pending, proof))
+        }
         _ => (!pending.retried).then_some(Callback::Retry(pending)),
     }
 }

@@ -8,7 +8,7 @@ use messages::pending_login::{Callback, PendingLogin, accept, issue, retry, ttl}
 /// The pending login, if the callback may exchange its code.
 fn accepted(c: Option<Callback>) -> Option<PendingLogin> {
     match c {
-        Some(Callback::Accept(p)) => Some(p),
+        Some(Callback::Accept(p, _)) => Some(p),
         _ => None,
     }
 }
@@ -120,4 +120,16 @@ fn no_return_to_round_trips_as_none() {
             .return_to,
         None
     );
+}
+
+/// The proof `exchange_code` demands is made only by a present `state` equal to
+/// the stored nonce.
+#[test]
+fn the_proof_is_made_only_by_a_present_matching_state() {
+    use messages::nextcloud::identity::StateMatched;
+    assert!(StateMatched::check("n0nce", "n0nce").is_some());
+    assert!(StateMatched::check("", "").is_none());
+    assert!(StateMatched::check("", "n0nce").is_none());
+    assert!(StateMatched::check("nonce", "n0nce").is_none());
+    assert!(StateMatched::check("n0nc", "n0nce").is_none());
 }

@@ -1677,6 +1677,7 @@ dependencies = [
  "sha2 0.11.1",
  "signal-archiver",
  "sqlx",
+ "subtle",
  "thiserror",
  "time",
  "tokio",
