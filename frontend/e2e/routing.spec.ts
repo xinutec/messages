@@ -216,3 +216,18 @@ test("returning to the foreground re-reads the list", async ({ page }) => {
 
   await expect(page.getByText("after")).toBeVisible();
 });
+
+/** Opening another conversation from the list, or a hit in another one, starts
+ *  it fresh: "put me here" and "on this day" belong to the conversation that was
+ *  open. Desktop, where the list stays beside the thread. */
+test("another conversation opened beside a landing does not inherit it", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await mockApi(page);
+  await page.goto("/conversation/signal/dm:a?at=1717000000000_1&on=1716940800000");
+  await page.locator(".msg").first().waitFor();
+  await page.getByRole("button", { name: /Bob/ }).click();
+  await expect(page).toHaveURL(/\/conversation\/gchat\/gc1/);
+  const params = new URL(page.url()).searchParams;
+  expect(params.get("at")).toBeNull();
+  expect(params.get("on")).toBeNull();
+});

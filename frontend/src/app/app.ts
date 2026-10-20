@@ -173,11 +173,11 @@ export class App {
     });
   }
 
-  /** Open a conversation, keeping the origin filter and clearing `?from` so it
-   *  opens at the latest page. */
+  /** Open a conversation at its latest page, keeping only the origin filter:
+   *  `?from`, `?at` and `?on` place the reader in the one that was open. */
   open(c: Conversation): void {
     void this.router.navigate(['/conversation', c.origin, c.id], {
-      queryParams: { from: null },
+      queryParams: { from: null, at: null, on: null },
       queryParamsHandling: 'merge',
     });
   }
@@ -200,11 +200,11 @@ export class App {
   }
 
   /** Open a search result on the message it found. Routes from the hit, which
-   *  carries origin and id, so it works before the list loads. `from: null`: a
-   *  scroll position from another conversation must not come along. */
+   *  carries origin and id, so it works before the list loads. `from` and `on`
+   *  go: a place in another conversation must not come along. */
   openHit(h: SearchHit): void {
     void this.router.navigate(['/conversation', h.origin, h.conversation_id], {
-      queryParams: { at: h.cursor, from: null },
+      queryParams: { at: h.cursor, from: null, on: null },
       queryParamsHandling: 'merge',
     });
   }
