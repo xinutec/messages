@@ -1,3 +1,6 @@
+<!-- The scroll container; the composer is below it, so a growing draft shortens
+     the list instead of covering it. -->
+<div class="thread" #scroller (scroll)="onScroll()">
 @if (routed()) {
   <!-- Who it is, before the name in the bar, as Signal draws it: the list's picture. -->
   @if (conversation(); as c) {
@@ -305,37 +308,38 @@
     <!-- Stands in for newer messages collapsed out of the DOM. -->
     <div [style.height.px]="bottomSpacer()"></div>
   }
-
-  <!-- IRC and Telegram. Outside the loading branch, so it stays put while a send reloads the
-       thread. -->
-  @if (canSend() && !threadError()) {
-    <form class="composer" (submit)="$event.preventDefault(); composer.send()">
-      <!-- Grows with the draft, to six lines. Never disabled: a disabled box loses
-           focus, and with it the phone's keyboard, on every send. -->
-      <textarea
-        name="draft"
-        rows="1"
-        cdkTextareaAutosize
-        cdkAutosizeMaxRows="6"
-        [value]="composer.draft()"
-        (input)="composer.draft.set($any($event.target).value)"
-        (keydown)="composer.onKey($event)"
-        (compositionstart)="composer.composing.set(true)"
-        (compositionend)="composer.composing.set(false)"
-        placeholder="Message"
-        aria-label="Message"
-        autocomplete="off"
-      ></textarea>
-      <button mat-icon-button type="submit" [disabled]="composer.sending() || !composer.draft().trim()" aria-label="Send">
-        <mat-icon>send</mat-icon>
-      </button>
-    </form>
-    @if (composer.error()) {
-      <p class="send-error">{{ composer.error() }}</p>
-    }
-  }
 } @else {
   <div class="placeholder">Pick a conversation.</div>
+}
+</div>
+
+<!-- IRC and Telegram. Outside the loading branch, so it stays put while a send reloads the
+     thread. -->
+@if (routed() && canSend() && !threadError()) {
+  <form class="composer" (submit)="$event.preventDefault(); composer.send()">
+    <!-- Grows with the draft, to six lines. Never disabled: a disabled box loses
+         focus, and with it the phone's keyboard, on every send. -->
+    <textarea
+      name="draft"
+      rows="1"
+      cdkTextareaAutosize
+      cdkAutosizeMaxRows="6"
+      [value]="composer.draft()"
+      (input)="composer.draft.set($any($event.target).value)"
+      (keydown)="composer.onKey($event)"
+      (compositionstart)="composer.composing.set(true)"
+      (compositionend)="composer.composing.set(false)"
+      placeholder="Message"
+      aria-label="Message"
+      autocomplete="off"
+    ></textarea>
+    <button mat-icon-button type="submit" [disabled]="composer.sending() || !composer.draft().trim()" aria-label="Send">
+      <mat-icon>send</mat-icon>
+    </button>
+  </form>
+  @if (composer.error()) {
+    <p class="send-error">{{ composer.error() }}</p>
+  }
 }
 
 <!-- A message's text, in its bubble or as an album's caption. -->

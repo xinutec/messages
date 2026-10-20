@@ -18,7 +18,7 @@ function harness(n: number) {
   const container = document.createElement('div');
   host.appendChild(container);
   const messages = signal(msgs(n));
-  const win = new ThreadWindow(host, () => container, messages, () => undefined);
+  const win = new ThreadWindow(() => host, () => container, messages, () => undefined);
   return { win, messages, host, container };
 }
 

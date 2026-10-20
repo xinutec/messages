@@ -773,7 +773,7 @@ test("the newest message stays visible when the keyboard opens @ phone width", a
 
   // At the latest message before the keyboard arrives.
   await expect
-    .poll(() => page.locator("app-thread").evaluate((h) => h.scrollHeight - h.scrollTop - h.clientHeight))
+    .poll(() => page.locator(".thread").evaluate((h) => h.scrollHeight - h.scrollTop - h.clientHeight))
     .toBeLessThan(64);
 
   const full = page.viewportSize()!;
@@ -784,7 +784,7 @@ test("the newest message stays visible when the keyboard opens @ phone width", a
 
   // The re-pin runs a frame after the resize.
   await expect
-    .poll(() => page.locator("app-thread").evaluate((h) => h.scrollHeight - h.scrollTop - h.clientHeight))
+    .poll(() => page.locator(".thread").evaluate((h) => h.scrollHeight - h.scrollTop - h.clientHeight))
     .toBeLessThan(64);
 
   // The newest message, whole, above the box and inside the viewport.
@@ -796,6 +796,54 @@ test("the newest message stays visible when the keyboard opens @ phone width", a
   await expect(input).toHaveValue("replying to what is on screen");
 });
 
+/** Jumping to the message a reply quotes marks it, and the jump's own scroll
+ *  leaves the mark: only the reader scrolling away clears it. */
+test("the message a reply jumps to stays marked @ phone width", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/conversation/signal/dm:a");
+  const quote = page.locator(".msg .reply-quote").first();
+  await quote.click();
+  await expect(page.locator(".msg.landed")).toHaveCount(1);
+  // Past the scroll handler's debounce, which clears a mark once the reader moves.
+  await page.waitForTimeout(1000);
+  await expect(page.locator(".msg.landed")).toHaveCount(1);
+});
+
+/** A draft growing a line shortens the list instead of covering it: the box is
+ *  below the scroll container, not over it. */
+test("the newest message stays above the box as a draft grows @ phone width", async ({ page }) => {
+  await mockApi(page);
+  await page.route("**/api/conversations/**/messages**", (r) => r.fulfill({ json: LONG_THREAD }));
+  await page.goto("/conversation/irc/7");
+  const input = page.getByLabel("Message", { exact: true });
+  const last = page.locator('.msg[data-id="60"]');
+  await last.waitFor();
+  await expect
+    .poll(() => page.locator(".thread").evaluate((h) => h.scrollHeight - h.scrollTop - h.clientHeight))
+    .toBeLessThan(64);
+  const before = (await page.locator(".composer").boundingBox())!.height;
+
+  // The suite is a phone: return is a newline (composer.ts `onKey`).
+  await input.click();
+  await input.pressSequentially("one");
+  await input.press("Enter");
+  await input.pressSequentially("two");
+  await input.press("Enter");
+  await input.pressSequentially("three");
+  await expect.poll(async () => (await page.locator(".composer").boundingBox())!.height).toBeGreaterThan(before + 20);
+  // Every line of the draft shows: the box grew by whole lines, padding apart.
+  // Polled: the autosize catches up with the text a frame later.
+  await expect.poll(() => input.evaluate((t) => t.scrollHeight - t.clientHeight)).toBeLessThanOrEqual(0);
+
+  await expect
+    .poll(async () => {
+      const box = (await last.boundingBox())!;
+      const comp = (await page.locator(".composer").boundingBox())!;
+      return box.y + box.height - comp.y;
+    })
+    .toBeLessThanOrEqual(1);
+});
+
 /** A reader in history is left there when the keyboard opens. */
 test("a reader back in history is left there when the keyboard opens @ phone width", async ({ page }) => {
   await mockApi(page);
@@ -805,19 +853,19 @@ test("a reader back in history is left there when the keyboard opens @ phone wid
   await input.waitFor();
   await page.locator('.msg[data-id="60"]').waitFor();
 
-  await page.locator("app-thread").evaluate((h) => (h.scrollTop = 0));
-  await expect.poll(() => page.locator("app-thread").evaluate((h) => h.scrollTop)).toBeLessThan(50);
-  const before = await page.locator("app-thread").evaluate((h) => h.scrollTop);
+  await page.locator(".thread").evaluate((h) => (h.scrollTop = 0));
+  await expect.poll(() => page.locator(".thread").evaluate((h) => h.scrollTop)).toBeLessThan(50);
+  const before = await page.locator(".thread").evaluate((h) => h.scrollTop);
 
   const full = page.viewportSize()!;
   await input.click();
   await page.setViewportSize({ width: full.width, height: full.height - 350 });
   await page.waitForTimeout(500); // a re-pin would land within a frame; this is generous
 
-  const after = await page.locator("app-thread").evaluate((h) => h.scrollTop);
+  const after = await page.locator(".thread").evaluate((h) => h.scrollTop);
   expect(Math.abs(after - before)).toBeLessThan(50);
   const fromBottom = await page
-    .locator("app-thread")
+    .locator(".thread")
     .evaluate((h) => h.scrollHeight - h.scrollTop - h.clientHeight);
   expect(fromBottom).toBeGreaterThan(500);
 });

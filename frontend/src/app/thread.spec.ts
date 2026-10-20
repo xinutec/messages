@@ -911,7 +911,8 @@ describe('Thread floating day', () => {
     const thread = f.componentInstance;
     expect(thread.floatingDay()).toBeNull();
     expect(thread.scrolling()).toBe(false);
-    (f.nativeElement as HTMLElement).dispatchEvent(new Event('scroll'));
+    // On the scroll container: a scroll event does not bubble to the host.
+    (f.nativeElement as HTMLElement).querySelector('.thread')!.dispatchEvent(new Event('scroll'));
     f.detectChanges();
     expect(thread.scrolling()).toBe(true);
     // jsdom lays nothing out, so the first rendered message is the top one.

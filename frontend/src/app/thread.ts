@@ -51,11 +51,10 @@ const SCROLL_IDLE_MS = 1200;
   selector: 'app-thread',
   templateUrl: './thread.html',
   styleUrls: ['./thread.scss', './thread-media.scss', './thread-message.scss'],
-  // The host is the scroll container the sticky headers pin against. `copy`
-  // bubbles here from wherever the selection is.
+  // A column: the scroll container (`.thread`, which the sticky headers pin
+  // against), then the composer below it, so a growing draft shortens the list
+  // instead of covering it. `copy` bubbles here from wherever the selection is.
   host: {
-    class: 'thread',
-    '(scroll)': 'onScroll()',
     '(copy)': 'onCopy($event)',
     // The reader's own hand on the thread; see `readerMoved`.
     '(wheel)': 'readerMoved = true',
@@ -93,9 +92,9 @@ export class Thread {
   private location = inject(Location);
   private appRef = inject(ApplicationRef);
   private locale = inject(LOCALE_ID);
-  private host = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private snack = inject(MatSnackBar);
   private readonly messagesEl = viewChild<ElementRef<HTMLElement>>('messagesEl');
+  private readonly scrollerEl = viewChild<ElementRef<HTMLElement>>('scroller');
 
   // Shared with the clipboard; see attachment.ts.
   protected readonly attachmentName = attachmentName;
@@ -184,7 +183,7 @@ export class Thread {
 
   /** Which messages are in the DOM; see thread-window.ts. */
   private readonly win = new ThreadWindow(
-    this.host,
+    () => this.scrollerEl()?.nativeElement,
     () => this.messagesEl()?.nativeElement,
     this.messages,
     () => this.appRef.tick(),
@@ -273,9 +272,10 @@ export class Thread {
       this.fetches.reset();
     });
 
-    // The soft keyboard resizes the scroll container; see
+    // The soft keyboard and the composer resize the scroll container; see
     // `ThreadWindow.observeShrink`.
     destroyRef.onDestroy(this.win.observeShrink());
+    effect(() => this.win.watchScroller(this.scrollerEl()?.nativeElement));
     // Re-pointed at the current message block after each re-render.
     effect(() => this.win.watchContent(this.messagesEl()?.nativeElement));
   }
@@ -402,6 +402,9 @@ export class Thread {
     const here = this.rendered().find((m) => m.id === r.id);
     if (here) {
       this.landedId.set(here.id);
+      // The tap that asked for this is not the reader leaving the landing; only
+      // their next move is (`commitFromParam`).
+      this.readerMoved = false;
       this.win.withScrollLock(() => this.win.scrollToTs(here.ts));
       return;
     }
@@ -641,13 +644,16 @@ export class Thread {
   /** The draft and its sending; see composer.ts. */
   readonly composer = new Composer(this.api, this.origin, this.id, () => this.afterSend());
 
+  // dev-lint: allow-self-triggered-scroll afterSend runs only on a send, which no scroll triggers; it reads `floating` once, before it scrolls, so the handler's write cannot feed back into it
   /** Show what was just sent: the newest page merged in and the view at the
    *  end, with no reload; a window floating in the past is reloaded into the
    *  present instead, as `pollNewer` would not run there. */
   private async afterSend(): Promise<void> {
     if (this.floating()) return this.reloadNow();
     await this.pollNewer();
-    this.win.scrollToBottom();
+    // Locked like every scroll the thread makes, so `onScroll` does not take it
+    // for the reader's.
+    this.win.withScrollLock(() => this.win.scrollToBottom());
   }
 
   // ---- what the reader asks to be fetched ----------------------------------

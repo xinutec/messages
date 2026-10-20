@@ -80,9 +80,11 @@ export class ThreadWindow {
    *  taken for them leaving. */
   private hostScrollHeight: number | null = null;
 
-  /** The observer behind `observeShrink`, and the message block it watches. */
+  /** The observer behind `observeShrink`, and the scroll container and message
+   *  block it watches. */
   private ro: ResizeObserver | null = null;
   private watched: HTMLElement | null = null;
+  private watchedScroller: HTMLElement | null = null;
 
   // Scroll diagnostics, off by default: enable with
   // `localStorage.threadScrollDebug = '1'` or `?scrolldebug`, then read the
@@ -93,7 +95,9 @@ export class ThreadWindow {
   private lastScrollTop = 0;
 
   constructor(
-    private readonly host: HTMLElement,
+    /** The scroll container: an element of the template, so a getter, read
+     *  only once the view exists. */
+    private readonly scroller: () => HTMLElement | undefined,
     /** The message container; a getter, since `viewChild` resolves after
      *  construction and after each render. */
     private readonly container: () => HTMLElement | undefined,
@@ -101,6 +105,14 @@ export class ThreadWindow {
     /** Flush pending renders, so the DOM can be measured. */
     private readonly tick: () => void,
   ) {}
+
+  /** The scroll container. Absent means a caller ran before the view was
+   *  built, which is a bug to see, not a geometry to guess. */
+  private get host(): HTMLElement {
+    const el = this.scroller();
+    if (!el) throw new Error('ThreadWindow: the scroll container is not rendered yet');
+    return el;
+  }
 
   /** Back to "nothing collapsed" — for a fresh conversation. */
   reset(): void {
@@ -276,23 +288,33 @@ export class ThreadWindow {
     this.host.scrollTop += target.getBoundingClientRect().top - hostTop;
   }
 
-  /** Keep the conversation's end visible when the scroll container resizes, as
-   *  when the soft keyboard opens. `interactive-widget=resizes-content` keeps the
-   *  composer above the keys, but a resize leaves `scrollTop` alone and the newest
-   *  messages under the keyboard. Any resize: re-pinning at the bottom is a no-op.
+  /** Keep the conversation's end visible when the scroll container resizes: the
+   *  soft keyboard opening (`interactive-widget=resizes-content`), or the
+   *  composer below it growing a line. A resize leaves `scrollTop` alone and the
+   *  newest messages out of view. Any resize: re-pinning at the bottom is a
+   *  no-op. The elements are offered by `watchScroller` and `watchContent`.
    *  Returns its teardown. */
   observeShrink(): () => void {
     // jsdom has no ResizeObserver; `repinAfterResize` is unit-tested, the
     // geometry browser-tested.
     if (typeof ResizeObserver === 'undefined') return () => undefined;
-    const ro = new ResizeObserver(() => this.repinAfterResize());
-    this.ro = ro;
-    ro.observe(this.host);
+    this.ro = new ResizeObserver(() => this.repinAfterResize());
+    const ro = this.ro;
     return () => {
       ro.disconnect();
       this.ro = null;
       this.watched = null;
+      this.watchedScroller = null;
     };
+  }
+
+  /** Watch the scroll container itself, once the view has it. */
+  watchScroller(el: HTMLElement | undefined): void {
+    const next = el ?? null;
+    if (!this.ro || next === this.watchedScroller) return;
+    if (this.watchedScroller) this.ro.unobserve(this.watchedScroller);
+    this.watchedScroller = next;
+    if (next) this.ro.observe(next);
   }
 
   /** Watch the message block too: an image loading after the open has scrolled

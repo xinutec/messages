@@ -1,11 +1,21 @@
-// The Thread host is the right-hand pane and the scroll container.
+// The Thread host is the right-hand pane: a column of the scroll container,
+// then the composer, which takes its height from the list rather than covering
+// it.
 :host {
-  // A column, so the composer's `margin-top: auto` puts it at the foot of a
-  // short conversation; sticky alone would float it under the last message.
-  // Nothing may shrink (see `> *`), or the spacers lose their computed heights.
   display: flex;
   flex-direction: column;
   height: 100%;
+}
+
+// The scroll container. A column, so nothing may shrink (see `> *`), or the
+// spacers lose their computed heights.
+.thread {
+  flex: 1;
+  // A flex item's minimum is its content; without this the list would push the
+  // composer out of the pane instead of scrolling.
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding: 0 1.5rem;
@@ -276,28 +286,26 @@
 
 // Phone: full-width pane with roomier bubbles.
 @media (max-width: 767px) {
-  :host {
-    padding: 0 0.9rem;
+  .thread {
+    padding-inline: 0.9rem;
   }
   .msg {
     max-width: 85%;
   }
 }
 
-// The composer stays at the foot of the scroll container. Sticky, not fixed:
-// fixed would float it over the list on desktop.
+// The composer, below the scroll container: growing, it shortens the list.
 .composer {
-  position: sticky;
-  bottom: 0;
-  z-index: 3;
-  // Takes the slack in a short conversation; sticky takes over once it overflows.
-  margin-top: auto;
+  flex: none;
   display: flex;
   // The button stays by the last line as the box grows.
   align-items: flex-end;
   gap: 0.25rem;
-  padding: 0.4rem 0;
-  background: var(--mat-sys-surface);
+  padding: 0.4rem 1.5rem;
+  // The thread's phone inset, so the box lines up with the bubbles.
+  @media (max-width: 767px) {
+    padding-inline: 0.9rem;
+  }
   textarea {
     flex: 1;
     // A flex item's minimum is its content, so a long draft would push the
@@ -305,8 +313,11 @@
     min-width: 0;
     // The search boxes' pill (styles.scss): the same surface, shape and focus
     // ring, one line tall until the draft needs more (`cdkTextareaAutosize`).
-    box-sizing: border-box;
-    min-height: 40px;
+    // Content-box: the autosize sets the height of the lines alone, so padding
+    // counted inside it would hide the first line. One 24px line plus 8px
+    // above and below is the pill's 40px.
+    box-sizing: content-box;
+    min-height: 24px;
     resize: none;
     font: var(--mat-sys-body-large);
     // After the shorthand, which would reset it: a 24px line in a 40px box.
@@ -325,9 +336,12 @@
 // Both a refusal and the "sent, not yet archived" note, so not styled as an
 // error.
 .send-error {
-  position: sticky;
-  bottom: 0;
+  flex: none;
   margin: 0 0 0.4rem;
+  padding-inline: 1.5rem;
+  @media (max-width: 767px) {
+    padding-inline: 0.9rem;
+  }
   font: var(--mat-sys-label-medium);
   color: var(--mat-sys-on-surface-variant);
 }
