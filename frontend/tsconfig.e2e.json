@@ -1,4 +1,4 @@
-// Type-checks the e2e tree and the Playwright config, which no other tsconfig
+// Type-checks the e2e and perf trees and their Playwright configs, which no other tsconfig
 // reaches and Playwright's esbuild transform does not check. `harness.d.mts`
 // types the `.mjs`, so no `allowJs`.
 {
@@ -6,5 +6,5 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": ["playwright.config.ts", "e2e/**/*.ts", "e2e/**/*.d.mts"]
+  "include": ["playwright.config.ts", "playwright.perf.config.ts", "e2e/**/*.ts", "e2e/**/*.d.mts", "perf/**/*.ts"]
 }

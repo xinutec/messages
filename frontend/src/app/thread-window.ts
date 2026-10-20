@@ -11,7 +11,11 @@ import { Message } from './models';
 
 /** Server page size, and so the unit a run is collapsed or revealed in. */
 export const PAGE = 100;
-/** Soft cap on how many messages are ever in the DOM. */
+/** Soft cap on how many messages are ever in the DOM. It earns its cost
+ *  (`pnpm run perf`, text only, 4x CPU throttling): uncapped, 3,000 rendered
+ *  messages put the 95th-percentile scroll frame at 57 ms and 5,800 at 116 ms,
+ *  every frame over 50, with 57 MB of heap; capped, 20 ms and 13 MB at any
+ *  depth. */
 export const MAX_RENDERED = 400;
 /** How many pages `loadThread` fetches at most to restore a `?from` depth:
  *  five times `MAX_RENDERED`, beyond any legitimate restore. */

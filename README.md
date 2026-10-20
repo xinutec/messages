@@ -139,6 +139,9 @@ diffs it.
   `pnpm run ui-check` runs the Playwright suite against the production build:
   phone-width layout, copy, scrolling, routing, the Android keyboard and a real
   IME composition. Treat vitest as no evidence about the composer.
+- `pnpm run perf` (frontend/perf/) measures rather than gates: what the thread's
+  DOM window saves as a reader pages back, printed per depth. Run it against
+  two builds to compare.
 - `archiver/tests/` — the archiver's suite, in its own database
   (`SIGNAL_TEST_DATABASE_URL`, its own gate row): its rows persist between
   runs, and the fixture above empties its database.

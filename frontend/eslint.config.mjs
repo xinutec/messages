@@ -38,9 +38,9 @@ export default tseslint.config(
     },
   },
   {
-    // The e2e tree, type-aware for no-floating-promises: an unawaited
+    // The e2e and perf trees, type-aware for no-floating-promises: an unawaited
     // `route.fulfill(...)` still mocks the request, so nothing else notices.
-    files: ["e2e/**/*.ts", "playwright.config.ts"],
+    files: ["e2e/**/*.ts", "perf/**/*.ts", "playwright.config.ts", "playwright.perf.config.ts"],
     extends: [...tseslint.configs.recommendedTypeChecked, ...tseslint.configs.stylisticTypeChecked],
     languageOptions: {
       parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
