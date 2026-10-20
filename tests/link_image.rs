@@ -195,3 +195,20 @@ fn a_refusal_says_which_signal_was_missing() {
         None
     );
 }
+
+/// The page links and the server offers by one rule; see the table's `_doc`.
+#[test]
+fn links_are_found_as_the_page_finds_them() {
+    let table: serde_json::Value =
+        serde_json::from_str(include_str!("../testdata/links-in-text.json")).unwrap();
+    for case in table["cases"].as_array().unwrap() {
+        let text = case["text"].as_str().unwrap();
+        let want: Vec<Url> = case["links"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| Url::parse(l.as_str().unwrap()).unwrap())
+            .collect();
+        assert_eq!(urls_in(text), want, "in {text:?}");
+    }
+}

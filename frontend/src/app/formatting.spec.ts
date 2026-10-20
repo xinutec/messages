@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { segments } from './formatting';
 import { Message } from './models';
 import { testMessage } from './test-message';
+import table from '../../../testdata/links-in-text.json';
 
 /** Entity offsets are UTF-16 code units, as `String.prototype.slice` counts. */
 describe('formatted message bodies', () => {
@@ -100,4 +101,15 @@ describe('formatted message bodies', () => {
     const m = withEntities('just words', []);
     expect(segments(m)).toEqual([{ text: 'just words', cls: '', href: null }]);
   });
+});
+
+/** Where the page links, by the table the server's link finder is held to
+ *  (testdata/links-in-text.json). */
+describe('links the page finds', () => {
+  for (const { text, links } of table.cases) {
+    it(`in ${JSON.stringify(text)}`, () => {
+      const m = testMessage({ body: text });
+      expect(segments(m).flatMap((s) => (s.href != null ? [s.href] : []))).toEqual(links);
+    });
+  }
 });

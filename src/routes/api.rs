@@ -328,7 +328,8 @@ pub async fn link_image(
 /// POST /api/link-images/{id}/request → a reader tapped "show this picture".
 ///
 /// The browser names a hash, never an address, so this cannot be used as a
-/// fetch-anything proxy. 404 when the link was never offered or is decided.
+/// fetch-anything proxy. 404 when the link was never offered, or its picture is
+/// already held.
 pub async fn request_link_image(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,

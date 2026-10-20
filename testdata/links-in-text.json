@@ -1,0 +1,19 @@
+{
+  "_doc": "Where a message's text links somewhere, as the page links it (frontend formatting.ts) and as the server offers a picture for it (src/link_image.rs urls_in). Both test suites read this table, so the two cannot drift apart. `links` is what a reader would be taken to, in order.",
+  "cases": [
+    { "text": "look at https://cloud.example.org/nc/s/A. and https://cloud.example.org/nc/s/B, ok",
+      "links": ["https://cloud.example.org/nc/s/A", "https://cloud.example.org/nc/s/B"] },
+    { "text": "see https://en.wikipedia.org/wiki/Foo_(bar) for it",
+      "links": ["https://en.wikipedia.org/wiki/Foo_(bar)"] },
+    { "text": "(see https://x.example.org/p)",
+      "links": ["https://x.example.org/p"] },
+    { "text": "shouted HTTPS://Cloud.Example.org/x too",
+      "links": ["HTTPS://Cloud.Example.org/x"] },
+    { "text": "no scheme: www.example.org/a!",
+      "links": ["https://www.example.org/a"] },
+    { "text": "quoted \"https://q.example.org/x\" and <https://a.example.org/y>",
+      "links": ["https://q.example.org/x", "https://a.example.org/y"] },
+    { "text": "ftp://host/f mailto:a@b just words host.example.org/x",
+      "links": [] }
+  ]
+}

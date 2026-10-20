@@ -172,22 +172,60 @@ fn attr(tag: &str, name: &str) -> Option<String> {
     None
 }
 
-/// Every http(s) URL in a line of message text.
-///
-/// Trailing punctuation is not part of a link.
+/// The links in a message's text, by the rule the page links them with
+/// (frontend `formatting.ts` `addresses`, held to one table:
+/// `testdata/links-in-text.json`): an address starts with `http://`, `https://`
+/// or `www.` at a word's start, in any case, and runs to a space, `<`, `>` or
+/// `"`; closing punctuation, and a `)` the address did not open, belong to the
+/// sentence. `www.` alone is fetched over https, as the page links it.
 pub fn urls_in(text: &str) -> Vec<Url> {
     let mut out = Vec::new();
-    for word in text.split_whitespace() {
-        let candidate =
-            word.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '>', '"', '\'']);
-        if !(candidate.starts_with("http://") || candidate.starts_with("https://")) {
+    let mut i = 0;
+    while i < text.len() {
+        let rest = &text[i..];
+        let starts = ["http://", "https://", "www."].iter().any(|p| {
+            rest.get(..p.len())
+                .is_some_and(|h| h.eq_ignore_ascii_case(p))
+        });
+        let at_word_start = text[..i]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
+        if !(starts && at_word_start) {
+            i += rest.chars().next().map_or(1, char::len_utf8);
             continue;
         }
-        if let Ok(u) = Url::parse(candidate)
+        let len = rest
+            .find(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '"'))
+            .unwrap_or(rest.len());
+        let address = trimmed(&rest[..len]);
+        i += len.max(1);
+        let full = if address
+            .get(..4)
+            .is_some_and(|h| h.eq_ignore_ascii_case("www."))
+        {
+            format!("https://{address}")
+        } else {
+            address.to_owned()
+        };
+        if let Ok(u) = Url::parse(&full)
             && !out.contains(&u)
         {
             out.push(u);
         }
     }
     out
+}
+
+/// An address without what the sentence put after it: closing punctuation, and
+/// a `)` the address itself did not open.
+fn trimmed(address: &str) -> &str {
+    let mut s = address;
+    loop {
+        match s.chars().next_back() {
+            Some('.' | ',' | ';' | ':' | '!' | '?' | '\'' | '"') => s = &s[..s.len() - 1],
+            Some(')') if s.matches(')').count() > s.matches('(').count() => s = &s[..s.len() - 1],
+            _ => return s,
+        }
+    }
 }

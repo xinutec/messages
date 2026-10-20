@@ -8,7 +8,8 @@ import { Thread } from './thread';
  *   /                            → the shell with an empty thread pane
  *   /conversation/:origin/:id    → that conversation's thread
  *
- * The origin filter and paged-back depth are query params (`?origin`, `?from`).
+ * The origin filter, the place the reader was (`?from`) and a landing (`?at`, a
+ * message; `?on`, a day) are query params; see reader-place.ts.
  * `withComponentInputBinding()` binds `:origin` and `:id` to the Thread's inputs.
  * Up from a conversation is the list, keeping the origin filter and dropping the
  * paged-back depth; the bar draws it (`@xinutec/ui-scaffold`).

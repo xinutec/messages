@@ -174,7 +174,8 @@ pub struct Conversation {
     /// Its newest message, for the line under the name.
     pub last: Option<LastMessage>,
     /// Messages from others that came in after I last read, on the phone; 0 when
-    /// the origin cannot say (Google Chat, IRC) or nothing is unread.
+    /// the origin cannot say (IRC, a Google Chat conversation with no read
+    /// position) or nothing is unread.
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub unread: i64,
     /// When its picture last changed, in epoch seconds: the version its URL
