@@ -58,7 +58,6 @@ export class ThreadWindow {
   private readonly lo = computed(() => sumCount(this.above()));
   private readonly end = computed(() => this.messages().length - sumCount(this.below()));
 
-  /** The messages currently in the DOM (a window over the retained list). */
   readonly rendered = computed(() => this.messages().slice(this.lo(), this.end()));
   readonly renderCount = computed(() => this.end() - this.lo());
   readonly topSpacer = computed(() => sumHeight(this.above()));
@@ -75,8 +74,6 @@ export class ThreadWindow {
    *  dispatches arrives later; one that finds the view still there is ours. */
   private placedAt: number | null = null;
 
-  /** The observer behind `observeShrink`, and the scroll container and message
-   *  block it watches. */
   private ro: ResizeObserver | null = null;
   private watched: HTMLElement | null = null;
   private watchedScroller: HTMLElement | null = null;
@@ -109,7 +106,6 @@ export class ThreadWindow {
     return el;
   }
 
-  /** Back to "nothing collapsed" — for a fresh conversation. */
   reset(): void {
     this.above.set([]);
     this.below.set([]);
@@ -170,13 +166,11 @@ export class ThreadWindow {
     return ours;
   }
 
-  /** Write `scrollTop`, remembering where, for `placedThisScroll`. */
   private place(top: number): void {
     this.host.scrollTop = top;
     this.placedAt = this.host.scrollTop;
   }
 
-  /** Whether the reader is following the end; see `following`. */
   isFollowing(): boolean {
     return this.following;
   }
@@ -307,7 +301,6 @@ export class ThreadWindow {
     };
   }
 
-  /** Watch the scroll container itself, once the view has it. */
   watchScroller(el: HTMLElement | undefined): void {
     const next = el ?? null;
     if (!this.ro || next === this.watchedScroller) return;

@@ -86,7 +86,6 @@ export class MessagesStore {
         this.noteAnswer();
         this.conversations.set(cs);
       },
-      // The previous list stays: a stale list beats an empty one, and says so.
       error: (e: unknown) => this.noteFailure(e),
     });
   }
@@ -95,7 +94,6 @@ export class MessagesStore {
     return this.conversations().find((c) => c.origin === origin && c.id === id) ?? null;
   }
 
-  /** What to call a conversation with no name, per kind. */
   private readonly unnamed: Record<ConversationKind, string> = {
     dm: 'Direct message',
     group: 'Group',

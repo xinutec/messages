@@ -15,7 +15,6 @@ export class ThreadSearch {
   readonly query = signal('');
   readonly hits = signal<SearchHit[] | null>(null);
   readonly busy = signal(false);
-  /** A failed search, distinct from no hits. */
   readonly failed = signal(false);
   private readonly asked = new Subject<string>();
 
@@ -44,7 +43,6 @@ export class ThreadSearch {
       });
   }
 
-  /** Open or close the box, clearing what it found. */
   toggle(): void {
     const open = !this.open();
     this.open.set(open);

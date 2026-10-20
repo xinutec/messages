@@ -64,7 +64,6 @@ function hrefOf(e: Message['entities'][number], body: string): string | null {
 /** Where a plain-text address starts: a web scheme, or `www.`. */
 const ADDRESS = /\b(?:https?:\/\/|www\.)[^\s<>"]+/gi;
 
-/** The addresses in a body, as `url` entities. */
 function addresses(body: string): Message['entities'] {
   return [...body.matchAll(ADDRESS)].map((match) => ({
     kind: 'url',

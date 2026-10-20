@@ -152,7 +152,7 @@ ui-scaffold {
   }
 }
 
-// The grid cell for the Thread, which is itself the scroll container.
+// The grid cell for the Thread, whose inner `.thread` scrolls.
 .pane {
   min-height: 0;
   // A grid item's minimum is its min-content width, so without this one

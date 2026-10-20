@@ -51,7 +51,6 @@ export function deliveryPending(d: Delivery): boolean {
   return d.state === 'sent' || d.state === 'delivered';
 }
 
-/** A preview's host, or its whole url if that does not parse. */
 export function hostOf(url: string): string {
   try {
     return new URL(url).host;
@@ -72,7 +71,7 @@ export function isPlain(m: Message): boolean {
     && !m.link_images.length && !m.link_offers.length;
 }
 
-/** One day of the rendered window, under its sticky date header. */
+/** One day of the rendered window, under its date separator. */
 export interface DayGroup {
   readonly key: string;
   readonly ts: number;

@@ -108,7 +108,6 @@ export class Picking {
   }
 }
 
-/** The message a pointer event is on, by its bubble. */
 function messageAt(e: Event): string | undefined {
   const at = e.target instanceof Element ? e.target : null;
   return at?.closest<HTMLElement>('.msg[data-id]')?.dataset['id'];

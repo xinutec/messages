@@ -44,7 +44,6 @@ export class App {
   private api = inject(MessagesApi);
   private swUpdates = inject(AppSwUpdates);
 
-  /** Which build this is, from the bundle; see app.html. */
   protected readonly build = BUILD_INFO;
   protected readonly builtAt = new Date(BUILD_INFO.builtAt).toLocaleString();
   private store = inject(MessagesStore);
@@ -55,21 +54,16 @@ export class App {
 
   readonly me = this.store.me;
   readonly loading = this.store.loading;
-  /** No network and nothing remembered; see messages-store.ts. */
   readonly offline = this.store.offline;
-  /** What is on view is what the service worker kept; see messages-store.ts. */
   readonly stale = this.store.stale;
   readonly conversations = this.store.conversations;
 
-  /** The filter's labels, and its order. */
   readonly originLabels = ORIGIN_LABELS;
   readonly origins: readonly Origin[] = ['signal', 'gchat', 'irc', 'telegram'];
 
-  // A row's time and last message; see list-row.ts.
   protected readonly whenFormat = whenFormat;
   protected readonly preview = preview;
 
-  // `?origin` filters the list.
   private params = toSignal(this.route.queryParamMap);
   readonly originFilter = computed<Origin | 'all'>(() => {
     const o = this.params()?.get('origin');
@@ -165,7 +159,6 @@ export class App {
   }
 
   setFilter(f: Origin | 'all'): void {
-    // Update `?origin`, keeping the open conversation.
     void this.router.navigate([], {
       relativeTo: this.leaf(),
       queryParams: { origin: f === 'all' ? null : f },
@@ -225,7 +218,6 @@ export class App {
     return this.store.find(h.origin, h.conversation_id)?.network ?? null;
   }
 
-  /** The picture of a hit's conversation, as the list has it. */
   hitAvatar(h: SearchHit): number | null {
     return this.store.find(h.origin, h.conversation_id)?.avatar ?? null;
   }

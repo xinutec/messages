@@ -42,7 +42,6 @@ import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
 import { Attachment, Conversation, Delivery, Message, MessagesPage, Origin, ReplyTo, SearchHit } from './models';
 
-/** How often an open, visible thread checks for newer messages. */
 const POLL_MS = 5000;
 
 /** How long after the last scroll the floating day pill stays. */
@@ -102,17 +101,14 @@ export class Thread {
   private readonly messagesEl = viewChild<ElementRef<HTMLElement>>('messagesEl');
   private readonly scrollerEl = viewChild<ElementRef<HTMLElement>>('scroller');
 
-  // Shared with the clipboard; see attachment.ts.
   protected readonly attachmentName = attachmentName;
 
   private readonly pictures = inject(Pictures);
 
-  /** A picture, full screen in the fleet's viewer; back closes it. */
   protected viewPicture(a: Attachment): void {
     this.pictures.open({ label: attachmentName(a) ?? 'picture', source: this.attachmentUrl(a) });
   }
 
-  /** Where an attachment's bytes come from; see message-view.ts. */
   protected attachmentUrl(a: Attachment): string {
     const origin = this.origin();
     // Unreachable while routed; an empty src fails visibly.
@@ -138,7 +134,6 @@ export class Thread {
     return this.revealedIds().has(id);
   }
 
-  /** Messages showing their earlier versions, by id, like `revealedIds`. */
   private readonly openHistories = signal<ReadonlySet<string>>(new Set());
 
   protected isHistoryOpen(id: string): boolean {
@@ -166,7 +161,6 @@ export class Thread {
     return o != null && i != null ? this.store.find(o, i) : null;
   });
 
-  /** The conversation's name, for its picture's initials. */
   protected barName(c: Conversation): string {
     return this.store.title(c);
   }
@@ -179,13 +173,11 @@ export class Thread {
     return c ? this.store.title(c) : { text: 'Conversation', provisional: true };
   });
 
-  /** Search within this conversation; see thread-search.ts. */
   protected readonly search = new ThreadSearch(this.api, this.origin, this.id);
 
   /** All fetched messages, ascending by ts; only a window is rendered. */
   readonly messages = signal<Message[]>([]);
 
-  /** Which messages are in the DOM; see thread-window.ts. */
   private readonly win = new ThreadWindow(
     () => this.scrollerEl()?.nativeElement,
     () => this.messagesEl()?.nativeElement,
@@ -219,7 +211,6 @@ export class Thread {
   // thread's own scrolls, a resize, a picture loading and a tap or a key in the
   // box are not the reader's, and decide nothing about where they are.
 
-  /** A scrolling gesture of the reader's is under way. */
   private readerScrolling = false;
   /** The scrollbar is held; the gesture lasts until it is let go. */
   private holdingScrollbar = false;
@@ -259,7 +250,6 @@ export class Thread {
    *  belongs to a conversation the reader has left, and is dropped. */
   private generation = 0;
 
-  /** The rendered window by day and run, and where runs start; see message-view.ts. */
   readonly dayGroups = computed(() => dayGroups(this.rendered()));
   readonly startsRun = computed(() => runStarts(this.rendered()));
   protected readonly isPlain = isPlain;
@@ -292,7 +282,6 @@ export class Thread {
 
     const poll = setInterval(() => void this.pollNewer(), POLL_MS);
     const destroyRef = inject(DestroyRef);
-    // Intervals and timers go with the component.
     destroyRef.onDestroy(() => clearInterval(poll));
     // Back while picking pops the entry the picking added, and ends it.
     const popped = this.location.subscribe(() => this.picking.clear());
@@ -309,15 +298,11 @@ export class Thread {
     // `ThreadWindow.observeShrink`.
     destroyRef.onDestroy(this.win.observeShrink());
     effect(() => this.win.watchScroller(this.scrollerEl()?.nativeElement));
-    // Re-pointed at the current message block after each re-render.
     effect(() => this.win.watchContent(this.messagesEl()?.nativeElement));
   }
 
-  /** Where the reader is, and why; see reader-place.ts. */
   private readonly place = new ReaderPlace(this.route.snapshot.queryParamMap);
-  /** See `ReaderPlace.floating`. */
   readonly floating = this.place.floating;
-  /** See `ReaderPlace.landedId`. */
   readonly landedId = this.place.landedId;
 
   private resetState(): void {
@@ -380,7 +365,6 @@ export class Thread {
     return true;
   }
 
-  // How a message is shown; see message-view.ts.
   protected readonly reactors = reactors;
   protected deliveryLabel(d: Delivery): string {
     return deliveryLabel(d, this.conversation()?.kind);
@@ -427,7 +411,6 @@ export class Thread {
     if (!r.id) return;
     const here = this.rendered().find((m) => m.id === r.id);
     if (here) {
-      // A landing of its own, in the window already loaded.
       this.place.landOn(here.id, this.floating());
       this.win.scrollToTs(here.ts);
       return;
@@ -460,7 +443,6 @@ export class Thread {
       // `?at` means "put me here" and `?from` "I was here"; `?at` wins, and
       // `commitFromParam` replaces it with `from` once the reader scrolls.
       if (at != null && (await this.loadAround(origin, id, { at }))) return;
-      // `?on`, a picked date, likewise.
       if (onDay != null && (await this.loadAround(origin, id, { onDay }))) return;
       if (from == null) {
         shown = await this.showKept(origin, id, gen);
@@ -481,7 +463,6 @@ export class Thread {
       this.fetches.watchInFlight(page.messages);
       this.loadingThread.set(false);
       this.appRef.tick();
-      // Position the viewport, then bound the DOM around it.
       if (from != null) this.win.scrollToTs(from);
       else if (!moved) this.win.scrollToBottom();
       this.win.trimToWindow();
@@ -615,7 +596,6 @@ export class Thread {
     const o = this.origin();
     const i = this.id();
     if (o == null || i == null) return;
-    // Not during a load or a send, while floating (see `floating`), or while hidden.
     if (this.polling || this.loadingThread() || this.loadingOlder() || this.composer.sending()) return;
     if (this.floating()) return;
     if (document.visibilityState !== 'visible') return;
@@ -662,7 +642,6 @@ export class Thread {
         [...current, ...fresh].sort((a, b) => a.ts - b.ts || a.id.localeCompare(b.id)),
       );
       this.appRef.tick();
-      // Follow only a reader already at the end.
       if (following) this.win.scrollToBottom();
       this.win.trimToWindow();
     } catch (e: unknown) {
@@ -683,7 +662,6 @@ export class Thread {
     const kind = this.conversation()?.kind;
     return this.origin() === 'telegram' && (kind === 'dm' || kind === 'group');
   });
-  /** The draft and its sending; see composer.ts. */
   readonly composer = new Composer(this.api, this.origin, this.id, () => this.afterSend());
 
   /** Show what was just sent: the newest page merged in and the view at the
@@ -697,12 +675,10 @@ export class Thread {
 
   // ---- what the reader asks to be fetched ----------------------------------
 
-  /** What the reader asked to be fetched; see fetch-requests.ts. */
   protected readonly fetches = new FetchRequests(this.api, this.messages);
 
   // ---- scrolling ----------------------------------------------------------
 
-  /** The window engine decides what to reveal or collapse; fetching stays here. */
   onScroll(): void {
     // Whoever moved it, the window follows the view; only the reader's own
     // scroll says where the reader is (see "whose scroll it is"). One the window
@@ -755,7 +731,6 @@ export class Thread {
     try {
       const page = await firstValueFrom(this.api.messages(o, i, this.cursor, PAGE));
       if (gen !== this.generation) return;
-      // Prepend, keeping the viewport on the same message.
       this.win.keepingAnchor('fetchOlder', () => {
         this.messages.update((cur) => [...page.messages, ...cur]);
         this.hasMore.set(page.has_more);
@@ -777,7 +752,6 @@ export class Thread {
   async fetchNewer(): Promise<void> {
     const o = this.origin();
     const i = this.id();
-    // Only while floating; otherwise there is nothing newer to fetch.
     if (o == null || i == null || !this.floating()) return;
     if (this.newerCursor == null || this.loadingNewer()) return;
     this.loadingNewer.set(true);
@@ -785,7 +759,6 @@ export class Thread {
     try {
       const page = await firstValueFrom(this.api.messages(o, i, this.newerCursor, PAGE, 'newer'));
       if (gen !== this.generation) return;
-      // Append, keeping the viewport on the same message.
       this.win.keepingAnchor('fetchNewer', () => {
         this.messages.update((cur) => [...cur, ...page.messages]);
         this.newerCursor = page.prev_cursor;
@@ -831,7 +804,6 @@ export class Thread {
   }
 }
 
-/** `set` with `id` added if absent, removed if present. */
 function toggled(set: ReadonlySet<string>, id: string): ReadonlySet<string> {
   const next = new Set(set);
   if (!next.delete(id)) next.add(id);

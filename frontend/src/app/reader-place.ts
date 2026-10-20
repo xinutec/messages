@@ -33,7 +33,6 @@ export class ReaderPlace {
     this.lastOn = opened.get('on');
   }
 
-  /** A fresh conversation: at its end, nothing marked. */
   reset(): void {
     this.landedId.set(null);
     this.floating.set(false);
@@ -54,7 +53,6 @@ export class ReaderPlace {
     this.floating.set(!yes);
   }
 
-  /** The reader scrolled: the landing is behind them. */
   readerScrolled(): void {
     this.scrolled = true;
     this.landedId.set(null);

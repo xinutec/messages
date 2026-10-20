@@ -75,7 +75,7 @@
 .thread-search {
   position: sticky;
   top: 0;
-  z-index: 3; // above the day headers, which pin behind it
+  z-index: 3; // above the floating day
   background: var(--mat-sys-surface);
   padding: 0.5rem 0.5rem 0;
   // Bounded, so a common word cannot push the thread off screen.
@@ -207,8 +207,8 @@
   // height, and the resize on scroll would shift the viewport.
 
   // The message a landing put the reader on, marked so it can be told from its
-  // neighbours. A rule and a wash, since `.out` owns the background. Cleared on
-  // the first scroll.
+  // neighbours. A rule and a wash, since `.out` owns the background. Cleared once
+  // the reader scrolls.
   &.landed {
     box-shadow: inset 0.2rem 0 0 var(--mat-sys-primary);
     background: color-mix(in srgb, var(--mat-sys-primary) 12%, transparent);

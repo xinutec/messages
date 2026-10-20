@@ -13,7 +13,6 @@ export class Composer {
    *  submits even when the keydown handler returned early. */
   readonly composing = signal(false);
   readonly sending = signal(false);
-  /** The refusal, shown as-is. */
   readonly error = signal<string | null>(null);
   /** What was left mid-sentence in other conversations, by `origin:id`, as
    *  Signal keeps it; never sent anywhere but where it was typed. */
@@ -91,7 +90,6 @@ export class Composer {
   }
 }
 
-/** Whether the reader's pointer is a finger. */
 function touchScreen(): boolean {
   return typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
 }

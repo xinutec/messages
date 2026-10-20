@@ -7,7 +7,6 @@ import { WritableSignal, signal } from '@angular/core';
 import { MessagesApi } from './messages-api';
 import { Attachment, LinkOffer, Message } from './models';
 
-/** How often a fetch in flight is asked about. */
 const MEDIA_WATCH_INTERVAL_MS = 4000;
 
 /** How long to watch a requested fetch before giving up quietly; reopening the
@@ -35,12 +34,10 @@ export class FetchRequests {
     return this.asking().has(id);
   }
 
-  /** The sentence a link's last request left, if it found no picture. */
   saidOf(id: string): string | undefined {
     return this.said().get(id);
   }
 
-  /** Forget every request, for a fresh conversation or a destroyed thread. */
   reset(): void {
     for (const id of [...this.watching.keys()]) this.stopWatching(id);
     this.asking.set(new Set());
@@ -138,7 +135,6 @@ export class FetchRequests {
     );
   }
 
-  /** Swap the offer for the picture, in place. */
   private landLinkImage(id: string, contentType: string): void {
     this.messages.update((cur) =>
       cur.map((m) => {

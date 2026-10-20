@@ -93,7 +93,7 @@
     @if (floatingDay(); as d) {
       <div class="day floating" [class.shown]="scrolling()"><span>{{ d | date: 'fullDate' }}</span></div>
     }
-    <!-- Stands in for older messages collapsed out of the DOM (see thread.ts). -->
+    <!-- Stands in for older messages collapsed out of the DOM (thread-window.ts). -->
     <div [style.height.px]="topSpacer()"></div>
 
     <!-- A long press picks a message, then taps pick more: the host's listeners,

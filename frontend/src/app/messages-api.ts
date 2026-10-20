@@ -24,7 +24,6 @@ export class MessagesApi {
     );
   }
 
-  /** Has an asked-for attachment arrived? */
   telegramMediaState(id: string): Observable<MediaState> {
     return this.http.get<MediaState>(
       `/api/telegram-media/${encodeURIComponent(id)}/state`,
@@ -80,9 +79,9 @@ export class MessagesApi {
     );
   }
 
-  /** Say something in an IRC conversation, through irssi. The recipient comes
-   *  from the conversation, server-side. A refusal resolves with `sent: false`;
-   *  only a transport failure errors. */
+  /** Say something on IRC or Telegram. The recipient comes from the
+   *  conversation, server-side. A refusal resolves with `sent: false`; only a
+   *  transport failure errors. */
   send(origin: Origin, id: string, text: string): Observable<SendResult> {
     return this.http.post<SendResult>(
       `/api/conversations/${origin}/${encodeURIComponent(id)}/send`,
