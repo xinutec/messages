@@ -42,6 +42,7 @@ fn pending_cookie(value: String) -> Cookie<'static> {
 /// Same-site paths only, judged where a browser lands: the WHATWG parser drops
 /// tabs and newlines and folds `\` to `/`, so `/\t/host` is `//host`. Returns
 /// the path as that parser resolves it.
+// dev-lint: sanitises redirect — resolved where the browser lands, and only the same origin passes
 pub fn validate_return_to(return_to: Option<&str>) -> String {
     let site = url::Url::parse("https://site.invalid/").expect("a fixed URL");
     match return_to

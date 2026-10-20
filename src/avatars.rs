@@ -12,6 +12,7 @@ use crate::config::Config;
 /// Where a conversation's picture is filed under the two media dirs, or `None`
 /// where the origin keeps none or the name would leave the directory. Whoever
 /// writes them uses the same names.
+// dev-lint: sanitises path — a name with no separator and no leading dot
 fn filed(attachments: &str, telegram: &str, origin: Origin, id: &str) -> Option<PathBuf> {
     let (dir, name) = match origin {
         // The thread id, with a group id's `/` as `_`.
