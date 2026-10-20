@@ -608,6 +608,27 @@ test("a picked day stays picked while the app loads around it @ phone width", as
   await expect(page.locator(".msg.landed")).toHaveCount(1);
 });
 
+/** A landing shorter than the screen scrolls nothing, so no scroll event asks
+ *  for the older page; the load itself must. Opened straight onto the day, with
+ *  nothing before it, so no earlier scroll can stand in. */
+test("a landing shorter than the screen still loads what is before it @ phone width", async ({ page }) => {
+  await mockApi(page);
+  const around = (id: string, minute: number, body: string) =>
+    testMessage({ id, ts: Date.UTC(2025, 2, 4, 8, minute), sender: "Alice Andersson", body });
+  await page.route("**/messages**", (r) => {
+    const url = r.request().url();
+    if (url.includes("cursor=c1")) {
+      return r.fulfill({ json: { messages: Array.from({ length: 30 }, (_, n) => around(`o${n}`, n, `earlier ${n}`)), has_more: false, next_cursor: null, prev_cursor: null } satisfies MessagesPage });
+    }
+    return url.includes("dir=at")
+      ? r.fulfill({ json: { messages: [around("d1", 59, "a message from that day")], has_more: false, next_cursor: null, prev_cursor: null } satisfies MessagesPage })
+      : r.fulfill({ json: { messages: [], has_more: true, next_cursor: "c1", prev_cursor: null } satisfies MessagesPage });
+  });
+  await page.goto(`/conversation/signal/dm:a?on=${Date.UTC(2025, 2, 4)}`);
+  await page.getByText("a message from that day", { exact: true }).waitFor();
+  await expect(page.getByText("earlier 0", { exact: true })).toBeAttached({ timeout: 5000 });
+});
+
 // A hit in the open conversation is a landing like a picked day: it stays landed
 // while the app loads around it, and as a move within the conversation it takes
 // the reader's place, so back leaves the conversation.

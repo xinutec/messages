@@ -120,7 +120,8 @@ export class ThreadWindow {
    *  the caller an edge is near with nothing collapsed there: fetch a page. */
   step(): { needOlder: boolean; needNewer: boolean } {
     const el = this.container();
-    if (!el) return { needOlder: false, needNewer: false };
+    // Not laid out (a hidden pane, or jsdom): no edge is near anything.
+    if (!el || this.host.clientHeight === 0) return { needOlder: false, needNewer: false };
     if (this.dbg) this.detectJump();
 
     // Measured from rects: the host is not necessarily the offsetParent.

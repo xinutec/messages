@@ -376,6 +376,7 @@ export class Thread {
     if (hit) this.win.scrollToTs(hit.ts);
     else this.win.scrollToBottom();
     this.win.trimToWindow();
+    this.stepWindow();
     return true;
   }
 
@@ -484,6 +485,7 @@ export class Thread {
       if (from != null) this.win.scrollToTs(from);
       else if (!moved) this.win.scrollToBottom();
       this.win.trimToWindow();
+      this.stepWindow();
       // `watchContent` holds the bottom as images load.
     } catch (e: unknown) {
       if (gen !== this.generation) return;
@@ -712,6 +714,13 @@ export class Thread {
       this.noteFloatingDay();
     }
     if (this.threadError() || !this.routed() || this.loadingThread()) return;
+    this.stepWindow();
+  }
+
+  /** Reveal or fetch at whichever edge the view is near, and note the place.
+   *  On every scroll, and once a load has placed the view: a scroll during the
+   *  load is skipped, and a page shorter than the screen scrolls nothing. */
+  private stepWindow(): void {
     const { needOlder, needNewer } = this.win.step();
     if (needOlder) void this.fetchOlder();
     if (needNewer) void this.fetchNewer();
