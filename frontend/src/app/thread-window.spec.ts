@@ -60,7 +60,8 @@ describe('ThreadWindow', () => {
   // ---- following the end of the conversation --------------------------------
   //
   // Whether a resize re-pins to the bottom; whether it lands there is geometry,
-  // in `e2e/ui-pages.spec.ts`.
+  // in `e2e/ui-pages.spec.ts`. Only the reader's own scroll (`noteReaderAt`) and
+  // the thread placing the view change it: a resize moves the view, not them.
 
   it('re-pins to the end when the container resizes under a reader who was at it', () => {
     const { win } = harness(10);
@@ -75,50 +76,31 @@ describe('ThreadWindow', () => {
     expect(win.repinAfterResize()).toBe(false);
   });
 
-  it('takes the first scroll event for where the reader is, not for a resize', () => {
-    // The open's scroll to the end and a reader's scroll back in the same frame
-    // arrive as one event: the first `noteScroll`, with no height recorded yet.
-    const { win, host } = harness(10);
-    win.scrollToBottom();
-    Object.defineProperty(host, 'clientHeight', { value: 800 });
-    Object.defineProperty(host, 'scrollHeight', { value: 3000 });
-    host.scrollTop = 0;
-    win.noteScroll();
-    expect(win.repinAfterResize()).toBe(false);
-  });
+  /** The scroll container at a given place: jsdom lays nothing out. */
+  function at(host: HTMLElement, fromBottom: number): void {
+    Object.defineProperty(host, 'clientHeight', { value: 800, configurable: true });
+    Object.defineProperty(host, 'scrollHeight', { value: 3000, configurable: true });
+    host.scrollTop = 2200 - fromBottom;
+  }
 
-  it('takes a scroll that lands with a resize for where the reader is', () => {
-    // Layout settling can change the container's height between two scroll
-    // events. A resize moves the bottom by its own size, no more: a reader
-    // farther away than that has left it, and must not be re-pinned.
+  it('follows the end as the reader leaves it and comes back', () => {
     const { win, host } = harness(10);
-    const set = (h: number, sh: number, top: number) => {
-      Object.defineProperty(host, 'clientHeight', { value: h, configurable: true });
-      Object.defineProperty(host, 'scrollHeight', { value: sh, configurable: true });
-      host.scrollTop = top;
-    };
     win.scrollToBottom();
-    set(800, 3000, 2200);
-    win.noteScroll();
-    set(760, 3000, 0);
-    win.noteScroll();
+    at(host, 1500);
+    win.noteReaderAt(true);
     expect(win.repinAfterResize()).toBe(false);
-  });
-
-  it('keeps following through a resize that only moved the bottom', () => {
-    const { win, host } = harness(10);
-    const set = (h: number, sh: number, top: number) => {
-      Object.defineProperty(host, 'clientHeight', { value: h, configurable: true });
-      Object.defineProperty(host, 'scrollHeight', { value: sh, configurable: true });
-      host.scrollTop = top;
-    };
-    win.scrollToBottom();
-    set(800, 3000, 2200);
-    win.noteScroll();
-    // The soft keyboard: 300px shorter, scrollTop untouched.
-    set(500, 3000, 2200);
-    win.noteScroll();
+    at(host, 0);
+    win.noteReaderAt(true);
     expect(win.repinAfterResize()).toBe(true);
+  });
+
+  it('does not follow the end of a window that stops short of the present', () => {
+    // At the bottom of a landing in the past: following would re-pin each page
+    // fetched forwards, and carry the reader to the present unasked.
+    const { win, host } = harness(10);
+    at(host, 0);
+    win.noteReaderAt(false);
+    expect(win.repinAfterResize()).toBe(false);
   });
 
   it('follows the end again for a fresh conversation', () => {

@@ -65,8 +65,18 @@ function setupWithQuery(params: Record<string, string>): ComponentFixture<Thread
   return TestBed.createComponent(Thread);
 }
 
-/** A thread routed to an IRC conversation and settled on `held`. The initial
- *  load must finish first: `pollNewer` declines to run during one. */
+/** The reader's hand on the list, then the scroll it makes: a wheel turn
+ *  starts the gesture (jsdom does not scroll for it). */
+function readerScrolls(host: HTMLElement): void {
+  const list = host.querySelector<HTMLElement>('.thread')!;
+  Object.defineProperty(list, 'scrollHeight', { value: 5000, configurable: true });
+  Object.defineProperty(list, 'clientHeight', { value: 800, configurable: true });
+  list.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true }));
+  // Moved by the reader, so not where the thread last put it.
+  list.scrollTop = list.scrollTop + 300;
+  list.dispatchEvent(new Event('scroll'));
+}
+
 /** The reader scrolls back from the newest message: the scroll container, which
  *  jsdom does not lay out, given a geometry with room below the view. */
 function leaveTheEnd(thread: Thread): void {
@@ -74,9 +84,12 @@ function leaveTheEnd(thread: Thread): void {
   Object.defineProperty(el, 'scrollHeight', { value: 5000, configurable: true });
   Object.defineProperty(el, 'clientHeight', { value: 800, configurable: true });
   el.scrollTop = 1000;
+  el.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true }));
   thread.onScroll();
 }
 
+/** A thread routed to an IRC conversation and settled on `held`. The initial
+ *  load must finish first: `pollNewer` declines to run during one. */
 async function opened(held: Message[]): Promise<{ thread: Thread; api: { messages: ReturnType<typeof vi.fn> } }> {
   const { thread, ref, fixture } = setup();
   const api = fakeApiOf();
@@ -290,6 +303,14 @@ describe('Thread', () => {
     await thread.pollNewer();
     expect(thread.messages().map((m) => m.id)).toEqual(['8', '9']);
     expect(thread.hasMore()).toBe(true);
+  });
+
+  it('leaves the address alone when the place in it has not changed', async () => {
+    const { thread } = await opened([msg('1', 100), msg('2', 200)]);
+    const navigate = vi.spyOn(TestBed.inject(Router), 'navigate');
+    // At the end, which the address already says by having no `from`.
+    thread.commitFromParam();
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it('does not poll a screen nobody is looking at', async () => {
@@ -954,13 +975,21 @@ describe('Thread — the page the worker kept', () => {
 });
 
 describe('Thread floating day', () => {
+  // A new message arriving at the end scrolls the thread too, and Signal shows
+  // no date for it.
+  it('shows no day for a scroll the reader did not make', async () => {
+    const f = await threeRendered();
+    (f.nativeElement as HTMLElement).querySelector('.thread')!.dispatchEvent(new Event('scroll'));
+    f.detectChanges();
+    expect(f.componentInstance.scrolling()).toBe(false);
+  });
+
   it('names the day of the message at the top while scrolling, and lets go after a pause', async () => {
     const f = await threeRendered();
     const thread = f.componentInstance;
     expect(thread.floatingDay()).toBeNull();
     expect(thread.scrolling()).toBe(false);
-    // On the scroll container: a scroll event does not bubble to the host.
-    (f.nativeElement as HTMLElement).querySelector('.thread')!.dispatchEvent(new Event('scroll'));
+    readerScrolls(f.nativeElement as HTMLElement);
     f.detectChanges();
     expect(thread.scrolling()).toBe(true);
     // jsdom lays nothing out, so the first rendered message is the top one.
@@ -1110,6 +1139,11 @@ describe('Thread picking messages by hand', () => {
     const f = await threeRendered();
     const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
     press(f, bubble(f, 'a'));
+    // Back from the end while picking, so there is a place to write.
+    const list = (f.nativeElement as HTMLElement).querySelector<HTMLElement>('.thread')!;
+    Object.defineProperty(list, 'scrollHeight', { value: 5000, configurable: true });
+    Object.defineProperty(list, 'clientHeight', { value: 800, configurable: true });
+    list.scrollTop = 1000;
     f.componentInstance.commitFromParam();
     expect(navigate).not.toHaveBeenCalled();
     f.componentInstance.picking.clear();
@@ -1460,12 +1494,23 @@ describe('marking the message that was landed on', () => {
     expect(thread.landedId()).toBe('h');
   });
 
-  it('stops naming it once the reader has moved', async () => {
+  it('stops naming it once the reader has scrolled', async () => {
     const { thread, host } = await land();
     expect(thread.landedId()).toBe('h');
-    host.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
+    readerScrolls(host);
     thread.commitFromParam();
     expect(thread.landedId()).toBeNull();
+  });
+
+  // Only a scrolling gesture is the reader leaving: a tap or a key in the box
+  // touches the thread without moving it, and the app's scroll follows.
+  it('keeps naming it through a tap on a message and typing in the box', async () => {
+    const { thread, host } = await land();
+    host.querySelector('.msg')!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+    host.querySelector('.thread')!.dispatchEvent(new Event('scroll'));
+    thread.commitFromParam();
+    expect(thread.landedId()).toBe('h');
   });
 
   // The pages loaded around a landing scroll too, with nobody's hand on it: on a

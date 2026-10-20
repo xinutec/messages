@@ -60,25 +60,16 @@ export class ThreadWindow {
   readonly topSpacer = computed(() => sumHeight(this.above()));
   readonly bottomSpacer = computed(() => sumHeight(this.below()));
 
-  /** Set while we move scrollTop ourselves, so a programmatic scroll can be told
-   *  from the reader's. */
-  private adjusting = false;
-  get busy(): boolean {
-    return this.adjusting;
-  }
-
-  /** Whether the reader is following the end of the conversation. Recorded on
-   *  every scroll, because after a resize `atBottom()` answers for the new
-   *  geometry. Starts true: a conversation opens at its latest message. */
+  /** Whether the reader is following the end of the conversation. Changed only
+   *  by the reader's own scrolling (`noteReaderAt`) and by the thread placing
+   *  the view (`scrollToBottom`, `scrollToTs`): a resize, a picture loading or
+   *  the thread's own re-anchoring moves the view without moving the reader.
+   *  Starts true: a conversation opens at its latest message. */
   private following = true;
 
-  /** The container height at the last scroll, so a scroll the resize caused is
-   *  not taken for the reader's. Null until the first scroll, which has nothing
-   *  to have resized from. */
-  private hostHeight: number | null = null;
-  /** The content height likewise, so growth below a reader at the end is not
-   *  taken for them leaving. */
-  private hostScrollHeight: number | null = null;
+  /** Where the window last put `scrollTop` itself. The scroll event that write
+   *  dispatches arrives later; one that finds the view still there is ours. */
+  private placedAt: number | null = null;
 
   /** The observer behind `observeShrink`, and the scroll container and message
    *  block it watches. */
@@ -160,24 +151,29 @@ export class ThreadWindow {
     return { needOlder, needNewer };
   }
 
-  /** Record whether the reader is following the end, on every scroll including
-   *  our own: it is about where the viewport is, not who moved it. Separate from
-   *  `step`, which is skipped while busy. A scroll caused by the container
-   *  resizing does not count as the reader leaving. */
-  noteScroll(): void {
-    const h = this.host.clientHeight;
-    const sh = this.host.scrollHeight;
-    const grew = this.hostScrollHeight == null ? 0 : Math.max(0, sh - this.hostScrollHeight);
-    const resizedBy = this.hostHeight == null ? 0 : Math.abs(h - this.hostHeight);
-    this.hostHeight = h;
-    this.hostScrollHeight = sh;
-    // A resize (the soft keyboard) moves the bottom by its own size, no more: a
-    // reader farther off than that scrolled, in the same event.
-    if (resizedBy > 0 && sh - this.host.scrollTop - h <= resizedBy + BOTTOM_EPS) return;
-    // Content growing below a reader at the end (an image loading) is not the
-    // reader leaving: they are off by no more than the growth.
-    if (this.following && grew > 0 && sh - this.host.scrollTop - h <= grew + BOTTOM_EPS) return;
-    this.following = this.atBottom();
+  /** The reader scrolled: they follow the end if they stopped at it, and the
+   *  window reaches the present (`atPresent`; a landing in the past does not). */
+  noteReaderAt(atPresent: boolean): void {
+    this.following = atPresent && this.atBottom();
+  }
+
+  /** Whether this scroll event is the one the window's own last write caused:
+   *  the view is where it put it. Answers once per write. */
+  placedThisScroll(): boolean {
+    const ours = this.placedAt != null && Math.abs(this.host.scrollTop - this.placedAt) < 1;
+    this.placedAt = null;
+    return ours;
+  }
+
+  /** Write `scrollTop`, remembering where, for `placedThisScroll`. */
+  private place(top: number): void {
+    this.host.scrollTop = top;
+    this.placedAt = this.host.scrollTop;
+  }
+
+  /** Whether the reader is following the end; see `following`. */
+  isFollowing(): boolean {
+    return this.following;
   }
 
   /** Nothing collapsed below, and within a few pixels of the bottom. */
@@ -242,27 +238,25 @@ export class ThreadWindow {
    *  Public for fetches that grow the list from outside. */
   keepingAnchor(label: string, mutate: () => void): void {
     const anchor = this.topAnchor();
-    this.withScrollLock(() => {
-      mutate();
-      this.tick();
-      let reanchor = 0;
-      if (anchor) {
-        const el = this.msgEls().find((e) => e.dataset['id'] === anchor.id);
-        if (el) {
-          const now = el.getBoundingClientRect().top - this.host.getBoundingClientRect().top;
-          reanchor = now - anchor.top;
-          this.host.scrollTop += reanchor;
-        }
+    mutate();
+    this.tick();
+    let reanchor = 0;
+    if (anchor) {
+      const el = this.msgEls().find((e) => e.dataset['id'] === anchor.id);
+      if (el) {
+        const now = el.getBoundingClientRect().top - this.host.getBoundingClientRect().top;
+        reanchor = now - anchor.top;
+        this.place(this.host.scrollTop + reanchor);
       }
-      if (this.dbg) {
-        this.log(label, {
-          reanchor: +reanchor.toFixed(1),
-          renderCount: this.renderCount(),
-          above: this.above().length,
-          below: this.below().length,
-        });
-      }
-    });
+    }
+    if (this.dbg) {
+      this.log(label, {
+        reanchor: +reanchor.toFixed(1),
+        renderCount: this.renderCount(),
+        above: this.above().length,
+        below: this.below().length,
+      });
+    }
   }
 
   topAnchor(): { id: string; top: number } | null {
@@ -276,7 +270,7 @@ export class ThreadWindow {
 
   scrollToBottom(): void {
     this.following = true;
-    this.host.scrollTop = this.host.scrollHeight;
+    this.place(this.host.scrollHeight);
   }
 
   scrollToTs(ts: number): void {
@@ -285,7 +279,7 @@ export class ThreadWindow {
     const hostTop = this.host.getBoundingClientRect().top;
     const target = this.msgEls().find((e) => Number(e.dataset['ts']) >= ts) ?? this.msgEls()[0];
     if (!target) return;
-    this.host.scrollTop += target.getBoundingClientRect().top - hostTop;
+    this.place(this.host.scrollTop + target.getBoundingClientRect().top - hostTop);
   }
 
   /** Keep the conversation's end visible when the scroll container resizes: the
@@ -333,17 +327,9 @@ export class ThreadWindow {
    *  they are. Returns whether it moved the viewport. */
   repinAfterResize(): boolean {
     if (!this.following) return false;
-    this.withScrollLock(() => this.scrollToBottom());
+    this.scrollToBottom();
     this.log('repinAfterResize', { clientHeight: this.host.clientHeight });
     return true;
-  }
-
-  /** Set `adjusting` for a programmatic scroll and the event it dispatches
-   *  before the next frame. */
-  withScrollLock(fn: () => void): void {
-    this.adjusting = true;
-    fn();
-    requestAnimationFrame(() => (this.adjusting = false));
   }
 
   // ---- measuring -----------------------------------------------------------

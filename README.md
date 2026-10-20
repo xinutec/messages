@@ -167,8 +167,10 @@ A message with neither body nor attachments draws an empty bubble but produces n
 copied line.
 
 `?at` carries a cursor and means *put me here*; `?from` carries a scroll position
-and means *I was here*. `at` wins on load, and the first scroll replaces it with
-`from` and clears the landed-message marker.
+and means *I was here*. `at` wins on load, and the reader's first scroll replaces
+it with `from` and clears the landed-message marker. A scroll is the reader's only
+during their own scrolling gesture (wheel, finger, scrollbar, page keys); the
+thread's own scrolls, a resize and a tap or a key in the box decide nothing.
 
 Delivery state (`sent`, `delivered`, `read`) appears only where the archive can
 say: outgoing Signal and Telegram messages sent after capture began. Telegram

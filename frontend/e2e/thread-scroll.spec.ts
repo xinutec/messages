@@ -163,11 +163,13 @@ test("scrolling to the bottom of a landing fetches forwards", async ({ page }) =
         await page.evaluate(() => {
           const t = document.querySelector(".thread");
           if (!t) return;
+          t.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
           t.scrollTop = Math.max(0, t.scrollTop - 400);
         });
         await page.waitForTimeout(30);
         await page.evaluate(() => {
           const t = document.querySelector(".thread");
+          t?.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
           if (t) t.scrollTop = t.scrollHeight;
         });
         return forwardPages;
@@ -245,7 +247,8 @@ test("the floating day shows while scrolling and fades after", async ({ page }) 
   await page.goto("/conversation/signal/dm:a");
   await page.locator('.msg[data-id="99"]').waitFor();
   const pill = page.locator(".day.floating");
-  await expect(pill).not.toHaveClass(/shown/);
+  // None before the reader scrolls: the open's own scroll to the end is not theirs.
+  await expect(page.locator(".day.floating.shown")).toHaveCount(0);
   await page.mouse.move(200, 500);
   await page.mouse.wheel(0, -800);
   await expect(pill).toHaveClass(/shown/);

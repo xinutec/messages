@@ -1,6 +1,8 @@
 <!-- The scroll container; the composer is below it, so a growing draft shortens
-     the list instead of covering it. -->
-<div class="thread" #scroller (scroll)="onScroll()">
+     the list instead of covering it. The reader's hand on it says whose scroll
+     a scroll is (thread.ts `readerInput`). -->
+<div class="thread" #scroller (scroll)="onScroll()" (wheel)="readerInput($event)"
+     (touchmove)="readerInput($event)" (pointerdown)="readerInput($event)">
 @if (routed()) {
   <!-- Who it is, before the name in the bar, as Signal draws it: the list's picture. -->
   @if (conversation(); as c) {

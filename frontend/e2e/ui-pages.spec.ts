@@ -853,7 +853,11 @@ test("a reader back in history is left there when the keyboard opens @ phone wid
   await input.waitFor();
   await page.locator('.msg[data-id="60"]').waitFor();
 
-  await page.locator(".thread").evaluate((h) => (h.scrollTop = 0));
+  // The reader's hand, then the scroll: only a gesture's scroll is theirs.
+  await page.locator(".thread").evaluate((h) => {
+    h.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
+    h.scrollTop = 0;
+  });
   await expect.poll(() => page.locator(".thread").evaluate((h) => h.scrollTop)).toBeLessThan(50);
   const before = await page.locator(".thread").evaluate((h) => h.scrollTop);
 

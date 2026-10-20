@@ -47,6 +47,13 @@ const POLL_MS = 5000;
 /** How long after the last scroll the floating day pill stays. */
 const SCROLL_IDLE_MS = 1200;
 
+/** How long without a scroll ends the reader's gesture: past a momentum
+ *  scroll's frames, short of the thread's own next move. */
+const READER_IDLE_MS = 200;
+
+/** Keys that scroll the list when focus is not in a field. */
+const SCROLL_KEYS = new Set(['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', ' ']);
+
 @Component({
   selector: 'app-thread',
   templateUrl: './thread.html',
@@ -56,11 +63,9 @@ const SCROLL_IDLE_MS = 1200;
   // instead of covering it. `copy` bubbles here from wherever the selection is.
   host: {
     '(copy)': 'onCopy($event)',
-    // The reader's own hand on the thread; see `readerMoved`.
-    '(wheel)': 'readerMoved = true',
-    '(touchmove)': 'readerMoved = true',
-    '(pointerdown)': 'readerMoved = true',
-    '(keydown)': 'readerMoved = true',
+    // The page keys scroll the list from wherever focus is; see `readerInput`.
+    '(document:keydown)': 'readerInput($event)',
+    '(document:pointerup)': 'readerLetGo()',
     // Picking messages by hand; see `picking`. On the host rather than the
     // bubbles: the bubble is found from the event, and nothing else here is one.
     '(contextmenu)': 'picking.press($event)',
@@ -206,12 +211,53 @@ export class Thread {
   private newerCursor: string | null = null;
 
   private fromTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Whether the reader has scrolled, tapped or typed since the thread loaded.
-   *  Until then a scroll is the app's own (a landing, the pages loaded around it),
-   *  and the place the URL names is still where the reader is. */
-  protected readerMoved = false;
-  /** Pending re-check for a scroll whose work was deferred — see `deferScrollCheck`. */
-  private recheck: ReturnType<typeof setTimeout> | null = null;
+
+  // ---- whose scroll it is ----------------------------------------------------
+  //
+  // A scroll is the reader's only while a scrolling gesture of theirs is under
+  // way (`readerInput`): the wheel, a finger dragging, the scrollbar held, a page
+  // key. It lasts until the scrolling stops, so a momentum scroll counts. The
+  // thread's own scrolls, a resize, a picture loading and a tap or a key in the
+  // box are not the reader's, and decide nothing about where they are.
+
+  /** A scrolling gesture of the reader's is under way. */
+  private readerScrolling = false;
+  /** The scrollbar is held; the gesture lasts until it is let go. */
+  private holdingScrollbar = false;
+  private readerIdle: ReturnType<typeof setTimeout> | null = null;
+  /** The reader has scrolled since the thread loaded or last landed: the landing
+   *  (its marker, `?at`, `?on`) is behind them, and so is a kept page's place. */
+  private readerScrolled = false;
+
+  /** Input that starts the reader's scrolling, and nothing else: a tap on a
+   *  message or a key in the box touches the thread without moving it. */
+  protected readerInput(e: Event): void {
+    const list = this.scrollerEl()?.nativeElement;
+    const scrolls =
+      e.type === 'wheel' ||
+      e.type === 'touchmove' ||
+      // On the list itself, not a bubble in it: its scrollbar.
+      (e.type === 'pointerdown' && e.target === list) ||
+      (e instanceof KeyboardEvent && SCROLL_KEYS.has(e.key) && !typingIn(e.target));
+    if (!scrolls) return;
+    if (e.type === 'pointerdown') this.holdingScrollbar = true;
+    this.readerScrolling = true;
+    this.armReaderIdle();
+  }
+
+  protected readerLetGo(): void {
+    if (!this.holdingScrollbar) return;
+    this.holdingScrollbar = false;
+    this.armReaderIdle();
+  }
+
+  private armReaderIdle(): void {
+    if (this.readerIdle != null) clearTimeout(this.readerIdle);
+    this.readerIdle = setTimeout(() => {
+      this.readerIdle = null;
+      if (!this.holdingScrollbar) this.readerScrolling = false;
+    }, READER_IDLE_MS);
+  }
 
   /** Bumped whenever the thread is reset. A fetch answering an older generation
    *  belongs to a conversation the reader has left, and is dropped. */
@@ -266,7 +312,7 @@ export class Thread {
     const popped = this.location.subscribe(() => this.picking.clear());
     destroyRef.onDestroy(() => popped.unsubscribe());
     destroyRef.onDestroy(() => {
-      if (this.recheck != null) clearTimeout(this.recheck);
+      if (this.readerIdle != null) clearTimeout(this.readerIdle);
       if (this.scrollIdle != null) clearTimeout(this.scrollIdle);
       // The `?from` debounce navigates, so it must not fire after leaving.
       if (this.fromTimer != null) clearTimeout(this.fromTimer);
@@ -287,12 +333,12 @@ export class Thread {
   readonly floating = signal(false);
 
   /** The message the reader was put on by `?at` or `jumpToReply`, marked so it
-   *  can be told from its neighbours. Cleared on the first scroll. */
+   *  can be told from its neighbours. Cleared by the reader's first scroll. */
   readonly landedId = signal<string | null>(null);
 
   private resetState(): void {
     this.generation++;
-    this.readerMoved = false;
+    this.readerScrolled = false;
     this.messages.set([]);
     this.win.reset();
     this.revealedIds.set(new Set());
@@ -347,10 +393,8 @@ export class Thread {
     // The forward half starts with the hit.
     const hit = newer.messages[0];
     this.landedId.set(hit ? hit.id : null);
-    this.win.withScrollLock(() => {
-      if (hit) this.win.scrollToTs(hit.ts);
-      else this.win.scrollToBottom();
-    });
+    if (hit) this.win.scrollToTs(hit.ts);
+    else this.win.scrollToBottom();
     this.win.trimToWindow();
     return true;
   }
@@ -402,11 +446,10 @@ export class Thread {
     if (!r.id) return;
     const here = this.rendered().find((m) => m.id === r.id);
     if (here) {
+      // A landing of its own: what the reader scrolled before is behind it.
       this.landedId.set(here.id);
-      // The tap that asked for this is not the reader leaving the landing; only
-      // their next move is (`commitFromParam`).
-      this.readerMoved = false;
-      this.win.withScrollLock(() => this.win.scrollToTs(here.ts));
+      this.readerScrolled = false;
+      this.win.scrollToTs(here.ts);
       return;
     }
     // `cursor` comes with `id`; without one, stay rather than open the newest page.
@@ -435,7 +478,7 @@ export class Thread {
     let shown: string | null = null;
     try {
       // `?at` means "put me here" and `?from` "I was here"; `?at` wins, and
-      // `commitFromParam` replaces it with `from` on the first scroll.
+      // `commitFromParam` replaces it with `from` once the reader scrolls.
       if (at != null && (await this.loadAround(origin, id, { at }))) return;
       // `?on`, a picked date, likewise.
       if (onDay != null && (await this.loadAround(origin, id, { onDay }))) return;
@@ -453,16 +496,14 @@ export class Thread {
         this.loadingThread.set(false);
         return;
       }
-      const moved = shown != null && this.readerMoved;
+      const moved = shown != null && this.readerScrolled;
       this.messages.set(page.messages);
       this.fetches.watchInFlight(page.messages);
       this.loadingThread.set(false);
       this.appRef.tick();
       // Position the viewport, then bound the DOM around it.
-      this.win.withScrollLock(() => {
-        if (from != null) this.win.scrollToTs(from);
-        else if (!moved) this.win.scrollToBottom();
-      });
+      if (from != null) this.win.scrollToTs(from);
+      else if (!moved) this.win.scrollToBottom();
       this.win.trimToWindow();
       // `watchContent` holds the bottom as images load.
     } catch (e: unknown) {
@@ -488,7 +529,7 @@ export class Thread {
     this.newerCursor = kept.prev_cursor;
     this.fetches.watchInFlight(kept.messages);
     this.appRef.tick();
-    this.win.withScrollLock(() => this.win.scrollToBottom());
+    this.win.scrollToBottom();
     return JSON.stringify(kept.messages);
   }
 
@@ -615,7 +656,7 @@ export class Thread {
       // the end wants the present, so reload; one back in history keeps their
       // place, and the rest comes forwards as they scroll (`fetchNewer`).
       if (fresh.length > 0 && fresh.length === page.messages.length) {
-        if (this.win.atBottom()) await this.loadThread(o, i);
+        if (this.win.isFollowing()) await this.loadThread(o, i);
         else this.floating.set(true);
         return;
       }
@@ -633,7 +674,7 @@ export class Thread {
       });
       if (fresh.length === 0 && !changed) return;
 
-      const wasAtBottom = this.win.atBottom();
+      const following = this.win.isFollowing();
       if (fresh.length > 0) this.newerCursor = page.prev_cursor;
       // Sorted: an import can land an older line late.
       this.messages.set(
@@ -641,7 +682,7 @@ export class Thread {
       );
       this.appRef.tick();
       // Follow only a reader already at the end.
-      if (wasAtBottom) this.win.withScrollLock(() => this.win.scrollToBottom());
+      if (following) this.win.scrollToBottom();
       this.win.trimToWindow();
     } catch (e: unknown) {
       // Not an error state; a poll with no network is what makes the view stale.
@@ -664,16 +705,13 @@ export class Thread {
   /** The draft and its sending; see composer.ts. */
   readonly composer = new Composer(this.api, this.origin, this.id, () => this.afterSend());
 
-  // dev-lint: allow-self-triggered-scroll afterSend runs only on a send, which no scroll triggers; it reads `floating` once, before it scrolls, so the handler's write cannot feed back into it
   /** Show what was just sent: the newest page merged in and the view at the
    *  end, with no reload; a window floating in the past is reloaded into the
    *  present instead, as `pollNewer` would not run there. */
   private async afterSend(): Promise<void> {
     if (this.floating()) return this.reloadNow();
     await this.pollNewer();
-    // Locked like every scroll the thread makes, so `onScroll` does not take it
-    // for the reader's.
-    this.win.withScrollLock(() => this.win.scrollToBottom());
+    this.win.scrollToBottom();
   }
 
   // ---- what the reader asks to be fetched ----------------------------------
@@ -685,16 +723,17 @@ export class Thread {
 
   /** The window engine decides what to reveal or collapse; fetching stays here. */
   onScroll(): void {
-    // Before any early return; see `ThreadWindow.noteScroll`.
-    this.win.noteScroll();
-    this.noteFloatingDay();
-    if (this.threadError() || !this.routed()) return;
-    // Deferred, not dropped: a programmatic scroll delivers one event, and the
-    // fetch or `?from` it calls for must still happen once the guard clears.
-    if (this.win.busy || this.loadingThread()) {
-      this.deferScrollCheck();
-      return;
+    // Whoever moved it, the window follows the view; only the reader's own
+    // scroll says where the reader is (see "whose scroll it is"). One the window
+    // made, a page loaded during the gesture, neither counts nor prolongs it.
+    if (this.readerScrolling && !this.win.placedThisScroll()) {
+      this.armReaderIdle();
+      this.readerScrolled = true;
+      this.landedId.set(null);
+      this.win.noteReaderAt(!this.floating());
+      this.noteFloatingDay();
     }
+    if (this.threadError() || !this.routed() || this.loadingThread()) return;
     const { needOlder, needNewer } = this.win.step();
     if (needOlder) this.fetchOlder();
     if (needNewer) this.fetchNewer();
@@ -718,15 +757,6 @@ export class Thread {
     this.scrolling.set(true);
     if (this.scrollIdle != null) clearTimeout(this.scrollIdle);
     this.scrollIdle = setTimeout(() => this.scrolling.set(false), SCROLL_IDLE_MS);
-  }
-
-  /** Re-run `onScroll` once the guard that skipped it clears; one timer at a time. */
-  private deferScrollCheck(): void {
-    if (this.recheck != null) return;
-    this.recheck = setTimeout(() => {
-      this.recheck = null;
-      this.onScroll();
-    }, 60);
   }
 
   fetchOlder(): void {
@@ -795,17 +825,21 @@ export class Thread {
     // the picking's step, and the close would have none to take away. The
     // picking's end catches up.
     if (this.picking.picked().length > 0) return;
-    // Where the viewport is, whoever moved it. The landing (its marker, `?at`, a
-    // picked day) goes only once the reader has: the pages the app loads around
-    // it by itself scroll too, and on a phone at once.
-    const left = this.readerMoved;
-    if (left) this.landedId.set(null);
+    // Where the viewport is, whoever moved it. The landing (`?at`, a picked day)
+    // goes only once the reader has scrolled: the pages the app loads around it
+    // scroll too, and on a phone at once.
+    const left = this.readerScrolled;
     const o = this.origin();
     const i = this.id();
     if (o == null || i == null) return;
     const from = this.win.atBottom() ? null : this.win.topAnchor()?.id;
     const ts = from ? this.messages().find((m) => m.id === from)?.ts : null;
     const landing = left ? { at: null, on: null } : {};
+    // Nothing to write when the address already says it.
+    const now = this.route.snapshot.queryParamMap;
+    const fromParam = ts != null ? String(ts) : null;
+    const landingGone = !left || (now.get('at') == null && now.get('on') == null);
+    if (now.get('from') === fromParam && landingGone) return;
     void this.router.navigate([], {
       relativeTo: this.route,
       queryParams: { from: ts != null ? String(ts) : null, ...landing },
@@ -820,4 +854,12 @@ function toggled(set: ReadonlySet<string>, id: string): ReadonlySet<string> {
   const next = new Set(set);
   if (!next.delete(id)) next.add(id);
   return next;
+}
+
+/** Focus is in something that takes keys itself: the box, the search field. */
+function typingIn(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+  );
 }

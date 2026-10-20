@@ -24,6 +24,8 @@ async function scrollThread(page: Page, top: number | "bottom"): Promise<void> {
     let held = 0;
     for (let i = 0; i < 120 && held < 3; i++) {
       if (Math.abs(t.scrollTop - want()) > 2) {
+        // The reader's hand first: only a gesture's scroll is theirs (thread.ts).
+        t.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
         t.scrollTop = want();
         held = 0;
       } else {

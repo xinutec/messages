@@ -65,6 +65,8 @@ const scrollThreadTop = async (page: Page) => {
   const scrolled = await page.evaluate(() => {
     const t = document.querySelector(".thread");
     if (!t) return null;
+    // The reader's hand first: only a gesture's scroll is theirs (thread.ts).
+    t.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
     t.scrollTop = 0;
     return t.scrollTop;
   });
@@ -129,6 +131,7 @@ test("a scroll in the open's own frame is the reader's", async ({ page }) => {
     const mo = new MutationObserver(() => {
       const t = document.querySelector<HTMLElement>(".thread");
       if (t && t.scrollTop > 0) {
+        t.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
         t.scrollTop = 0;
         mo.disconnect();
       }
