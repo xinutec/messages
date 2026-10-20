@@ -93,6 +93,7 @@ pub fn router(state: AppState) -> Router {
         // Liveness target; must not check dependencies, or a database blip
         // becomes a crashloop. `/healthz/deep` asks whether the archive is readable.
         .route("/healthz", get(|| async { "ok" }))
+        // dev-lint: allow-unauthenticated-route a probe: answers only whether the archive is readable
         .route("/healthz/deep", get(health::deep))
         .route("/login", get(auth::login))
         .route("/auth/callback", get(auth::callback))
