@@ -4,7 +4,7 @@
 use anyhow::{Context, Result, bail};
 use sqlx::{AssertSqlSafe, MySqlPool, Row};
 
-use crate::link_image::{LinkState, askable};
+use crate::link_image::LinkState;
 
 use super::{LinkImage, LinkOffer, Message, distinct};
 
@@ -26,17 +26,15 @@ pub async fn attach(pool: &MySqlPool, msgs: &mut [Message]) -> Result<()> {
     }
     let hashes = distinct(wanted.iter().map(|(h, _, _)| h.as_str()));
     let placeholders = vec!["?"; hashes.len()].join(",");
-    // Every state: a decided link must not be offered, and a control for one
-    // would 404.
     let sql = format!(
-        "SELECT url_hash, state, content_type, decided_by FROM link_images
+        "SELECT url_hash, state, content_type FROM link_images
          WHERE url_hash IN ({placeholders})",
     );
     let mut q = sqlx::query(AssertSqlSafe(sql));
     for h in &hashes {
         q = q.bind(*h);
     }
-    let mut known: Vec<(String, LinkState, Option<String>, Option<i32>)> = Vec::new();
+    let mut known: Vec<(String, LinkState, Option<String>)> = Vec::new();
     for row in q.fetch_all(pool).await? {
         let raw: String = row.try_get("state")?;
         let Some(state) = LinkState::parse(&raw) else {
@@ -46,16 +44,14 @@ pub async fn attach(pool: &MySqlPool, msgs: &mut [Message]) -> Result<()> {
             row.try_get("url_hash")?,
             state,
             row.try_get("content_type")?,
-            row.try_get("decided_by")?,
         ));
     }
 
-    // Per link: a picture we hold is rendered; one not yet decided is offered;
-    // one decided against stays a link.
+    // Per link: a picture we hold is rendered; any other is offered.
     let mut unseen: Vec<(&str, &str)> = Vec::new();
     for (hash, url, i) in &wanted {
-        let offered = match known.iter().find(|(h, _, _, _)| h == hash) {
-            Some((_, LinkState::Ok, Some(content_type), _)) => {
+        let offered = match known.iter().find(|(h, _, _)| h == hash) {
+            Some((_, LinkState::Ok, Some(content_type))) => {
                 msgs[*i].link_images.push(LinkImage {
                     url: url.clone(),
                     id: hash.clone(),
@@ -63,8 +59,9 @@ pub async fn attach(pool: &MySqlPool, msgs: &mut [Message]) -> Result<()> {
                 });
                 false
             }
-            // `link_image::askable` decides; the request endpoint asks it too.
-            Some((_, state, _, by)) => askable(*state, *by),
+            // Held, but with no type to serve it as: neither drawn nor asked for.
+            Some((_, LinkState::Ok, None)) => false,
+            Some((_, LinkState::Offered, _)) => true,
             None => {
                 if !unseen.iter().any(|(h, _)| h == hash) {
                     unseen.push((hash.as_str(), url.as_str()));
@@ -86,7 +83,7 @@ pub async fn attach(pool: &MySqlPool, msgs: &mut [Message]) -> Result<()> {
 /// Register this page's links so they can be asked for later. This is the only
 /// place a URL enters `link_images`, and it comes from a message, never a
 /// request, so a tap cannot make this an open proxy. `INSERT IGNORE` leaves an
-/// existing row, and its decision, untouched.
+/// existing row, a held picture included, untouched.
 async fn offer(pool: &MySqlPool, links: &[(&str, &str)]) -> Result<()> {
     if links.is_empty() {
         return Ok(());
@@ -103,16 +100,14 @@ async fn offer(pool: &MySqlPool, links: &[(&str, &str)]) -> Result<()> {
 }
 
 /// The URL of a link we offered, by its hash, so a request never names an
-/// address.
+/// address. None once the picture is held.
 pub async fn offered_url(pool: &MySqlPool, id: &str) -> Result<Option<String>> {
-    let row: Option<(String, String, Option<i32>)> =
-        sqlx::query_as("SELECT url, state, decided_by FROM link_images WHERE url_hash = ?")
+    Ok(
+        sqlx::query_scalar("SELECT url FROM link_images WHERE url_hash = ? AND state = 'offered'")
             .bind(id)
             .fetch_optional(pool)
-            .await?;
-    Ok(row
-        .filter(|(_, state, by)| LinkState::parse(state).is_some_and(|s| askable(s, *by)))
-        .map(|(url, _, _)| url))
+            .await?,
+    )
 }
 
 /// Where a link's stored bytes are, if we hold them.

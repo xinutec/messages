@@ -18,6 +18,11 @@ export class FetchRequests {
   /** Requests in flight, by attachment or link id. */
   private readonly asking = signal<ReadonlySet<string>>(new Set());
 
+  /** What a link's request answered when it was not a picture, by link id:
+   *  said in place of the control for this visit, and stored nowhere, so the
+   *  next visit offers the link again. */
+  private readonly said = signal<ReadonlyMap<string, string>>(new Map());
+
   /** Attachment id → interval, for requested fetches being watched. */
   private readonly watching = new Map<string, number>();
 
@@ -30,10 +35,16 @@ export class FetchRequests {
     return this.asking().has(id);
   }
 
+  /** The sentence a link's last request left, if it found no picture. */
+  saidOf(id: string): string | undefined {
+    return this.said().get(id);
+  }
+
   /** Forget every request, for a fresh conversation or a destroyed thread. */
   reset(): void {
     for (const id of [...this.watching.keys()]) this.stopWatching(id);
     this.asking.set(new Set());
+    this.said.set(new Map());
   }
 
   /** Ask the feed for an unfetched attachment. The fetch is queued, so the answer
@@ -66,13 +77,12 @@ export class FetchRequests {
         if (state.state === 'ok' && state.content_type) {
           this.landLinkImage(offer.id, state.content_type);
         } else {
-          // Not a picture, or unreachable: the control goes.
-          this.dropOffer(offer.id);
+          this.say(offer.id, state.state === 'not_image' ? 'Not a picture' : "Couldn't reach it");
         }
       },
       error: () => {
         this.setAsking(offer.id, false);
-        this.dropOffer(offer.id);
+        this.say(offer.id, "Couldn't reach it");
       },
     });
   }
@@ -143,14 +153,8 @@ export class FetchRequests {
     );
   }
 
-  private dropOffer(id: string): void {
-    this.messages.update((cur) =>
-      cur.map((m) =>
-        m.link_offers.some((o) => o.id === id)
-          ? { ...m, link_offers: m.link_offers.filter((o) => o.id !== id) }
-          : m,
-      ),
-    );
+  private say(id: string, sentence: string): void {
+    this.said.update((cur) => new Map(cur).set(id, sentence));
   }
 
   private setAsking(id: string, on: boolean): void {

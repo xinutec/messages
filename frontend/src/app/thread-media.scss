@@ -95,7 +95,8 @@
     margin-top: 0.3rem;
     font: var(--mat-sys-label-medium);
 
-    .waiting {
+    .waiting,
+    .said {
       opacity: 0.7;
       font-style: italic;
     }

@@ -176,10 +176,13 @@
                         </a>
                       </div>
                     }
-                    <!-- An offer: the reader asks, and the fetch service fetches. -->
+                    <!-- An offer: the reader asks, and the fetch service fetches. A "no" is
+                         said here for this visit only; the next visit offers it again. -->
                     @for (o of m.link_offers; track o.id) {
                       <div class="link-offer">
-                        @if (fetches.isAsking(o.id)) {
+                        @if (fetches.saidOf(o.id); as said) {
+                          <span class="said">{{ said }}</span>
+                        } @else if (fetches.isAsking(o.id)) {
                           <span class="waiting">fetching the picture…</span>
                         } @else {
                           <button matButton type="button" (click)="fetches.requestLinkImage(o)">Show picture</button>

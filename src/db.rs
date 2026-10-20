@@ -30,29 +30,20 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
     .await
     .context("creating sessions table")?;
 
-    // What is known about a link somebody posted, keyed by the URL's hash.
-    //
-    //     offered → ok          the bytes are on the volume
-    //             → not_image   reached it; not a picture we may inline
-    //             → failed      could not reach it, or broke the limits
-    //
-    // A link enters as `offered` when a page containing it is served, with the
-    // URL taken from the message, so a request only ever names a hash. Refusals
-    // are rows too, so a server is not asked again on every read.
+    // A link somebody posted, keyed by the URL's hash: `offered`, or `ok` once
+    // the bytes are on the volume. A link enters as `offered` when a page
+    // containing it is served, with the URL taken from the message, so a request
+    // only ever names a hash. A "no" is not a row: see `link_image::LinkState`.
     sqlx::query(
         r"CREATE TABLE IF NOT EXISTS link_images (
             url_hash     CHAR(64)     NOT NULL PRIMARY KEY,
             url          TEXT         NOT NULL,
-            state        ENUM('offered','ok','not_image','failed') NOT NULL,
+            state        ENUM('offered','ok') NOT NULL,
             content_type VARCHAR(128) NULL,
             size_bytes   BIGINT       NULL,
             stored_name  VARCHAR(80)  NULL,
-            note         VARCHAR(255) NULL,
             wanted_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
             fetched_at   DATETIME     NULL,
-            -- The reader that decided it; NULL is older than any, so re-offered.
-            -- See `link_image::READER_VERSION`.
-            decided_by   INT          NULL,
             INDEX idx_link_images_queue (state, wanted_at)
         ) DEFAULT CHARSET=utf8mb4",
     )
@@ -90,10 +81,19 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
     .await
     .context("bringing transcripts up to date")?;
 
-    // The live table's enum still names `wanted`, which is no longer written
-    // and held by no row; this brings it to the shape above, and is then a no-op.
+    // An earlier shape wrote "not a picture" and "could not reach it" down, with
+    // a note and the reader that decided; those links are offered again, and
+    // the table brought to the shape above. A no-op once done.
     sqlx::query(
-        "ALTER TABLE link_images MODIFY COLUMN state ENUM('offered','ok','not_image','failed') NOT NULL",
+        "UPDATE link_images SET state = 'offered', fetched_at = NULL
+          WHERE state NOT IN ('offered', 'ok')",
+    )
+    .execute(pool)
+    .await
+    .context("offering again what an earlier version refused")?;
+    sqlx::query(
+        "ALTER TABLE link_images MODIFY COLUMN state ENUM('offered','ok') NOT NULL,
+           DROP COLUMN IF EXISTS note, DROP COLUMN IF EXISTS decided_by",
     )
     .execute(pool)
     .await

@@ -4,7 +4,7 @@ import { ComponentRef, provideZonelessChangeDetection } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter, withComponentInputBinding } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
-import { BehaviorSubject, Observable, Subject, of } from 'rxjs';
+import { BehaviorSubject, Observable, Subject, of, throwError } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 import { Place, declaredUp, resolveUp } from '@xinutec/ui-scaffold';
 
@@ -13,7 +13,7 @@ import { Thread } from './thread';
 import { MessagesApi } from './messages-api';
 import { type FakeApi, fakeApi, fakeApiOf } from './test-api';
 import { MessagesStore } from './messages-store';
-import { Conversation, Message, MessagesPage, ReplyTo } from './models';
+import { Conversation, LinkImageState, Message, MessagesPage, ReplyTo } from './models';
 import { testMessage } from './test-message';
 import { MAX_RESTORE_PAGES } from './thread-window';
 
@@ -524,15 +524,25 @@ describe('Thread link offers', () => {
     expect(el.querySelector('.msg img')?.getAttribute('src')).toBe('/api/link-images/h1');
   });
 
-  it('takes the control away when the link turns out not to be a picture', async () => {
-    const { f, api } = await withOffer();
-    api.requestLinkImage.mockReturnValue(of({ state: 'not_image', content_type: null }));
-    (f.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('.link-offer button')!.click();
-    f.detectChanges();
-    const el = f.nativeElement as HTMLElement;
-    expect(el.querySelector('.link-offer')).toBeNull();
-    expect(el.querySelectorAll('.msg img').length).toBe(0);
-  });
+  // Nothing is written down for a "no": the page and what counts as a picture
+  // both change, so the next visit offers the link again.
+  const noes: [Observable<LinkImageState>, string][] = [
+    [of({ state: 'not_image', content_type: null }), 'Not a picture'],
+    [of({ state: 'failed', content_type: null }), "Couldn't reach it"],
+    [throwError(() => new Error('offline')), "Couldn't reach it"],
+  ];
+  for (const [answer, said] of noes) {
+    it(`says "${said}" in place of the control, for this visit`, async () => {
+      const { f, api } = await withOffer();
+      api.requestLinkImage.mockReturnValue(answer);
+      (f.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('.link-offer button')!.click();
+      f.detectChanges();
+      const el = f.nativeElement as HTMLElement;
+      expect(el.querySelector('.link-offer')?.textContent?.trim()).toBe(said);
+      expect(el.querySelector('.link-offer button')).toBeNull();
+      expect(el.querySelectorAll('.msg img').length).toBe(0);
+    });
+  }
 });
 
 describe('Thread linked pictures', () => {

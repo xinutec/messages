@@ -77,7 +77,9 @@ source IPs survive k3s servicelb; check before relying on it.
   ids are per origin. `POST /api/telegram-media/{id}/request` queues an
   unfetched Telegram file; `GET …/state` reports its progress.
 - `GET /api/link-images/{id}`, `POST /api/link-images/{id}/request` — a picture
-  for a link in a message, by the URL's hash.
+  for a link in a message, by the URL's hash. Only a held picture is stored; a
+  "not a picture" or "could not reach it" answers that request and is forgotten,
+  so the link is offered again on the next read.
 - `POST /api/telemetry` — client events into the server log. Always 204.
 
 `{origin}` is `signal`, `gchat`, `irc` or `telegram`. `{id}` is the Signal

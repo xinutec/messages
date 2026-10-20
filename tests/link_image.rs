@@ -195,29 +195,3 @@ fn a_refusal_says_which_signal_was_missing() {
         None
     );
 }
-
-#[test]
-fn a_verdict_from_an_older_reader_may_be_asked_again() {
-    use messages::link_image::{LinkState, READER_VERSION, askable};
-
-    // A held picture needs no asking; anything else may be asked again once
-    // the reader that decided it has been fixed.
-    assert!(!askable(LinkState::Ok, Some(READER_VERSION)));
-    assert!(askable(LinkState::Offered, None));
-    assert!(
-        askable(LinkState::Failed, Some(READER_VERSION)),
-        "a server that was down is not a server that is"
-    );
-    assert!(
-        !askable(LinkState::NotImage, Some(READER_VERSION)),
-        "this reader looked and said no"
-    );
-    assert!(
-        askable(LinkState::NotImage, Some(READER_VERSION - 1)),
-        "an older reader said no, and readers get fixed"
-    );
-    assert!(
-        askable(LinkState::NotImage, None),
-        "decided before we recorded which reader decided"
-    );
-}

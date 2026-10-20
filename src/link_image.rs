@@ -10,24 +10,15 @@
 
 use url::Url;
 
-/// Which reader made a decision.
-///
-/// Bump this whenever what counts as a picture changes: decisions made by an
-/// older reader are offered again rather than believed.
-pub const READER_VERSION: i32 = 2;
-
-/// What is known about a link, spelled as the table's enum: `offered` before
-/// anyone asks, then one of three verdicts.
+/// What is known about a link, spelled as the table's enum. Only what we hold
+/// is written down: "not a picture" and "could not reach it" are told to the
+/// reader once, since both the page and what counts as a picture change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkState {
-    /// Registered from a message, with nothing fetched.
+    /// Registered from a message; may be asked for.
     Offered,
     /// The bytes are on the volume.
     Ok,
-    /// Reached it; not a picture we may inline.
-    NotImage,
-    /// Could not reach it, or it broke the limits.
-    Failed,
 }
 
 impl LinkState {
@@ -36,8 +27,6 @@ impl LinkState {
         match s {
             "offered" => Some(Self::Offered),
             "ok" => Some(Self::Ok),
-            "not_image" => Some(Self::NotImage),
-            "failed" => Some(Self::Failed),
             _ => None,
         }
     }
@@ -46,26 +35,7 @@ impl LinkState {
         match self {
             Self::Offered => "offered",
             Self::Ok => "ok",
-            Self::NotImage => "not_image",
-            Self::Failed => "failed",
         }
-    }
-}
-
-/// Whether a link may still be asked for.
-///
-/// Serving a page and the request endpoint both use this, so a control is never
-/// drawn for a link that cannot be requested.
-///
-///   * `offered` — registered, never asked about
-///   * `failed`  — unreachable at the time, not a verdict on the link
-///   * anything decided by an older reader; see `READER_VERSION`
-///   * never `ok`: the picture is held
-pub fn askable(state: LinkState, decided_by: Option<i32>) -> bool {
-    match state {
-        LinkState::Ok => false,
-        LinkState::Offered | LinkState::Failed => true,
-        LinkState::NotImage => decided_by.is_none_or(|v| v < READER_VERSION),
     }
 }
 

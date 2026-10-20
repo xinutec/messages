@@ -1,7 +1,7 @@
 //! The web pod's half of fetching a link's picture: ask the fetch service, then
-//! record the outcome and store the bytes. Every verdict is recorded, "not a
-//! picture" included, so a stranger's server is asked about a link once per
-//! decision.
+//! store the bytes. Only a picture is written down; "not a picture" and "could
+//! not reach it" go back to the reader and to the log, so the link can be asked
+//! again once the page or this code has changed.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -29,7 +29,7 @@ impl Default for Limits {
     }
 }
 
-/// How a link ended up. Every one is stored.
+/// How one request for a link's picture ended. Only `Ok` is stored.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -37,20 +37,10 @@ impl Default for Limits {
 pub enum Outcome {
     /// Bytes on the volume, servable.
     Ok,
-    /// Reached it, and it is not a picture we may inline.
+    /// Reached it, and it is not a picture we may inline, today.
     NotImage,
-    /// Could not reach it, or it broke the limits. A reader may ask again.
+    /// Could not reach it, or it broke the limits.
     Failed,
-}
-
-impl Outcome {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Outcome::Ok => "ok",
-            Outcome::NotImage => "not_image",
-            Outcome::Failed => "failed",
-        }
-    }
 }
 
 /// A link's identity on disk and in the table: the URL's SHA-256. One row and
@@ -59,8 +49,7 @@ pub fn url_hash(url: &Url) -> String {
     hex::encode(Sha256::digest(url.as_str().as_bytes()))
 }
 
-/// Ask the fetch service for a picture, and write down what came back: the
-/// outcome, and the picture's type when there is one.
+/// Ask the fetch service for a picture, and store it if one came back.
 ///
 /// The fetch service reaches the internet and holds nothing; this side holds the
 /// credentials and the volume. A compromised fetcher can at worst lie about a
@@ -75,25 +64,15 @@ pub async fn resolve_one(
     match ask_service(client, service, url).await {
         Ok(Some((bytes, content_type))) => {
             let name = store(dir, url, &content_type, &bytes)?;
-            record(
-                pool,
-                url,
-                Outcome::Ok,
-                Some(&content_type),
-                Some(bytes.len()),
-                Some(&name),
-                None,
-            )
-            .await?;
+            record_held(pool, url, &content_type, bytes.len(), &name).await?;
             Ok((Outcome::Ok, Some(content_type)))
         }
         Ok(None) => {
-            record(pool, url, Outcome::NotImage, None, None, None, None).await?;
+            tracing::info!(link = %url_hash(url), "not a picture");
             Ok((Outcome::NotImage, None))
         }
         Err(e) => {
-            let note = e.to_string();
-            record(pool, url, Outcome::Failed, None, None, None, Some(&note)).await?;
+            tracing::warn!(link = %url_hash(url), "could not fetch the picture: {e:#}");
             Ok((Outcome::Failed, None))
         }
     }
@@ -231,35 +210,29 @@ fn store(dir: &Path, url: &Url, content_type: &str, bytes: &[u8]) -> Result<Stri
     Ok(name)
 }
 
-async fn record(
+async fn record_held(
     pool: &MySqlPool,
     url: &Url,
-    outcome: Outcome,
-    content_type: Option<&str>,
-    size: Option<usize>,
-    stored_name: Option<&str>,
-    note: Option<&str>,
+    content_type: &str,
+    size: usize,
+    stored_name: &str,
 ) -> Result<()> {
     sqlx::query(
         r"INSERT INTO link_images
-              (url_hash, url, state, content_type, size_bytes, stored_name, note,
-               wanted_at, fetched_at, decided_by)
-          VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?)
+              (url_hash, url, state, content_type, size_bytes, stored_name, wanted_at, fetched_at)
+          VALUES (?, ?, 'ok', ?, ?, ?, NOW(), NOW())
           ON DUPLICATE KEY UPDATE
-              state = VALUES(state), content_type = VALUES(content_type),
+              state = 'ok', content_type = VALUES(content_type),
               size_bytes = VALUES(size_bytes), stored_name = VALUES(stored_name),
-              note = VALUES(note), fetched_at = NOW(), decided_by = VALUES(decided_by)",
+              fetched_at = NOW()",
     )
     .bind(url_hash(url))
     .bind(url.as_str())
-    .bind(outcome.as_str())
     .bind(content_type)
-    .bind(size.map(|s| s as i64))
+    .bind(size as i64)
     .bind(stored_name)
-    .bind(note.map(|n| n.chars().take(240).collect::<String>()))
-    .bind(crate::link_image::READER_VERSION)
     .execute(pool)
     .await
-    .context("recording a link's outcome")?;
+    .context("recording a held picture")?;
     Ok(())
 }

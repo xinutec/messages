@@ -5,13 +5,12 @@
 
 use messages::archive::links::{attach, offered_url};
 use messages::archive::{Message, MessageKind};
-use messages::link_fetch::url_hash;
+use messages::link_fetch::{Outcome, resolve_one, url_hash};
 use sqlx::MySqlPool;
 use sqlx::mysql::MySqlPoolOptions;
 use url::Url;
 
 const HELD: &str = "https://cloud.example.org/nc/s/HELD";
-const REFUSED: &str = "https://example.com/not-a-picture";
 
 #[path = "support/database.rs"]
 mod database;
@@ -25,26 +24,18 @@ async fn pool() -> Option<MySqlPool> {
         .unwrap();
     messages::db::ensure_schema(&pool).await.unwrap();
 
-    for (url, state, ct, name) in [
-        (HELD, "ok", Some("image/jpeg"), Some("held.jpg")),
-        (REFUSED, "not_image", None, None),
-    ] {
-        // Idempotent: these tests seed in parallel.
-        sqlx::query(
-            "INSERT INTO link_images (url_hash, url, state, content_type, size_bytes, stored_name, wanted_at, fetched_at, decided_by)
-             VALUES (?, ?, ?, ?, 10, ?, NOW(), NOW(), 2)
-             ON DUPLICATE KEY UPDATE state = VALUES(state), content_type = VALUES(content_type),
-                                     stored_name = VALUES(stored_name), decided_by = VALUES(decided_by)",
-        )
-        .bind(url_hash(&Url::parse(url).unwrap()))
-        .bind(url)
-        .bind(state)
-        .bind(ct)
-        .bind(name)
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
+    // Idempotent: these tests seed in parallel.
+    sqlx::query(
+        "INSERT INTO link_images (url_hash, url, state, content_type, size_bytes, stored_name, wanted_at, fetched_at)
+         VALUES (?, ?, 'ok', 'image/jpeg', 10, 'held.jpg', NOW(), NOW())
+         ON DUPLICATE KEY UPDATE state = VALUES(state), content_type = VALUES(content_type),
+                                 stored_name = VALUES(stored_name)",
+    )
+    .bind(url_hash(&Url::parse(HELD).unwrap()))
+    .bind(HELD)
+    .execute(&pool)
+    .await
+    .unwrap();
     Some(pool)
 }
 
@@ -83,16 +74,6 @@ async fn a_link_we_hold_a_picture_for_is_hung_on_its_message() {
         "the link as typed, so the UI can link out to it"
     );
     assert_eq!(msgs[0].link_images[0].content_type, "image/jpeg");
-}
-
-#[tokio::test]
-async fn a_link_we_decided_against_stays_a_link() {
-    // The row exists, as a decision. Joining on the row alone would inline a
-    // 404 page.
-    let Some(pool) = pool().await else { return };
-    let mut msgs = [msg(&format!("and {REFUSED} here"))];
-    attach(&pool, &mut msgs).await.unwrap();
-    assert!(msgs[0].link_images.is_empty());
 }
 
 #[tokio::test]
@@ -151,19 +132,6 @@ async fn a_hash_nobody_offered_resolves_to_no_address() {
     assert!(offered_url(&pool, &"f".repeat(64)).await.unwrap().is_none());
 }
 
-#[tokio::test]
-async fn a_decided_link_is_not_offered_again() {
-    // Decided by this reader, so nothing to ask. Older readers: link_image.rs.
-    let Some(pool) = pool().await else { return };
-    let hash = url_hash(&Url::parse(REFUSED).unwrap());
-    assert!(offered_url(&pool, &hash).await.unwrap().is_none());
-    assert_eq!(
-        stored_state(&pool, &hash).await,
-        "not_image",
-        "left exactly as it was"
-    );
-}
-
 // ---- offering ------------------------------------------------------------
 
 /// The `link_images.state` a link's row holds.
@@ -204,15 +172,98 @@ async fn serving_a_message_offers_its_undecided_links() {
 }
 
 #[tokio::test]
-async fn offering_a_link_twice_leaves_a_decision_alone() {
+async fn offering_a_held_link_again_leaves_it_held() {
     // Serving a page again changes nothing known about its links.
     let Some(pool) = pool().await else { return };
-    let hash = url_hash(&Url::parse(REFUSED).unwrap());
-    let mut msgs = [msg(&format!("and {REFUSED} here"))];
+    let hash = url_hash(&Url::parse(HELD).unwrap());
+    let mut msgs = [msg(&format!("and {HELD} here"))];
     attach(&pool, &mut msgs).await.unwrap();
-    assert_eq!(stored_state(&pool, &hash).await, "not_image");
+    assert_eq!(stored_state(&pool, &hash).await, "ok");
+    assert!(msgs[0].link_offers.is_empty(), "a held link is not offered");
+}
+
+// ---- what an answer leaves behind -------------------------------------------
+
+/// A stand-in for the link-fetch pod, answering every `/fetch` the same way.
+async fn fetcher(status: u16, content_type: &'static str, body: &'static [u8]) -> String {
+    use axum::http::{StatusCode, header};
+    let app = axum::Router::new().route(
+        "/fetch",
+        axum::routing::post(move || async move {
+            (
+                StatusCode::from_u16(status).unwrap(),
+                [(header::CONTENT_TYPE, content_type)],
+                body,
+            )
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://{addr}")
+}
+
+/// Offer `url` afresh, then ask a fetcher that answers as given.
+async fn ask(
+    pool: &MySqlPool,
+    url: &str,
+    status: u16,
+    content_type: &'static str,
+    body: &'static [u8],
+) -> (Outcome, String) {
+    let parsed = Url::parse(url).unwrap();
+    let hash = url_hash(&parsed);
+    sqlx::query("DELETE FROM link_images WHERE url_hash = ?")
+        .bind(&hash)
+        .execute(pool)
+        .await
+        .unwrap();
+    attach(pool, &mut [msg(url)]).await.unwrap();
+    let service = fetcher(status, content_type, body).await;
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("link-images");
+    let (outcome, _) = resolve_one(pool, &reqwest::Client::new(), &service, &dir, &parsed)
+        .await
+        .unwrap();
+    (outcome, hash)
+}
+
+/// "Not a picture" and "could not reach it" are said to the reader once and
+/// never written down: the rule for what counts as a picture changes, and so
+/// does the page, so the link is offered again on the next read.
+#[tokio::test]
+async fn a_no_is_said_once_and_never_written_down() {
+    let Some(pool) = pool().await else { return };
+    for (url, status, said) in [
+        (
+            "https://example.com/no-picture-here",
+            204,
+            Outcome::NotImage,
+        ),
+        ("https://example.com/server-down", 502, Outcome::Failed),
+    ] {
+        let (outcome, hash) = ask(&pool, url, status, "text/plain", b"").await;
+        assert_eq!(outcome, said, "{url}");
+        assert_eq!(stored_state(&pool, &hash).await, "offered", "{url}");
+        assert_eq!(
+            offered_url(&pool, &hash).await.unwrap().as_deref(),
+            Some(url),
+            "{url} can be asked again"
+        );
+        let mut again = [msg(url)];
+        attach(&pool, &mut again).await.unwrap();
+        assert_eq!(again[0].link_offers.len(), 1, "{url} is offered again");
+    }
+}
+
+#[tokio::test]
+async fn a_picture_is_held() {
+    let Some(pool) = pool().await else { return };
+    let url = "https://example.com/a-picture.png";
+    let (outcome, hash) = ask(&pool, url, 200, "image/png", b"\x89PNG").await;
+    assert_eq!(outcome, Outcome::Ok);
+    assert_eq!(stored_state(&pool, &hash).await, "ok");
     assert!(
-        msgs[0].link_offers.is_empty(),
-        "a decided link is not offered"
+        offered_url(&pool, &hash).await.unwrap().is_none(),
+        "held, so not asked for"
     );
 }

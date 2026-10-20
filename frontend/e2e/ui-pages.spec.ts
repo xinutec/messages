@@ -10,7 +10,7 @@ import {
   expectBackClosesOverlay,
 } from "@xinutec/ui-harness";
 
-import type { Conversation, Me, MessagesPage, SearchHit, SendResult } from "../src/app/models";
+import type { Conversation, LinkImageState, Me, MessagesPage, SearchHit, SendResult } from "../src/app/models";
 import { testMessage } from "../src/app/test-message";
 
 /**
@@ -234,6 +234,20 @@ test("conversation list — filter row + rows: lays out cleanly @ phone width", 
   await page.screenshot({ path: testInfo.outputPath("list.png") });
   // An icon-font fallback would show the word "search" over the placeholder.
   await expectIconFontLoaded(page);
+  await expectCleanLayout(page, testInfo);
+});
+
+test("a link that is not a picture says so in place, for this visit @ phone width", async ({ page }, testInfo) => {
+  await mockApi(page);
+  await page.route("**/api/link-images/lo1/request", (r) =>
+    r.fulfill({ json: { state: "not_image", content_type: null } satisfies LinkImageState }),
+  );
+  await page.goto("/conversation/signal/dm:a");
+  const offer = page.locator(".msg .link-offer").first();
+  await offer.getByRole("button", { name: "Show picture" }).click();
+  await expect(offer).toHaveText("Not a picture");
+  await expect(offer.getByRole("button")).toHaveCount(0);
+  await offer.scrollIntoViewIfNeeded();
   await expectCleanLayout(page, testInfo);
 });
 
