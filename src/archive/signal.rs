@@ -12,16 +12,18 @@ use super::*;
 pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
     let mut out = Vec::new();
     // An edit's revision rows are versions, not messages: the page leaves them
-    // out, so the count and the last message do too.
+    // out, so the count, the last message and its time do too. The last message
+    // reads as the page shows it, in its newest revision's words.
     //
     // Unread: theirs after my newest read. A read receipt on a message someone
     // else sent can only be mine, synced from the phone. Before the first receipt
     // was captured nothing can be told, so nothing older counts.
     let signal = sqlx::query(
         r"SELECT c.thread_id AS id, c.type AS kind, c.name AS name,
-                 COALESCE(s.cnt, 0) AS cnt, s.last_ts AS last_ts,
-                 l.id AS last_id, l.deleted AS last_deleted, l.is_outgoing AS last_out,
-                 l.body AS last_text, COALESCE(ct.display_name, l.sender_uuid) AS last_sender,
+                 COALESCE(s.cnt, 0) AS cnt, s.last_msg_ts AS last_ts,
+                 COALESCE(rv.id, l.id) AS last_id, l.deleted AS last_deleted, l.is_outgoing AS last_out,
+                 CASE WHEN rv.id IS NULL THEN l.body ELSE rv.body END AS last_text,
+                 COALESCE(ct.display_name, l.sender_uuid) AS last_sender,
                  (SELECT a.content_type FROM attachments a
                    WHERE a.message_id = l.id ORDER BY a.id LIMIT 1) AS last_media,
                  (SELECT COUNT(*) FROM messages u
@@ -31,13 +33,17 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
           FROM conversations c
           LEFT JOIN (
               SELECT thread_id, COUNT(CASE WHEN edit_of_ts IS NULL THEN id END) AS cnt,
-                     MAX(server_ts) AS last_ts,
                      MAX(CASE WHEN edit_of_ts IS NULL THEN server_ts END) AS last_msg_ts
               FROM messages GROUP BY thread_id
           ) s ON s.thread_id = c.thread_id
           LEFT JOIN messages l
                  ON l.thread_id = c.thread_id AND l.server_ts = s.last_msg_ts
                 AND l.edit_of_ts IS NULL
+          LEFT JOIN messages rv
+                 ON rv.id = (SELECT r.id FROM messages r
+                              WHERE r.thread_id = l.thread_id AND r.sender_uuid = l.sender_uuid
+                                AND r.edit_of_ts = l.server_ts
+                              ORDER BY r.server_ts DESC, r.id DESC LIMIT 1)
           LEFT JOIN contacts ct ON ct.uuid = l.sender_uuid
           LEFT JOIN (
               SELECT m.thread_id, MAX(m.server_ts) AS read_ts

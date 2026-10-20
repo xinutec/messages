@@ -672,4 +672,14 @@ pub(super) const MIGRATIONS: &[&str] = &[
         done_at TIMESTAMP NULL,
         INDEX idx_tg_outbox_state (state, queued_at)
     ) DEFAULT CHARSET=utf8mb4",
+    // v60: an edit Signal addressed to the edit before it, filed against the
+    // original as `Db::insert_edit` now files one: the viewer gathers versions
+    // by the original's timestamp. One level deep, as every such edit stored
+    // was; the frames in `signal_frames` still name the edit each one replaced.
+    r"UPDATE messages e
+        JOIN messages r
+          ON r.thread_id = e.thread_id AND r.sender_uuid = e.sender_uuid
+         AND r.server_ts = e.edit_of_ts AND r.edit_of_ts IS NOT NULL
+         SET e.edit_of_ts = r.edit_of_ts
+       WHERE e.edit_of_ts IS NOT NULL",
 ];

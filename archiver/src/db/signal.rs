@@ -193,9 +193,26 @@ impl Db {
         Ok(res.rows_affected())
     }
 
+    /// The original an edit's target stands for: Signal can address an edit to
+    /// the edit before it, and every version is filed against the original, as
+    /// the viewer gathers them. The target itself when it is no edit, or unknown.
+    async fn edit_root(&self, sender_uuid: &str, target_ts: i64) -> Result<i64> {
+        let root: Option<i64> = sqlx::query_scalar(
+            "SELECT edit_of_ts FROM messages
+              WHERE sender_uuid = ? AND server_ts = ? AND edit_of_ts IS NOT NULL
+              LIMIT 1",
+        )
+        .bind(sender_uuid)
+        .bind(target_ts)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(root.unwrap_or(target_ts))
+    }
+
     /// Flag an archived original as edited (content kept; edits are separate rows).
     /// Returns rows marked (0 if we never archived the original).
     pub async fn mark_edited(&self, sender_uuid: &str, target_ts: i64) -> Result<u64> {
+        let target_ts = self.edit_root(sender_uuid, target_ts).await?;
         let res = sqlx::query(
             "UPDATE messages SET edited = 1 \
              WHERE sender_uuid = ? AND server_ts = ? AND edit_of_ts IS NULL",
@@ -207,7 +224,8 @@ impl Db {
         Ok(res.rows_affected())
     }
 
-    /// Store an edited version as its own row, linked to the original via edit_of_ts.
+    /// Store an edited version as its own row, linked to the original via
+    /// `edit_of_ts`, also when Signal named an earlier edit (`edit_root`).
     pub async fn insert_edit(
         &self,
         thread_id: &ThreadId,
@@ -217,6 +235,7 @@ impl Db {
         edit_of_ts: i64,
         is_outgoing: bool,
     ) -> Result<Option<u64>> {
+        let edit_of_ts = self.edit_root(sender_uuid, edit_of_ts).await?;
         let res = sqlx::query(
             "INSERT IGNORE INTO messages \
                 (thread_id, sender_uuid, server_ts, body, is_outgoing, edit_of_ts) \

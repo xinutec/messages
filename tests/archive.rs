@@ -1640,6 +1640,53 @@ async fn a_message_nobody_edited_has_no_history() {
     assert!(page.messages[1].edits.is_empty());
 }
 
+/// The list shows an edited last message as the thread does, what it says now,
+/// at the time it was said: an edit moves neither its words nor its place.
+#[tokio::test]
+async fn the_list_shows_an_edited_last_message_as_it_reads_now() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let thread = "dm:edits-last";
+    sqlx::query("INSERT INTO conversations (thread_id, type, name) VALUES (?, 'dm', 'Edith')")
+        .bind(thread)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (ts, body, edit_of, edited) in [
+        (1_000i64, "first thought", None::<i64>, 1i8),
+        (2_000, "what it says now", Some(1_000), 0),
+    ] {
+        sqlx::query(
+            "INSERT INTO messages (thread_id, sender_uuid, server_ts, body, is_outgoing, deleted, edited, edit_of_ts)
+             VALUES (?, ?, ?, ?, 0, 0, ?, ?)",
+        )
+        .bind(thread)
+        .bind(thread)
+        .bind(ts)
+        .bind(body)
+        .bind(edited)
+        .bind(edit_of)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let convs = archive::list_conversations(&pool).await.unwrap();
+    let c = convs
+        .iter()
+        .find(|c| c.origin == Origin::Signal && c.id == thread)
+        .expect("the conversation is listed");
+    assert_eq!(
+        c.last.as_ref().and_then(|l| l.text.as_deref()),
+        Some("what it says now")
+    );
+    assert_eq!(
+        c.last_ts,
+        Some(1_000),
+        "the edit does not move it up the list"
+    );
+}
+
 /// Telegram conversations keep their stored kind, `channel` included, and the
 /// count leaves out service events.
 #[tokio::test]
