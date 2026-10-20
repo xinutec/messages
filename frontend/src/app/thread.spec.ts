@@ -230,7 +230,7 @@ describe('Thread', () => {
     // Scrolling up asks for conversation 7's older page, which is slow.
     const late = new Subject<MessagesPage>();
     api.messages.mockReturnValueOnce(late);
-    thread.fetchOlder();
+    const asked = thread.fetchOlder();
 
     // The reader opens conversation 8 before it arrives.
     api.messages.mockReturnValue(page([msg('b1', 500)]));
@@ -240,6 +240,7 @@ describe('Thread', () => {
 
     late.next({ messages: [msg('a1', 100)], has_more: false, next_cursor: null, prev_cursor: null });
     late.complete();
+    await asked;
     expect(thread.messages().map((m) => m.id)).toEqual(['b1']);
   });
 
@@ -292,7 +293,7 @@ describe('Thread', () => {
     expect(thread.messages().map((m) => m.id)).toEqual(['1']);
     expect(thread.floating()).toBe(true);
     api.messages.mockClear();
-    thread.fetchNewer();
+    await thread.fetchNewer();
     expect(api.messages).toHaveBeenCalledWith('irc', '7', 'newest-held', expect.any(Number), 'newer');
   });
 
@@ -1420,16 +1421,14 @@ describe('growing a landing forwards', () => {
   it('fetches forwards and appends, keeping order', async () => {
     const { thread } = await landed([[msg('h', 5000)], [msg('n1', 6000)]]);
     expect(thread.floating()).toBe(true);
-    thread.fetchNewer();
-    for (let i = 0; i < 20 && thread.loadingNewer(); i++) await new Promise((r) => setTimeout(r, 0));
+    await thread.fetchNewer();
     expect(thread.messages().map((m) => m.id)).toEqual(['o1', 'h', 'n1']);
   });
 
   /** The forward page running out ends `floating`, so polling resumes. */
   it('rejoins the present once the forward pages run out', async () => {
     const { thread } = await landed([[msg('h', 5000)], [msg('n1', 6000)]]);
-    thread.fetchNewer();
-    for (let i = 0; i < 20 && thread.loadingNewer(); i++) await new Promise((r) => setTimeout(r, 0));
+    await thread.fetchNewer();
     expect(thread.floating()).toBe(false);
   });
 
@@ -1438,8 +1437,7 @@ describe('growing a landing forwards', () => {
     const { thread, dirs } = await landed([[msg('h', 5000)]]);
     expect(thread.floating()).toBe(false);
     const before = dirs.filter((d) => d === 'newer').length;
-    thread.fetchNewer();
-    await new Promise((r) => setTimeout(r, 0));
+    await thread.fetchNewer();
     expect(dirs.filter((d) => d === 'newer').length).toBe(before);
   });
 });

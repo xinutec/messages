@@ -35,6 +35,7 @@ import {
   runStarts,
 } from './message-view';
 import { MAX_RESTORE_PAGES, PAGE, ThreadWindow } from './thread-window';
+import { ReaderPlace } from './reader-place';
 import { ThreadSearch } from './thread-search';
 import { Composer } from './composer';
 import { MessagesApi } from './messages-api';
@@ -182,8 +183,6 @@ export class Thread {
   protected readonly search = new ThreadSearch(this.api, this.origin, this.id);
 
   /** All fetched messages, ascending by ts; only a window is rendered. */
-  // dev-lint: allow-component-list — `messages` is an infinite-scroll pagination
-  // buffer, not a retained catalog; a thread re-fetches fresh on entry by design.
   readonly messages = signal<Message[]>([]);
 
   /** Which messages are in the DOM; see thread-window.ts. */
@@ -225,9 +224,6 @@ export class Thread {
   /** The scrollbar is held; the gesture lasts until it is let go. */
   private holdingScrollbar = false;
   private readerIdle: ReturnType<typeof setTimeout> | null = null;
-  /** The reader has scrolled since the thread loaded or last landed: the landing
-   *  (its marker, `?at`, `?on`) is behind them, and so is a kept page's place. */
-  private readerScrolled = false;
 
   /** Input that starts the reader's scrolling, and nothing else: a tap on a
    *  message or a key in the box touches the thread without moving it. */
@@ -290,18 +286,8 @@ export class Thread {
 
     // A changed `?at` or `?on` reloads too, which the effect above cannot see:
     // clicking a hit in the open conversation changes only the query string.
-    // Only a change to a non-null value counts; `commitFromParam` clearing it is
-    // not a navigation.
-    let landedAt: string | null = this.route.snapshot.queryParamMap.get('at');
-    let landedOn: string | null = this.route.snapshot.queryParamMap.get('on');
     this.route.queryParamMap.pipe(takeUntilDestroyed()).subscribe((pm) => {
-      const at = pm.get('at');
-      const on = pm.get('on');
-      const movedTo = (at != null && at !== landedAt) || (on != null && on !== landedOn);
-      landedAt = at;
-      landedOn = on;
-      if (!movedTo) return;
-      this.reload();
+      if (this.place.isNewLanding(pm)) this.reload();
     });
 
     const poll = setInterval(() => void this.pollNewer(), POLL_MS);
@@ -327,18 +313,16 @@ export class Thread {
     effect(() => this.win.watchContent(this.messagesEl()?.nativeElement));
   }
 
-  /** The loaded window does not reach the newest message: `?at` or `?on` put the
-   *  reader in the middle. `pollNewer` must not run then, or its gap guard would
-   *  reload the thread into the present. */
-  readonly floating = signal(false);
-
-  /** The message the reader was put on by `?at` or `jumpToReply`, marked so it
-   *  can be told from its neighbours. Cleared by the reader's first scroll. */
-  readonly landedId = signal<string | null>(null);
+  /** Where the reader is, and why; see reader-place.ts. */
+  private readonly place = new ReaderPlace(this.route.snapshot.queryParamMap);
+  /** See `ReaderPlace.floating`. */
+  readonly floating = this.place.floating;
+  /** See `ReaderPlace.landedId`. */
+  readonly landedId = this.place.landedId;
 
   private resetState(): void {
     this.generation++;
-    this.readerScrolled = false;
+    this.place.reset();
     this.messages.set([]);
     this.win.reset();
     this.revealedIds.set(new Set());
@@ -347,8 +331,6 @@ export class Thread {
     this.loadingOlder.set(false);
     this.loadingNewer.set(false);
     this.hasMore.set(false);
-    this.floating.set(false);
-    this.landedId.set(null);
     this.cursor = null;
     this.newerCursor = null;
   }
@@ -386,13 +368,11 @@ export class Thread {
     this.hasMore.set(older.has_more);
     this.cursor = older.next_cursor;
     this.newerCursor = newer.prev_cursor;
-    // Floating unless the forward half reached the present.
-    this.floating.set(newer.has_more);
+    // The forward half starts with the hit; floating unless it reached the present.
+    const hit = newer.messages[0];
+    this.place.landOn(hit ? hit.id : null, newer.has_more);
     this.loadingThread.set(false);
     this.appRef.tick();
-    // The forward half starts with the hit.
-    const hit = newer.messages[0];
-    this.landedId.set(hit ? hit.id : null);
     if (hit) this.win.scrollToTs(hit.ts);
     else this.win.scrollToBottom();
     this.win.trimToWindow();
@@ -446,9 +426,8 @@ export class Thread {
     if (!r.id) return;
     const here = this.rendered().find((m) => m.id === r.id);
     if (here) {
-      // A landing of its own: what the reader scrolled before is behind it.
-      this.landedId.set(here.id);
-      this.readerScrolled = false;
+      // A landing of its own, in the window already loaded.
+      this.place.landOn(here.id, this.floating());
       this.win.scrollToTs(here.ts);
       return;
     }
@@ -496,7 +475,7 @@ export class Thread {
         this.loadingThread.set(false);
         return;
       }
-      const moved = shown != null && this.readerScrolled;
+      const moved = shown != null && this.place.hasScrolled;
       this.messages.set(page.messages);
       this.fetches.watchInFlight(page.messages);
       this.loadingThread.set(false);
@@ -657,7 +636,7 @@ export class Thread {
       // place, and the rest comes forwards as they scroll (`fetchNewer`).
       if (fresh.length > 0 && fresh.length === page.messages.length) {
         if (this.win.isFollowing()) await this.loadThread(o, i);
-        else this.floating.set(true);
+        else this.place.reachesPresent(false);
         return;
       }
 
@@ -728,15 +707,14 @@ export class Thread {
     // made, a page loaded during the gesture, neither counts nor prolongs it.
     if (this.readerScrolling && !this.win.placedThisScroll()) {
       this.armReaderIdle();
-      this.readerScrolled = true;
-      this.landedId.set(null);
+      this.place.readerScrolled();
       this.win.noteReaderAt(!this.floating());
       this.noteFloatingDay();
     }
     if (this.threadError() || !this.routed() || this.loadingThread()) return;
     const { needOlder, needNewer } = this.win.step();
-    if (needOlder) this.fetchOlder();
-    if (needNewer) this.fetchNewer();
+    if (needOlder) void this.fetchOlder();
+    if (needNewer) void this.fetchNewer();
     this.scheduleFromParam();
   }
 
@@ -759,34 +737,35 @@ export class Thread {
     this.scrollIdle = setTimeout(() => this.scrolling.set(false), SCROLL_IDLE_MS);
   }
 
-  fetchOlder(): void {
+  async fetchOlder(): Promise<void> {
     const o = this.origin();
     const i = this.id();
     if (o == null || i == null || !this.hasMore() || this.cursor == null || this.loadingOlder()) return;
     this.loadingOlder.set(true);
     const gen = this.generation;
-    this.api.messages(o, i, this.cursor, PAGE).subscribe({
-      next: (page) => {
-        if (gen !== this.generation) return;
-        // Prepend, keeping the viewport on the same message.
-        this.win.keepingAnchor('fetchOlder', () => {
-          this.messages.update((cur) => [...page.messages, ...cur]);
-          this.hasMore.set(page.has_more);
-          this.cursor = page.next_cursor;
-          this.loadingOlder.set(false);
-        });
-        this.win.enforceMax('bottom');
-        this.scheduleFromParam();
-      },
-      error: () => {
-        if (gen === this.generation) this.loadingOlder.set(false);
-      },
-    });
+    try {
+      const page = await firstValueFrom(this.api.messages(o, i, this.cursor, PAGE));
+      if (gen !== this.generation) return;
+      // Prepend, keeping the viewport on the same message.
+      this.win.keepingAnchor('fetchOlder', () => {
+        this.messages.update((cur) => [...page.messages, ...cur]);
+        this.hasMore.set(page.has_more);
+        this.cursor = page.next_cursor;
+        this.loadingOlder.set(false);
+      });
+      this.win.enforceMax('bottom');
+      this.scheduleFromParam();
+    } catch (e: unknown) {
+      if (gen !== this.generation) return;
+      this.loadingOlder.set(false);
+      // The next scroll asks again; no network is said by the shell.
+      this.store.noteFailure(e);
+    }
   }
 
   /** Grow the window forwards. When the forward page runs out the window has
    *  reached the present: `floating` goes false and polling resumes. */
-  fetchNewer(): void {
+  async fetchNewer(): Promise<void> {
     const o = this.origin();
     const i = this.id();
     // Only while floating; otherwise there is nothing newer to fetch.
@@ -794,23 +773,23 @@ export class Thread {
     if (this.newerCursor == null || this.loadingNewer()) return;
     this.loadingNewer.set(true);
     const gen = this.generation;
-    this.api.messages(o, i, this.newerCursor, PAGE, 'newer').subscribe({
-      next: (page) => {
-        if (gen !== this.generation) return;
-        // Append, keeping the viewport on the same message.
-        this.win.keepingAnchor('fetchNewer', () => {
-          this.messages.update((cur) => [...cur, ...page.messages]);
-          this.newerCursor = page.prev_cursor;
-          this.floating.set(page.has_more);
-          this.loadingNewer.set(false);
-        });
-        this.win.enforceMax('top');
-        this.scheduleFromParam();
-      },
-      error: () => {
-        if (gen === this.generation) this.loadingNewer.set(false);
-      },
-    });
+    try {
+      const page = await firstValueFrom(this.api.messages(o, i, this.newerCursor, PAGE, 'newer'));
+      if (gen !== this.generation) return;
+      // Append, keeping the viewport on the same message.
+      this.win.keepingAnchor('fetchNewer', () => {
+        this.messages.update((cur) => [...cur, ...page.messages]);
+        this.newerCursor = page.prev_cursor;
+        this.place.reachesPresent(!page.has_more);
+        this.loadingNewer.set(false);
+      });
+      this.win.enforceMax('top');
+      this.scheduleFromParam();
+    } catch (e: unknown) {
+      if (gen !== this.generation) return;
+      this.loadingNewer.set(false);
+      this.store.noteFailure(e);
+    }
   }
 
   // ---- ?from (scroll-position restore) -----------------------------------
@@ -825,24 +804,18 @@ export class Thread {
     // the picking's step, and the close would have none to take away. The
     // picking's end catches up.
     if (this.picking.picked().length > 0) return;
-    // Where the viewport is, whoever moved it. The landing (`?at`, a picked day)
-    // goes only once the reader has scrolled: the pages the app loads around it
-    // scroll too, and on a phone at once.
-    const left = this.readerScrolled;
     const o = this.origin();
     const i = this.id();
     if (o == null || i == null) return;
-    const from = this.win.atBottom() ? null : this.win.topAnchor()?.id;
-    const ts = from ? this.messages().find((m) => m.id === from)?.ts : null;
-    const landing = left ? { at: null, on: null } : {};
-    // Nothing to write when the address already says it.
-    const now = this.route.snapshot.queryParamMap;
-    const fromParam = ts != null ? String(ts) : null;
-    const landingGone = !left || (now.get('at') == null && now.get('on') == null);
-    if (now.get('from') === fromParam && landingGone) return;
+    // Where the viewport is, whoever moved it; the landing stays in the address
+    // until the reader scrolls (`ReaderPlace.address`).
+    const top = this.win.atBottom() ? null : this.win.topAnchor()?.id;
+    const ts = top ? (this.messages().find((m) => m.id === top)?.ts ?? null) : null;
+    const change = this.place.address(this.route.snapshot.queryParamMap, ts);
+    if (change == null) return;
     void this.router.navigate([], {
       relativeTo: this.route,
-      queryParams: { from: ts != null ? String(ts) : null, ...landing },
+      queryParams: change,
       queryParamsHandling: 'merge',
       replaceUrl: true,
     });
