@@ -240,8 +240,9 @@ pub(super) async fn page(
         }
     }
 
-    // Reactions key on (thread_id, target_ts = the message's server_ts): distinct
-    // current authors per emoji.
+    // Reactions key on (thread_id, target_ts = the message's server_ts). Signal
+    // keeps one per person per message: each event replaces the last, and a
+    // removal leaves none, so only each person's latest event counts.
     if !ts_list.is_empty() {
         let placeholders = vec!["?"; ts_list.len()].join(",");
         // Names grouped in Rust rather than by `GROUP_CONCAT`, which truncates at
@@ -250,15 +251,21 @@ pub(super) async fn page(
             "SELECT r.target_ts, r.emoji,
                     COALESCE(ct.display_name, r.author_uuid) AS who
              FROM reactions r
+             JOIN (SELECT target_ts, author_uuid, MAX(reaction_ts) AS latest
+                     FROM reactions
+                    WHERE thread_id = ? AND target_ts IN ({placeholders})
+                    GROUP BY target_ts, author_uuid) l
+               ON l.target_ts = r.target_ts AND l.author_uuid = r.author_uuid
+              AND l.latest = r.reaction_ts
              LEFT JOIN contacts ct ON ct.uuid = r.author_uuid
              WHERE r.thread_id = ? AND r.removed = 0 AND r.emoji IS NOT NULL
-               AND r.target_ts IN ({placeholders})
              ORDER BY r.target_ts, r.emoji, who",
         );
         let mut q = sqlx::query(AssertSqlSafe(sql)).bind(thread_id);
         for ts in &ts_list {
             q = q.bind(ts);
         }
+        q = q.bind(thread_id);
         let rrows = q.fetch_all(pool).await?;
         // One author reacting twice with an emoji counts and is named once.
         let mut grouped: HashMap<(i64, String), Vec<String>> = HashMap::new();

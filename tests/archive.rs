@@ -1687,6 +1687,85 @@ async fn the_list_shows_an_edited_last_message_as_it_reads_now() {
     );
 }
 
+/// Signal keeps one reaction per person per message: a newer one replaces it,
+/// and a removal leaves none. The archive keeps every event; only each
+/// person's latest is shown.
+#[tokio::test]
+async fn a_changed_or_removed_signal_reaction_shows_as_it_is_now() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let thread = "dm:reacts-now";
+    sqlx::query(
+        "INSERT INTO messages (thread_id, sender_uuid, server_ts, body, is_outgoing, deleted, edited)
+         VALUES (?, ?, 1000, 'react to me', 0, 0, 0)",
+    )
+    .bind(thread)
+    .bind(thread)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // Ann changes 👍 to ❤️; Bob adds 😂 and takes it back; Cy keeps 👍.
+    sqlx::query(
+        "INSERT INTO reactions (thread_id, target_ts, author_uuid, emoji, reaction_ts, removed) VALUES
+         (?, 1000, 'ann', '👍', 2000, 0), (?, 1000, 'ann', '❤️', 3000, 0),
+         (?, 1000, 'bob', '😂', 2100, 0), (?, 1000, 'bob', '😂', 3100, 1),
+         (?, 1000, 'cy', '👍', 2200, 0)",
+    )
+    .bind(thread)
+    .bind(thread)
+    .bind(thread)
+    .bind(thread)
+    .bind(thread)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let page = archive::messages_page(&pool, Origin::Signal, thread, None, 50, PageDir::Older)
+        .await
+        .unwrap();
+    let mut shown: Vec<(String, i64)> = page.messages[0]
+        .reactions
+        .iter()
+        .map(|r| (r.emoji.clone(), r.count))
+        .collect();
+    shown.sort();
+    assert_eq!(shown, [("❤️".to_owned(), 1), ("👍".to_owned(), 1)]);
+}
+
+/// A Telegram reply can answer a message in another chat; its number then means
+/// nothing here, and must not quote this chat's message of the same number.
+#[tokio::test]
+async fn a_telegram_reply_into_another_chat_quotes_nothing_from_this_one() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    sqlx::query("INSERT INTO telegram_conversations (id, kind, name) VALUES (6363, 'dm', 'Rhea')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO telegram_messages
+            (conversation_id, msg_id, sent_at, sender_id, sender_name, is_outgoing, kind, text, deleted,
+             reply_to_msg_id, reply_to_peer_id) VALUES
+            (6363, 7, 1700002000, 6363, 'Rhea', 0, 'message', 'an unrelated seven', 0, NULL, NULL),
+            (6363, 8, 1700002010, 6363, 'Rhea', 0, 'message', 'about that, over there', 0, 7, 9191)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let page = archive::messages_page(&pool, Origin::Telegram, "6363", None, 50, PageDir::Older)
+        .await
+        .unwrap();
+    let reply = page
+        .messages
+        .iter()
+        .find(|m| m.body.as_deref() == Some("about that, over there"))
+        .unwrap();
+    let to = reply.reply_to.as_ref().expect("still a reply");
+    assert_eq!(to.id, None, "not this chat's message 7");
+    assert_eq!(to.excerpt, None);
+}
+
 /// Telegram conversations keep their stored kind, `channel` included, and the
 /// count leaves out service events.
 #[tokio::test]

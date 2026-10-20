@@ -93,7 +93,8 @@ pub(super) async fn page(
                      COALESCE((SELECT MAX(NOT (e.text <=> m.text)) FROM telegram_message_edits e
                                 WHERE e.conversation_id = m.conversation_id AND e.msg_id = m.msg_id), 1)
                        AS edit_changed_text,
-                     m.reply_to_msg_id AS reply_to_msg_id, m.kind AS kind,
+                     m.reply_to_msg_id AS reply_to_msg_id,
+                     m.reply_to_peer_id AS reply_to_peer_id, m.kind AS kind,
                      m.grouped_id AS grouped_id,
                      c.duration_s AS call_duration_s, c.reason AS call_reason,
                      c.video AS call_video
@@ -113,7 +114,8 @@ pub(super) async fn page(
                      COALESCE((SELECT MAX(NOT (e.text <=> m.text)) FROM telegram_message_edits e
                                 WHERE e.conversation_id = m.conversation_id AND e.msg_id = m.msg_id), 1)
                        AS edit_changed_text,
-                     m.reply_to_msg_id AS reply_to_msg_id, m.kind AS kind,
+                     m.reply_to_msg_id AS reply_to_msg_id,
+                     m.reply_to_peer_id AS reply_to_peer_id, m.kind AS kind,
                      m.grouped_id AS grouped_id,
                      c.duration_s AS call_duration_s, c.reason AS call_reason,
                      c.video AS call_video
@@ -133,7 +135,8 @@ pub(super) async fn page(
                      COALESCE((SELECT MAX(NOT (e.text <=> m.text)) FROM telegram_message_edits e
                                 WHERE e.conversation_id = m.conversation_id AND e.msg_id = m.msg_id), 1)
                        AS edit_changed_text,
-                     m.reply_to_msg_id AS reply_to_msg_id, m.kind AS kind,
+                     m.reply_to_msg_id AS reply_to_msg_id,
+                     m.reply_to_peer_id AS reply_to_peer_id, m.kind AS kind,
                      m.grouped_id AS grouped_id,
                      c.duration_s AS call_duration_s, c.reason AS call_reason,
                      c.video AS call_video
@@ -163,7 +166,13 @@ pub(super) async fn page(
     for r in rows {
         let id: i64 = r.try_get("id")?;
         let sent_at: i64 = r.try_get("sent_at")?;
-        if let Some(target) = r.try_get::<Option<i32>, _>("reply_to_msg_id")? {
+        // A reply into another chat names a number that means nothing here; it
+        // stays a reply, to a message this conversation does not hold.
+        let elsewhere = r
+            .try_get::<Option<i64>, _>("reply_to_peer_id")?
+            .is_some_and(|p| p != conversation_id);
+        let reply_target = r.try_get::<Option<i32>, _>("reply_to_msg_id")?;
+        if let Some(target) = reply_target.filter(|_| !elsewhere) {
             replies.push((id.to_string(), target));
         }
         let deleted: i8 = r.try_get("deleted")?;
@@ -189,7 +198,9 @@ pub(super) async fn page(
         .map_or_else(|| r.try_get("body"), |t| Ok(Some(t)))?;
         keys.push((sent_at, id));
         msg_ids.push(r.try_get::<i32, _>("msg_id")?);
+        let reply_to = (elsewhere && reply_target.is_some()).then(ReplyTo::not_held);
         msgs.push(Message {
+            reply_to,
             // Service events render as actions.
             kind: if is_service {
                 MessageKind::Action

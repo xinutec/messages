@@ -192,8 +192,6 @@ to send on IRC. A Telegram send waits for the feed for 20 seconds and is
 withdrawn if the feed never took it.
 
 ## Known limits
-- Signal reactions are distinct current authors per emoji, so a same-author
-  add-then-remove within one page is missed.
 - Google Chat reactors are named only as far as gchat-archive's second capture
   has reached; Telegram truncates its reactor list. `count` stays authoritative.
 - A custom-emoji Telegram reaction has no characters to draw and is left out.
