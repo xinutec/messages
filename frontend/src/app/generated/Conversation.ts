@@ -17,7 +17,8 @@ last_ts: number | null,
  */
 last: LastMessage | null, 
 /**
- * Messages from others that came in after I last read, on the phone; 0 when
+ * Messages from others that came in after I last read, on the phone, less
+ * any deleted for everyone, as the phone counts them; 0 when
  * the origin cannot say (IRC, a Google Chat conversation with no read
  * position) or nothing is unread.
  */

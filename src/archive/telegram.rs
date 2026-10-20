@@ -22,7 +22,8 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
                  CASE WHEN rd.read_id IS NULL THEN 0 ELSE (
                      SELECT COUNT(*) FROM telegram_messages u
                       WHERE u.conversation_id = t.id AND u.msg_id > rd.read_id
-                        AND u.kind = 'message' AND u.is_outgoing = 0) END AS unread
+                        AND u.kind = 'message' AND u.is_outgoing = 0
+                        AND u.deleted = 0) END AS unread
           FROM telegram_conversations t
           LEFT JOIN (
               SELECT conversation_id, COUNT(*) AS cnt, MAX(sent_at) AS last_ts

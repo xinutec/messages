@@ -2981,7 +2981,8 @@ async fn unread_counts_what_came_in_after_i_last_read() {
             (5151, 3, 1700001020, 5151, 'Uma', 0, 'message', 'new', 0),
             (5151, 4, 1700001030, 777, 'Me', 1, 'message', 'mine', 0),
             (5151, 5, 1700001040, 5151, 'Uma', 0, 'service', 'joined', 0),
-            (5151, 6, 1700001050, 5151, 'Uma', 0, 'message', 'newer', 0)",
+            (5151, 6, 1700001050, 5151, 'Uma', 0, 'message', 'newer', 0),
+            (5151, 7, 1700001060, 5151, 'Uma', 0, 'message', 'taken back', 1)",
     )
     .execute(&pool)
     .await
@@ -3010,6 +3011,23 @@ async fn unread_counts_what_came_in_after_i_last_read() {
     .await
     .unwrap();
 
+    // A Signal chat with no read point yet: one of theirs, and one they deleted
+    // for everyone, which the phone no longer counts either.
+    sqlx::query(
+        "INSERT INTO conversations (thread_id, type, name) VALUES ('dm:unread-gone','dm','Una')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO messages (thread_id, sender_uuid, server_ts, body, is_outgoing, deleted, edited) VALUES
+         ('dm:unread-gone','una',5000,'still here',0,0,0),
+         ('dm:unread-gone','una',6000,'taken back',0,1,0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
     let convs = archive::list_conversations(&pool).await.unwrap();
     let unread = |origin: Origin, id: &str| {
         convs
@@ -3024,8 +3042,14 @@ async fn unread_counts_what_came_in_after_i_last_read() {
     // No read point: what came in after the syncs began, not before.
     assert_eq!(unread(Origin::Signal, "dm:alice"), 1);
     assert_eq!(unread(Origin::Signal, "group:g1"), 1);
-    // Telegram: after the inbox mark, theirs and messages only.
+    // Telegram: after the inbox mark, theirs and messages only, and not the
+    // one deleted for everyone.
     assert_eq!(unread(Origin::Telegram, "5151"), 2);
+    assert_eq!(
+        unread(Origin::Signal, "dm:unread-gone"),
+        1,
+        "the deleted one is not unread"
+    );
     assert_eq!(unread(Origin::Telegram, "4242"), 0, "read to the end");
     assert_eq!(
         unread(Origin::Telegram, "-1000000000055"),

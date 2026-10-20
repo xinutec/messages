@@ -22,10 +22,13 @@ const hhmm = (d: Date): string => `${pad2(d.getHours())}:${pad2(d.getMinutes())}
  *  produces in every locale; the `date` pipe would follow the app's. */
 const dayMarker = (d: Date): string => `--- Day changed ${d.toDateString()}`;
 
-/** An attachment as one bracketed line, named by `attachment.ts` as on screen. */
+/** An attachment as one bracketed line, named by `attachment.ts` as on screen.
+ *  A voice message carries what the transcriber heard, as the screen shows it
+ *  under the player, marked as transcribed rather than said. */
 function attachmentLine(a: Attachment): string {
   const label = attachmentLabel(a);
-  return a.available ? `[${label}]` : `[${label} (not stored)]`;
+  if (!a.available) return `[${label} (not stored)]`;
+  return a.transcript != null ? `[${label}, transcribed: "${a.transcript}"]` : `[${label}]`;
 }
 
 /** One message's text, as the lines it occupies. A deleted message is one

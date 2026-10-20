@@ -158,6 +158,7 @@ gains another reader.
 | `kind` | IRC, and Telegram service events as `action` | `* ` before the body | `HH:MM  * nick ` prefix | not shown |
 | `entities` | Telegram entities; Signal text styles mapped to the same kinds, from an edited message's newest revision | formatted runs, overlaps combined | plain text | not shown |
 | `is_outgoing` | all origins | `.out` class | nothing; the sender's name carries it | not shown |
+| `transcript` (an attachment's) | the words, only at mean word confidence ≥ 0.75 | under the player, marked "Transcribed" | `[audio, transcribed: "…"]` | not searched |
 
 The server sends retracted text; every reader hides it until asked. A revealed
 message still copies as `(deleted)`, since the log is built from the model.
@@ -181,7 +182,9 @@ reports a read position and names nobody; Signal reports per-person receipts, so
 a group says `read by 2` rather than `read`, and my own linked device's read
 sync is not counted.
 
-Unread counts theirs after my last read, where the archive can say: Signal from
+Unread counts theirs after my last read, less any deleted for everyone (as the
+phone apps count; the list's last line still says "Message deleted"), where the
+archive can say: Signal from
 my linked devices' read syncs, Telegram from its inbox mark, Google Chat from the
 read position its conversation list carries (top-level messages only, as a reply
 inside a thread does not make a space unread there; none for the Mentions

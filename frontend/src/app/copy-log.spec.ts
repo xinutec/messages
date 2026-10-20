@@ -167,6 +167,28 @@ describe('formatChatLog', () => {
     ]);
   });
 
+  /** What the screen shows under a voice message travels with the copy, marked
+   *  as the machine's hearing rather than the sender's words. */
+  it('copies a voice message with what the transcriber heard', () => {
+    const out = formatChatLog([
+      msg({
+        ts: at(2026, 8, 13, 1, 0),
+        sender: 'a',
+        attachments: [
+          file({ content_type: 'audio/aac', transcript: 'Hoi! Ben je vanavond thuis?' }),
+          file({ file_name: 'memo.m4a', content_type: 'audio/aac', transcript: 'see you then' }),
+          // Not sure enough to show: nothing to carry.
+          file({ content_type: 'audio/aac', transcript: null }),
+        ],
+      }),
+    ]);
+    expect(out.split('\n').slice(1)).toEqual([
+      '01:00 <a> [audio, transcribed: "Hoi! Ben je vanavond thuis?"]',
+      '01:00 <a> [audio: memo.m4a, transcribed: "see you then"]',
+      '01:00 <a> [audio]',
+    ]);
+  });
+
   it('puts (edited) after the attachments, not before them', () => {
     const out = formatChatLog([
       msg({

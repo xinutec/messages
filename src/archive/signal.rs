@@ -15,7 +15,8 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
     // out, so the count, the last message and its time do too. The last message
     // reads as the page shows it, in its newest revision's words.
     //
-    // Unread: theirs after my newest read. A read receipt on a message someone
+    // Unread: theirs after my newest read, as the phone counts them, so not one
+    // deleted for everyone (the list still says so). A read receipt on a message someone
     // else sent can only be mine, synced from the phone. Before the first receipt
     // was captured nothing can be told, so nothing older counts.
     let signal = sqlx::query(
@@ -28,7 +29,7 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
                    WHERE a.message_id = l.id ORDER BY a.id LIMIT 1) AS last_media,
                  (SELECT COUNT(*) FROM messages u
                    WHERE u.thread_id = c.thread_id AND u.is_outgoing = 0
-                     AND u.edit_of_ts IS NULL
+                     AND u.edit_of_ts IS NULL AND u.deleted = 0
                      AND u.server_ts > GREATEST(COALESCE(rd.read_ts, 0), rs.since_ms)) AS unread
           FROM conversations c
           LEFT JOIN (
