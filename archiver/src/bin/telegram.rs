@@ -829,8 +829,13 @@ async fn store(
         .await?;
     db.record_telegram_reaction_authors(row.conversation_id, row.msg_id, &row.reactions)
         .await?;
-    db.replace_telegram_entities(row.conversation_id, row.msg_id, &row.entities)
-        .await?;
+    db.replace_telegram_entities(
+        row.conversation_id,
+        row.msg_id,
+        &row.entities,
+        outcome == TelegramStored::Edited,
+    )
+    .await?;
     if let Some(call) = &row.call {
         db.record_telegram_call(row.conversation_id, row.msg_id, call)
             .await?;
@@ -937,8 +942,8 @@ fn media_content_type(media: &grammers_client::media::Media) -> Option<String> {
     }
 }
 
-/// The best kind available without the peer: a supergroup reads as `channel`
-/// until the sweep corrects it.
+/// The best kind available without the peer, for a conversation the sweep has
+/// not listed yet: a supergroup reads as `channel` until the sweep names it.
 fn kind_from_space(row: &Row) -> ConvKind {
     match row.peer_space {
         map::PeerSpace::User => ConvKind::Dm,

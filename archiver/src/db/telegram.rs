@@ -385,14 +385,26 @@ impl Db {
 
     /// Record a message's entities, dating any missing from a non-empty list. An
     /// empty list marks nothing, for the reason given on
-    /// [`Self::replace_telegram_reactions`].
+    /// [`Self::replace_telegram_reactions`], unless `text_changed`: an edit
+    /// carries its whole message, so plain new words take the old runs away.
     pub async fn replace_telegram_entities(
         &self,
         conversation_id: i64,
         msg_id: i32,
         entities: &[crate::telegram::map::Entity],
+        text_changed: bool,
     ) -> Result<()> {
         if entities.is_empty() {
+            if text_changed {
+                sqlx::query(
+                    "UPDATE telegram_message_entities SET removed_at = CURRENT_TIMESTAMP
+                      WHERE conversation_id = ? AND msg_id = ? AND removed_at IS NULL",
+                )
+                .bind(conversation_id)
+                .bind(msg_id)
+                .execute(&self.pool)
+                .await?;
+            }
             return Ok(());
         }
         let mut tx = self.pool.begin().await?;

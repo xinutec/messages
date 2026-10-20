@@ -907,6 +907,53 @@ async fn re_reading_a_reaction_keeps_the_moment_it_happened() {
     assert_eq!(when, 1_700_000_100, "the first observation stands");
 }
 
+/// An edit carries its whole message: when the words changed and no formatting
+/// came with them, the old formatting no longer applies to anything.
+#[tokio::test]
+async fn an_edit_without_formatting_takes_the_old_formatting_away() {
+    let Some((db, pool)) = connect().await else {
+        return;
+    };
+    let id = ids(42);
+    let msg = id.msg_base + 1;
+    let bold = Entity {
+        kind: "bold",
+        offset_utf16: 0,
+        length_utf16: 4,
+        url: None,
+        user_id: None,
+        language: None,
+        document_id: None,
+    };
+    db.replace_telegram_entities(id.conversation, msg, &[bold], false)
+        .await
+        .expect("bold words");
+    // A delivery without the field says nothing about formatting.
+    db.replace_telegram_entities(id.conversation, msg, &[], false)
+        .await
+        .expect("a bare delivery");
+    let live = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM telegram_message_entities
+              WHERE conversation_id = ? AND msg_id = ? AND removed_at IS NULL",
+        )
+        .bind(id.conversation)
+        .bind(msg)
+        .fetch_one(&pool)
+        .await
+        .expect("count entities")
+    };
+    assert_eq!(
+        live().await,
+        1,
+        "kept through a delivery that did not carry it"
+    );
+    db.replace_telegram_entities(id.conversation, msg, &[], true)
+        .await
+        .expect("plain new words");
+    assert_eq!(live().await, 0, "gone with the words it styled");
+}
+
 #[tokio::test]
 async fn an_entity_that_only_moved_is_not_an_entity_that_went_away() {
     let Some((db, pool)) = connect().await else {
@@ -924,7 +971,7 @@ async fn an_entity_that_only_moved_is_not_an_entity_that_went_away() {
         language: None,
         document_id: None,
     };
-    db.replace_telegram_entities(id.conversation, msg, std::slice::from_ref(&link))
+    db.replace_telegram_entities(id.conversation, msg, std::slice::from_ref(&link), false)
         .await
         .expect("one link");
 
@@ -938,7 +985,7 @@ async fn an_entity_that_only_moved_is_not_an_entity_that_went_away() {
         language: None,
         document_id: None,
     };
-    db.replace_telegram_entities(id.conversation, msg, &[bold, link.clone()])
+    db.replace_telegram_entities(id.conversation, msg, &[bold, link.clone()], false)
         .await
         .expect("two entities");
 

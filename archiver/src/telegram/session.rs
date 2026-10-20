@@ -105,11 +105,20 @@ impl DbSession {
     /// Write the session back if anything has changed since the last flush.
     ///
     /// Returns whether it wrote. The flag is cleared before the write, so a
-    /// mutation during the write is picked up by the next flush.
+    /// mutation during the write is picked up by the next flush; a write that
+    /// fails sets it again, so the next flush retries.
     pub async fn flush(&self, pool: &MySqlPool) -> Result<bool> {
         if !self.take_dirty() {
             return Ok(false);
         }
+        let written = self.write(pool).await;
+        if written.is_err() {
+            self.touch();
+        }
+        written.map(|()| true)
+    }
+
+    async fn write(&self, pool: &MySqlPool) -> Result<()> {
         let json = {
             let data = self.data().map_err(anyhow::Error::new)?;
             serde_json::to_string(&Persisted {
@@ -128,7 +137,7 @@ impl DbSession {
         .execute(pool)
         .await
         .context("writing telegram_session")?;
-        Ok(true)
+        Ok(())
     }
 
     /// Whether this session has a logged-in user, from stored state alone.

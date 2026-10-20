@@ -126,3 +126,19 @@ async fn the_self_user_sentinel_resolves_to_the_logged_in_account() {
         "the sentinel is not a key in the map; it has to be resolved by the self flag"
     );
 }
+
+/// A write that fails keeps the session marked changed, so the next flush tries
+/// again rather than waiting for some later change.
+#[tokio::test]
+async fn a_failed_flush_leaves_the_session_dirty() {
+    let session = fresh();
+    session.set_home_dc_id(4).await.unwrap();
+    assert!(session.is_dirty());
+    // Nothing listens on port 1: the write fails.
+    let pool = sqlx::mysql::MySqlPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_secs(2))
+        .connect_lazy("mysql://nobody:nothing@127.0.0.1:1/none")
+        .unwrap();
+    assert!(session.flush(&pool).await.is_err());
+    assert!(session.is_dirty(), "the change still waits to be written");
+}
