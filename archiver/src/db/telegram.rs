@@ -33,6 +33,22 @@ impl Db {
         Ok(())
     }
 
+    /// Make sure a conversation a message arrived in exists, with `kind` as
+    /// guessed from its id. A row already there keeps its kind: the guess cannot
+    /// tell a supergroup from a broadcast, and the sweep, which can, set it.
+    pub async fn ensure_telegram_conversation(
+        &self,
+        id: i64,
+        kind: crate::telegram::ConvKind,
+    ) -> Result<()> {
+        sqlx::query("INSERT IGNORE INTO telegram_conversations (id, kind) VALUES (?, ?)")
+            .bind(id)
+            .bind(kind.as_str())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// Store a mapped message, keeping any text it is replacing.
     ///
     /// Telegram edits in place, so the old text is appended to
@@ -783,8 +799,9 @@ impl Db {
     /// Flag deleted messages, keeping their text, and return how many rows matched.
     ///
     /// `updateDeleteMessages` names no peer: private chats and basic groups share
-    /// one id sequence per account. Channels have their own sequences and
-    /// `updateDeleteChannelMessages`, so a peer-less deletion skips channels.
+    /// one id sequence per account. Channels, supergroups among them, have their
+    /// own sequences and `updateDeleteChannelMessages`, so a peer-less deletion
+    /// skips every conversation in the channel id space, whatever its kind.
     pub async fn mark_telegram_deleted(
         &self,
         msg_ids: &[i32],
@@ -809,13 +826,12 @@ impl Db {
                 }
                 TelegramDeleteScope::SharedSequence => {
                     sqlx::query(
-                        "UPDATE telegram_messages m
-                       JOIN telegram_conversations c ON c.id = m.conversation_id
-                        SET m.deleted = 1,
-                            m.deleted_at = COALESCE(m.deleted_at, CURRENT_TIMESTAMP)
-                      WHERE m.msg_id = ? AND c.kind <> 'channel'",
+                        "UPDATE telegram_messages
+                        SET deleted = 1, deleted_at = COALESCE(deleted_at, CURRENT_TIMESTAMP)
+                      WHERE msg_id = ? AND conversation_id > ?",
                     )
                     .bind(id)
+                    .bind(crate::telegram::map::CHANNEL_ID_OFFSET)
                     .execute(&self.pool)
                     .await?
                 }

@@ -239,6 +239,80 @@ async fn a_peerless_deletion_does_not_reach_a_channel() {
     assert!(deleted(&pool, id.channel, msg).await);
 }
 
+/// A supergroup is a channel underneath, with its own message numbers, though
+/// the archive files it as a group: a peerless deletion is not about it.
+#[tokio::test]
+async fn a_peerless_deletion_does_not_reach_a_supergroup() {
+    let Some((db, pool)) = connect().await else {
+        return;
+    };
+    let id = ids(40);
+    let msg = id.msg_base + 1;
+    db.upsert_telegram_conversation(id.conversation, ConvKind::Dm, Some("a person"), None)
+        .await
+        .expect("dm conversation");
+    db.upsert_telegram_conversation(id.channel, ConvKind::Group, Some("a supergroup"), None)
+        .await
+        .expect("supergroup conversation");
+    db.store_telegram_message(
+        &row(id.conversation, PeerSpace::User, msg, "in the dm"),
+        None,
+    )
+    .await
+    .expect("dm message");
+    db.store_telegram_message(
+        &row(id.channel, PeerSpace::Channel, msg, "in the supergroup"),
+        None,
+    )
+    .await
+    .expect("supergroup message");
+
+    let hit = db
+        .mark_telegram_deleted(&[msg], TelegramDeleteScope::SharedSequence)
+        .await
+        .expect("delete");
+    assert_eq!(hit, 1, "the dm's message alone");
+    assert!(
+        !deleted(&pool, id.channel, msg).await,
+        "a supergroup message sharing the number must survive"
+    );
+}
+
+/// A message's arrival makes sure its conversation exists, guessing the kind
+/// from the id's space; it must not overwrite what the sweep knows, which can
+/// tell a supergroup (filed as a group) from a broadcast.
+#[tokio::test]
+async fn a_message_does_not_turn_a_supergroup_into_a_channel() {
+    let Some((db, pool)) = connect().await else {
+        return;
+    };
+    let id = ids(41);
+    db.upsert_telegram_conversation(id.channel, ConvKind::Group, Some("a supergroup"), None)
+        .await
+        .expect("the sweep's row");
+    db.ensure_telegram_conversation(id.channel, ConvKind::Channel)
+        .await
+        .expect("a message's guess");
+    let kind: String = sqlx::query_scalar("SELECT kind FROM telegram_conversations WHERE id = ?")
+        .bind(id.channel)
+        .fetch_one(&pool)
+        .await
+        .expect("read the kind");
+    assert_eq!(kind, "group");
+
+    // A conversation the sweep has not listed yet gets the guess.
+    let fresh = id.channel - 500;
+    db.ensure_telegram_conversation(fresh, ConvKind::Channel)
+        .await
+        .expect("a first message");
+    let kind: String = sqlx::query_scalar("SELECT kind FROM telegram_conversations WHERE id = ?")
+        .bind(fresh)
+        .fetch_one(&pool)
+        .await
+        .expect("read the kind");
+    assert_eq!(kind, "channel");
+}
+
 async fn deleted(pool: &MySqlPool, conversation: i64, msg_id: i32) -> bool {
     let flag: i8 = sqlx::query_scalar(
         "SELECT deleted FROM telegram_messages WHERE conversation_id = ? AND msg_id = ?",

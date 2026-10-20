@@ -818,8 +818,9 @@ async fn store(
         return Ok(TelegramStored::Unchanged);
     };
     // A message can arrive from a conversation the sweep has not listed yet; the
-    // viewer's join needs its row. The next sweep corrects kind and name.
-    db.upsert_telegram_conversation(row.conversation_id, kind_from_space(&row), None, None)
+    // viewer's join needs its row. Only then is the kind guessed; the sweep's
+    // stands, and the next sweep names it.
+    db.ensure_telegram_conversation(row.conversation_id, kind_from_space(&row))
         .await?;
     let outcome = db
         .store_telegram_message(&row, sender_name.as_deref())

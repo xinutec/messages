@@ -201,7 +201,7 @@ pub fn normalise_peer(peer: &tl::enums::Peer) -> (i64, PeerSpace) {
 }
 
 /// "-100" written in front of a channel id: channel 1234 becomes -1001234.
-const CHANNEL_ID_OFFSET: i64 = -1_000_000_000_000;
+pub const CHANNEL_ID_OFFSET: i64 = -1_000_000_000_000;
 
 /// Map a wire message onto a row, or `None` for one with nothing to store.
 ///
