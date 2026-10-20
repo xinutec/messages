@@ -1,6 +1,7 @@
-//! Read-only queries over the message archive, normalising Signal, Google Chat,
-//! IRC and Telegram into one shape for the UI. The only write, the echo of a sent
-//! IRC line, is in [`crate::irc_send`].
+//! Queries over the message archive, normalising Signal, Google Chat, IRC and
+//! Telegram into one shape for the UI. Its one write is [`links`] offering a
+//! link for a picture; a sent IRC line's echo is in [`crate::irc_send`] and a
+//! Telegram send's queue row in [`crate::telegram_send`].
 //!
 //! One module per origin, each with its conversations, pages, search and stored
 //! bytes; this module holds the shapes they share and the calls that combine them.

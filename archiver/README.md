@@ -16,8 +16,8 @@ servers), so the ingester is a websocket-to-database client with no libsignal.
 
 ## Components
 - `src/parse.rs` — pure Signal frame → action mapping.
-- `src/db.rs` — the schema (append-only `MIGRATIONS`, applied on startup) and
-  every write.
+- `src/db/` — the schema (`migrations.rs`, append-only, applied on startup)
+  and every write, one module per origin.
 - `src/main.rs` — the Signal ingester: holds `ws://…/v1/receive/<number>`,
   executes parsed actions, stores attachment bytes, refreshes contact and group
   names.
@@ -42,7 +42,8 @@ are in `code/kubes/dhall/apps/signal.dhall` in `xinutec/pippijn`.
 `tests/telegram_session.rs` and `tests/attach.rs` need nothing.
 
 `tests/contacts.rs`, `tests/telegram_store.rs`, `tests/irc_stats.rs`,
-`tests/frame_fields.rs`, `tests/migrate.rs` and `tests/import_irclogs.rs` need a
+`tests/frame_fields.rs`, `tests/signal_edits.rs`, `tests/migrate.rs` and
+`tests/import_irclogs.rs` need a
 MariaDB at `SIGNAL_TEST_DATABASE_URL`. They skip without one, and fail instead
 when `CI` is set. The gate's archiver row starts one via dev-lint's
 `with-test-db`, and CI supplies a `mariadb:11.8` service. Each test's rows are
@@ -51,11 +52,13 @@ unique per run, so the suite can run repeatedly against one database.
 ## Schema
 Signal: `contacts` (+ `contact_names`, names over time), `conversations`
 (`dm:<uuid>` / `group:<id>`), `messages` (unique `(sender_uuid, server_ts)`),
-`attachments`, `reactions`, `signal_receipts`, `signal_call_events`,
-`signal_text_styles`, `signal_link_previews`, and `signal_frames`, every raw
-frame as it arrived, from which later columns are backfilled. Identities are ACI
-UUIDs, E.164 as fallback. Deletes flag the row and edits are separate rows
-linked by `edit_of_ts`; nothing is overwritten.
+`attachments`, `reactions` (events: each person's latest one per message is
+current), `signal_receipts`, `signal_call_events`, `signal_text_styles`,
+`signal_mentions`, `signal_link_previews`, and `signal_frames`, every raw frame
+as it arrived, from which later columns are backfilled. Identities are ACI
+UUIDs, E.164 as fallback. Deletes flag the row and edits are separate rows whose
+`edit_of_ts` names the original, also when Signal named an earlier edit;
+nothing is overwritten.
 
 Group threads are keyed by signal-cli's group id (base64 `groupInfo.groupId`).
 The Android export carries each group's master key instead, so the importer maps
@@ -148,12 +151,14 @@ Where Telegram differs from the other origins:
 | a DM names no sender | `from_id` omitted; `out` says which end | `map::map_message` |
 | an edit date is not always an edit to show | `edit_hide` beside `edit_date` | `edit_hidden`, honoured by the viewer |
 | an edit mutates the message | same `msg_id`, new text | prior text filed in `telegram_message_edits` first; edits made before the archive held the text have none |
-| a deletion names no peer | private chats and basic groups share one id sequence | `Db::mark_telegram_deleted` never reaches a channel |
-| a supergroup shares the channel id space | told apart by a flag on the peer | `PeerSpace` from the id, `ConvKind` from the peer |
+| a reaction moves `edit_date` | the text is unchanged | no version filed; the viewer says edited only where a filed version differs |
+| a deletion names no peer | private chats and basic groups share one id sequence | `Db::mark_telegram_deleted` never reaches the channel id space, supergroups included |
+| a supergroup shares the channel id space | told apart by a flag on the peer | `PeerSpace` from the id, `ConvKind` from the peer in the sweep; a live message only guesses for a conversation not yet listed |
+| a reply can point into another chat | `reply_to_peer_id` | the viewer quotes nothing from this one |
 | reactions | counts per emoji, plus a possibly truncated list of who | `telegram_reactions`, `telegram_reaction_authors` |
 
-Photos are downloaded eagerly to `TELEGRAM_MEDIA_DIR`; larger media when a reader
-asks (`telegram_media`).
+Media up to 4 MB, every photo included, is downloaded eagerly to
+`TELEGRAM_MEDIA_DIR`; larger media when a reader asks (`telegram_media`).
 
 ## Security
 The signal-cli data PVC holds linked-device keys; keep its backup encrypted. The

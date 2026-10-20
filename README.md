@@ -2,12 +2,14 @@
 
 [`archiver/`](archiver/README.md) writes all four origins into the **`signal`
 MariaDB** on the isis k3s cluster. The viewer (this crate and `frontend/`) reads
-them, and can reply on IRC through the irssi that holds the connections.
+them, and can reply on IRC, through the irssi that holds the connections, and on
+Telegram, through the feed that holds the session.
 
 ```
  Browser ──VPN/login──▶ messages.xinutec.org (isis, ns: signal)
                             │  Rust/axum: Nextcloud OAuth2 (identity) + sessions
-                            │  + API over the archive, + IRC send via ssh
+                            │  + API over the archive, + sends (IRC via ssh,
+                            │    Telegram through the feed's outbox table)
                             ▼
                         signal MariaDB  ─ messages / conversations / reactions        (Signal)
                                         ├ gchat_messages / gchat_conversations…        (Google Chat)
@@ -35,10 +37,12 @@ source IPs survive k3s servicelb; check before relying on it.
   becomes, used by the importer, the live tail and the viewer's send echo, so all
   three write the same row.
 - `src/` — the viewer's backend. `nextcloud/identity.rs` and `session.rs` are
-  the login; `routes/auth.rs` adds the allow-list; `archive.rs` is the
-  origin-normalising query layer; `irc_send.rs` sends; `config.rs` builds the
-  database connection from `DB_*`, so the app reuses `signal-secret`. The app
-  owns only `sessions` and `link_images` (`src/db.rs`).
+  the login; `routes/auth.rs` adds the allow-list; `archive/` is the
+  origin-normalising query layer, one module per origin; `irc_send.rs` and
+  `telegram_send.rs` send; `transcribe.rs` is the queue recall's transcriber
+  polls; `config.rs` builds the database connection from `DB_*`, so the app
+  reuses `signal-secret`. The app owns only `sessions`, `link_images` and
+  `transcripts` (`src/db.rs`).
 - `src/bin/link-fetch.rs` — the link-picture fetch service, the only part that
   reaches the internet. It holds no credentials, database or disk.
 - `frontend/` — Angular: conversation list with origin filter, thread view, and
@@ -47,7 +51,7 @@ source IPs survive k3s servicelb; check before relying on it.
   threads opened and their pictures for reading offline (`frontend/ngsw-config.json`,
   life's policy), and the identity is remembered so it opens offline rather than
   at sign-in; sending offline refuses and keeps the draft. `frontend/src/app/thread-window.ts` keeps a window of a long
-  thread in the DOM; `frontend/src/app/copy-log.ts` copies a selection as an
+  thread in the DOM, and `reader-place.ts` owns where the reader is in it; `frontend/src/app/copy-log.ts` copies a selection as an
   irssi log (the inverse of `irclog/`), whether dragged over or picked by hand
   (a long press, then taps, as in Signal; a further long press or Shift-click
   picks the range); `frontend/src/app/attachment.ts` names
@@ -61,6 +65,8 @@ source IPs survive k3s servicelb; check before relying on it.
 ## API (all require a session)
 - `GET /api/me` — current user.
 - `GET /api/conversations` — every conversation, newest activity first.
+- `GET /api/conversations/{origin}/{id}/avatar?v=` — its picture, where the
+  origin keeps one; `v` is the list's `avatar` version.
 - `GET /api/conversations/{origin}/{id}/messages?cursor=&limit=&dir=&on=` — one
   page, oldest first. `cursor` is opaque, `(native_ts, id)`, so rows sharing a
   timestamp are never skipped. `dir` is `older` (default), `newer`, or `at` (the
@@ -76,11 +82,17 @@ source IPs survive k3s servicelb; check before relying on it.
   `/api/telegram-media/{id}` — held bytes, one route per origin since attachment
   ids are per origin. `POST /api/telegram-media/{id}/request` queues an
   unfetched Telegram file; `GET …/state` reports its progress.
+  `GET /api/link-previews/{id}/image` is the picture a Signal link preview
+  carried.
 - `GET /api/link-images/{id}`, `POST /api/link-images/{id}/request` — a picture
   for a link in a message, by the URL's hash. Only a held picture is stored; a
   "not a picture" or "could not reach it" answers that request and is forgotten,
   so the link is offered again on the next read.
 - `POST /api/telemetry` — client events into the server log. Always 204.
+
+recall's transcriber uses `/work/v1/…`, `/ingest/v1/blob/…` and
+`/sync/vocabulary/prompt` with its own bearer token, not a session; with no token
+configured they answer 404 (`routes/transcribe.rs`).
 
 `{origin}` is `signal`, `gchat`, `irc` or `telegram`. `{id}` is the Signal
 `thread_id`, the Google Chat `group_id`, the `irc_conversations.id`, or
@@ -170,8 +182,8 @@ before the list loads, the hit's own name; the thread header says
 A message with neither body nor attachments draws an empty bubble but produces no
 copied line.
 
-`?at` carries a cursor and means *put me here*; `?from` carries a scroll position
-and means *I was here*. `at` wins on load, and the reader's first scroll replaces
+`?at` (a message's cursor) and `?on` (a day) mean *put me here*; `?from` carries a
+scroll position and means *I was here*. A landing wins on load, and the reader's first scroll replaces
 it with `from` and clears the landed-message marker. A scroll is the reader's only
 during their own scrolling gesture (wheel, finger, scrollbar, page keys); the
 thread's own scrolls, a resize and a tap or a key in the box decide nothing.
@@ -184,11 +196,11 @@ sync is not counted.
 
 Unread counts theirs after my last read, less any deleted for everyone (as the
 phone apps count; the list's last line still says "Message deleted"), where the
-archive can say: Signal from
-my linked devices' read syncs, Telegram from its inbox mark, Google Chat from the
-read position its conversation list carries (top-level messages only, as a reply
-inside a thread does not make a space unread there; none for the Mentions
-shortcut). Without a read position the count is 0, never a guess.
+archive can say: Signal from my linked devices' read syncs, Telegram from its
+inbox mark, Google Chat from the read position its conversation list carries
+(top-level messages only, as a reply inside a thread does not make a space unread
+there; none for the Mentions shortcut). Without a read position the count is 0,
+never a guess.
 
 Sending is optional: without a usable key the app serves the archive and refuses
 to send on IRC. A Telegram send waits for the feed for 20 seconds and is
@@ -203,7 +215,11 @@ withdrawn if the feed never took it.
   Telegram serves only the current text.
 - A Google Chat picture's bytes are held only if a harvest fetched them; the
   download URL needs the user's session.
-- Attachments are read whole into memory to serve, against the pod's memory limit.
+- An open thread refreshes only its newest page: a deletion, edit or reaction
+  further back shows when the conversation is next opened.
+- A Telegram edit that swaps a message's photo or file keeps the old file.
+- Signal attachments that failed to download before raw frames were kept
+  (2026-09-21) cannot be fetched again: their ids were never stored.
 - A drag selection reaches only the rendered window (400 messages); a select-all
   of a longer conversation ends with `--- copied 400 of N messages; the rest were
   not loaded on screen`. Messages picked by hand stay picked when they scroll out
