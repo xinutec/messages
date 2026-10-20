@@ -2834,7 +2834,8 @@ async fn an_unresolved_signal_quote_shows_what_it_quoted() {
 
 /// Unread is what came in after I last read, on the phone, where the archive
 /// can tell: Signal from my linked devices' read syncs, Telegram from its inbox
-/// mark. What it cannot tell counts as nothing, never as unread.
+/// mark, Google Chat from the read position its conversation list carries.
+/// What it cannot tell counts as nothing, never as unread.
 #[tokio::test]
 async fn unread_counts_what_came_in_after_i_last_read() {
     let Some(pool) = seeded_pool().await else {
@@ -2864,6 +2865,25 @@ async fn unread_counts_what_came_in_after_i_last_read() {
         .await
         .unwrap();
 
+    // A Google Chat space read up to 2000: after it, two top-level messages of
+    // theirs, a reply inside a thread (a space is not unread for one), and mine.
+    sqlx::query("INSERT INTO gchat_conversations (group_id, name, is_dm, read_us) VALUES ('gc-read','Crew',0,2000)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO gchat_messages (group_id, msg_id, thread_id, sender_id, sender_name, is_self, ts_us, text) VALUES
+         ('gc-read','r1','r1','g-ann','Ann',0,1000,'read'),
+         ('gc-read','r2','r2','g-ann','Ann',0,2000,'read up to here'),
+         ('gc-read','r3','r3','g-ann','Ann',0,3000,'new'),
+         ('gc-read','r4','r2','g-ann','Ann',0,3500,'a reply in a thread'),
+         ('gc-read','r5','r5','g-me','Me',1,4000,'mine'),
+         ('gc-read','r6',NULL,'g-ann','Ann',0,5000,'newer')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
     let convs = archive::list_conversations(&pool).await.unwrap();
     let unread = |origin: Origin, id: &str| {
         convs
@@ -2886,11 +2906,12 @@ async fn unread_counts_what_came_in_after_i_last_read() {
         0,
         "no mark: unknown"
     );
-    // The others cannot say.
-    for c in convs
-        .iter()
-        .filter(|c| matches!(c.origin, Origin::Gchat | Origin::Irc))
-    {
+    // Google Chat: after the read position, theirs and top-level only; no read
+    // position (gc1, gc2) is unknown.
+    assert_eq!(unread(Origin::Gchat, "gc-read"), 2);
+    assert_eq!(unread(Origin::Gchat, "gc1"), 0, "no read position: unknown");
+    // IRC cannot say.
+    for c in convs.iter().filter(|c| c.origin == Origin::Irc) {
         assert_eq!(c.unread, 0, "{} cannot say", c.id);
     }
 }

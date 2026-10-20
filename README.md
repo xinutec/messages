@@ -174,6 +174,12 @@ reports a read position and names nobody; Signal reports per-person receipts, so
 a group says `read by 2` rather than `read`, and my own linked device's read
 sync is not counted.
 
+Unread counts theirs after my last read, where the archive can say: Signal from
+my linked devices' read syncs, Telegram from its inbox mark, Google Chat from the
+read position its conversation list carries (top-level messages only, as a reply
+inside a thread does not make a space unread there; none for the Mentions
+shortcut). Without a read position the count is 0, never a guess.
+
 Sending is optional: without a usable key the app serves the archive and refuses
 to send on IRC. A Telegram send waits for the feed for 20 seconds and is
 withdrawn if the feed never took it.

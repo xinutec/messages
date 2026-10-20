@@ -16,7 +16,13 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
                  CASE WHEN l.id IS NOT NULL THEN COALESCE(l.sender_name, '') END AS last_sender,
                  l.is_self AS last_out, l.text AS last_text,
                  (SELECT a.mime FROM gchat_attachments a
-                   WHERE a.message_id = l.id ORDER BY a.id LIMIT 1) AS last_media
+                   WHERE a.message_id = l.id ORDER BY a.id LIMIT 1) AS last_media,
+                 -- Theirs after the read position, top-level only: a reply in
+                 -- a thread does not make a space unread in Google Chat.
+                 (SELECT COUNT(*) FROM gchat_messages u
+                   WHERE u.group_id = g.group_id AND u.ts_us > g.read_us
+                     AND u.is_self = 0
+                     AND (u.thread_id IS NULL OR u.thread_id = u.msg_id)) AS unread
           FROM gchat_conversations g
           LEFT JOIN (
               SELECT group_id, COUNT(*) AS cnt, MAX(ts_us) AS last_ts_us
@@ -43,8 +49,8 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
             message_count: r.try_get("cnt")?,
             last_ts: last_us.map(us_to_ms),
             last: LastMessage::from_row(&r, false)?,
-            // No read state to read.
-            unread: 0,
+            // No read position (`read_us` NULL) compares as nothing: 0.
+            unread: r.try_get("unread")?,
             // Filled by `avatars::attach`, which knows where the files are.
             avatar: None,
         });

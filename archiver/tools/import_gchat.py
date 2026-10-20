@@ -3,7 +3,8 @@
 """Import the Google Chat archive into its OWN tables in the signal MariaDB.
 
 Source is the decoded archive produced by ~/Code/gchat-archive (not Takeout):
-each `conversations/<group_id>.json` has {group_id, name, message_count, messages[]},
+each `conversations/<group_id>.json` has {group_id, name, message_count,
+read_ts_raw (the newest message read, when the sync saw it), messages[]},
 and each message has {msg_id, thread_id, sender_id, sender_name, text, ts, ts_raw,
 reactions[{emoji, count, reactors[{id, name}]}]}. `sender_name` carries a trailing
 " (you)" for self.
@@ -39,6 +40,10 @@ DDL = [
         is_dm      TINYINT(1) NOT NULL DEFAULT 0,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) DEFAULT CHARSET=utf8mb4""",
+    # The newest message read, in µs (gchat-archive's `read_ts_raw`); NULL when
+    # Google Chat gives none, as for the Mentions shortcut.
+    """ALTER TABLE gchat_conversations
+        ADD COLUMN IF NOT EXISTS read_us BIGINT NULL""",
     """CREATE TABLE IF NOT EXISTS gchat_messages (
         id          BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
         group_id    VARCHAR(64) NOT NULL,
@@ -136,10 +141,15 @@ def write(cur, conv_dir, stats):
         name = conv.get("name") or None
         is_dm = 1 if (name or "").startswith("DM with ") else 0
         stats["conversations"] += 1
+        # Absent when the sync's discovery did not run: the last one stands.
+        # Present and null (a shortcut) clears it.
+        has_read = "read_ts_raw" in conv
+        read_us = int(conv["read_ts_raw"]) if conv.get("read_ts_raw") else None
         cur.execute(
-            "INSERT INTO gchat_conversations (group_id, name, is_dm) VALUES (%s,%s,%s) "
-            "ON DUPLICATE KEY UPDATE name=COALESCE(VALUES(name), name), is_dm=VALUES(is_dm)",
-            (gid, name, is_dm))
+            "INSERT INTO gchat_conversations (group_id, name, is_dm, read_us) VALUES (%s,%s,%s,%s) "
+            "ON DUPLICATE KEY UPDATE name=COALESCE(VALUES(name), name), is_dm=VALUES(is_dm), "
+            "read_us=IF(%s, VALUES(read_us), read_us)",
+            (gid, name, is_dm, read_us, has_read))
 
         for m in conv.get("messages", []):
             msg_id = m.get("msg_id")
