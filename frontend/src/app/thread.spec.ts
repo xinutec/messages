@@ -67,6 +67,16 @@ function setupWithQuery(params: Record<string, string>): ComponentFixture<Thread
 
 /** A thread routed to an IRC conversation and settled on `held`. The initial
  *  load must finish first: `pollNewer` declines to run during one. */
+/** The reader scrolls back from the newest message: the scroll container, which
+ *  jsdom does not lay out, given a geometry with room below the view. */
+function leaveTheEnd(thread: Thread): void {
+  const el = document.querySelector<HTMLElement>('.thread')!;
+  Object.defineProperty(el, 'scrollHeight', { value: 5000, configurable: true });
+  Object.defineProperty(el, 'clientHeight', { value: 800, configurable: true });
+  el.scrollTop = 1000;
+  thread.onScroll();
+}
+
 async function opened(held: Message[]): Promise<{ thread: Thread; api: { messages: ReturnType<typeof vi.fn> } }> {
   const { thread, ref, fixture } = setup();
   const api = fakeApiOf();
@@ -233,6 +243,44 @@ describe('Thread', () => {
     api.messages.mockReturnValueOnce(page([msg('1', 100), msg('2', 200), msg('3', 300)]));
     await thread.pollNewer();
     expect(thread.messages().map((m) => m.id)).toEqual(['1', '2', '3']);
+  });
+
+  it('shows a held message as it is now: deleted, edited or reacted to since it loaded', async () => {
+    const { thread, api } = await opened([msg('1', 100), msg('2', 200), msg('3', 300)]);
+    const untouched = thread.messages()[2];
+    api.messages.mockReturnValueOnce(
+      page([
+        { ...msg('1', 100), deleted: true },
+        { ...msg('2', 200), body: 'said otherwise', edited: true, reactions: [{ emoji: '👍', count: 1, who: [] }] },
+        msg('3', 300),
+      ]),
+    );
+    await thread.pollNewer();
+    const [one, two, three] = thread.messages();
+    expect(one.deleted).toBe(true);
+    expect(two.body).toBe('said otherwise');
+    expect(two.reactions.map((r) => r.emoji)).toEqual(['👍']);
+    // Unchanged stays the same object, so its bubble is not redrawn.
+    expect(three).toBe(untouched);
+  });
+
+  it('keeps a reader back in history where they are when more than a page arrived', async () => {
+    const { thread, ref, fixture } = setup();
+    const api = fakeApiOf();
+    api.messages.mockReturnValue(page([msg('1', 100)], false, 'c1', 'newest-held'));
+    ref.setInput('origin', 'irc');
+    ref.setInput('id', '7');
+    fixture.detectChanges();
+    await settle(thread);
+    leaveTheEnd(thread);
+    api.messages.mockReturnValue(page([msg('8', 800), msg('9', 900)], true, 'c'));
+    await thread.pollNewer();
+    // Nothing replaced under them; the rest comes forwards from what they hold.
+    expect(thread.messages().map((m) => m.id)).toEqual(['1']);
+    expect(thread.floating()).toBe(true);
+    api.messages.mockClear();
+    thread.fetchNewer();
+    expect(api.messages).toHaveBeenCalledWith('irc', '7', 'newest-held', expect.any(Number), 'newer');
   });
 
   it('reloads instead of merging when the newest page overlaps nothing held', async () => {

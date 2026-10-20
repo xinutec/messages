@@ -201,7 +201,8 @@ export class Thread {
   readonly threadError = signal(false);
   /** Where to continue backwards: the oldest loaded row. */
   private cursor: string | null = null;
-  /** Where to continue forwards: the newest loaded row, while `floating`. */
+  /** Where to continue forwards: the newest loaded row. Read while `floating`,
+   *  and kept up always, so a poll that finds a gap can float from it. */
   private newerCursor: string | null = null;
 
   private fromTimer: ReturnType<typeof setTimeout> | null = null;
@@ -446,6 +447,7 @@ export class Thread {
       if (page == null) return;
       this.hasMore.set(page.has_more);
       this.cursor = page.next_cursor;
+      this.newerCursor = page.prev_cursor;
       if (shown != null && shown === JSON.stringify(page.messages)) {
         // What is on view is the network's page already.
         this.loadingThread.set(false);
@@ -483,6 +485,7 @@ export class Thread {
     const kept = await this.api.keptMessages(origin, id, PAGE);
     if (gen !== this.generation || kept == null || kept.messages.length === 0) return null;
     this.messages.set(kept.messages);
+    this.newerCursor = kept.prev_cursor;
     this.fetches.watchInFlight(kept.messages);
     this.appRef.tick();
     this.win.withScrollLock(() => this.win.scrollToBottom());
@@ -582,8 +585,10 @@ export class Thread {
    *  slow response must not be overtaken by the tick behind it. */
   private polling = false;
 
-  /** Merge in anything newer, using the newest-page endpoint. Silent on failure:
-   *  the next tick retries. */
+  /** Merge in anything newer, and refresh what is held, from the newest page.
+   *  A reader landed in the past (`floating`) is not polled, so a message there
+   *  shows its state as of the landing. Silent on failure: the next tick
+   *  retries. */
   async pollNewer(): Promise<void> {
     const o = this.origin();
     const i = this.id();
@@ -605,19 +610,34 @@ export class Thread {
       const held = this.messages();
       const known = new Set(held.map((m) => m.id));
       const fresh = page.messages.filter((m) => !known.has(m.id));
-      if (fresh.length === 0) return;
 
-      // None of the newest page is known: more than a page arrived, so reload
-      // rather than leave a hole.
-      if (fresh.length === page.messages.length) {
-        await this.loadThread(o, i);
+      // None of the newest page is known: more than a page arrived. A reader at
+      // the end wants the present, so reload; one back in history keeps their
+      // place, and the rest comes forwards as they scroll (`fetchNewer`).
+      if (fresh.length > 0 && fresh.length === page.messages.length) {
+        if (this.win.atBottom()) await this.loadThread(o, i);
+        else this.floating.set(true);
         return;
       }
 
+      // A held message as it is now: deleted, edited or reacted to since it
+      // loaded. The newest page is where that happens; an unchanged one stays
+      // the same object, so its bubble is not redrawn.
+      const now = new Map(page.messages.map((m) => [m.id, m]));
+      let changed = false;
+      const current = held.map((m) => {
+        const fresher = now.get(m.id);
+        if (fresher == null || JSON.stringify(fresher) === JSON.stringify(m)) return m;
+        changed = true;
+        return fresher;
+      });
+      if (fresh.length === 0 && !changed) return;
+
       const wasAtBottom = this.win.atBottom();
+      if (fresh.length > 0) this.newerCursor = page.prev_cursor;
       // Sorted: an import can land an older line late.
       this.messages.set(
-        [...held, ...fresh].sort((a, b) => a.ts - b.ts || a.id.localeCompare(b.id)),
+        [...current, ...fresh].sort((a, b) => a.ts - b.ts || a.id.localeCompare(b.id)),
       );
       this.appRef.tick();
       // Follow only a reader already at the end.
