@@ -8,7 +8,6 @@ use sqlx::{AssertSqlSafe, MySqlPool, Row};
 
 use super::*;
 
-/// Every Signal conversation.
 pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
     let mut out = Vec::new();
     // An edit's revision rows are versions, not messages: the page leaves them

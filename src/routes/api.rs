@@ -1,5 +1,5 @@
 //! JSON API. Every route requires a valid session (the `AuthUser` extractor),
-//! which in turn only exists for an allow-listed user (see routes::auth).
+//! which in turn only exists for an allow-listed user.
 
 use axum::Json;
 use axum::body::Body;
@@ -28,7 +28,7 @@ pub struct Me {
     display_name: String,
 }
 
-/// GET /api/me → the current session's user. Drives the UI login gate.
+/// GET /api/me → the current session's user.
 pub async fn me(AuthUser(user): AuthUser) -> Json<Me> {
     Json(Me {
         user_id: user.user_id,
@@ -100,7 +100,6 @@ pub async fn messages(
     Path((origin, id)): Path<(String, String)>,
     Query(q): Query<MessagesQuery>,
 ) -> Result<Json<archive::MessagesPage>, AppError> {
-    // An unknown origin names a conversation that does not exist: 404.
     let origin = archive::Origin::parse(&origin).ok_or(AppError::NotFound)?;
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
     // A day overrides the cursor; a malformed cursor counts as absent.
@@ -426,7 +425,7 @@ pub async fn send(
     }
 }
 
-/// Through the feed that holds the session; see `telegram_send`.
+/// Through the feed that holds the session.
 async fn send_telegram(
     app: &AppState,
     id: &str,
@@ -461,7 +460,7 @@ async fn send_telegram(
     }))
 }
 
-/// Through irssi; see `irc_send`.
+/// Through irssi.
 async fn send_irc(
     app: &AppState,
     id: &str,

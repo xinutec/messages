@@ -7,7 +7,6 @@ use sqlx::{AssertSqlSafe, MySqlPool, Row};
 
 use super::*;
 
-/// Every Google Chat conversation.
 pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
     let mut out = Vec::new();
     let gchat = sqlx::query(

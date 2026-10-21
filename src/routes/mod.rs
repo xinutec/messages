@@ -73,7 +73,6 @@ pub fn router(state: AppState) -> Router {
         .route("/conversations", get(api::conversations))
         .route("/conversations/{origin}/{id}/messages", get(api::messages))
         .route("/conversations/{origin}/{id}/avatar", get(api::avatar))
-        // The only write; see `api::send`.
         .route("/conversations/{origin}/{id}/send", post(api::send))
         .route("/attachments/{id}", get(api::attachment))
         .route("/link-previews/{id}/image", get(api::link_preview_image))
@@ -101,7 +100,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/api", api);
 
     // recall's transcriber, at the paths its runner uses. Every one answers 404
-    // while no token is configured, as if absent; see `routes/transcribe.rs`.
+    // while no token is configured, as if absent.
     let app = app
         .route("/work/v1/lease", put(transcribe::lease))
         .route("/work/v1/jobs/{id}/done", put(transcribe::done))

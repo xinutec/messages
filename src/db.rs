@@ -33,7 +33,7 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
     // A link somebody posted, keyed by the URL's hash: `offered`, or `ok` once
     // the bytes are on the volume. A link enters as `offered` when a page
     // containing it is served, with the URL taken from the message, so a request
-    // only ever names a hash. A "no" is not a row: see `link_image::LinkState`.
+    // only ever names a hash. A "no" is not a row.
     sqlx::query(
         r"CREATE TABLE IF NOT EXISTS link_images (
             url_hash     CHAR(64)     NOT NULL PRIMARY KEY,
@@ -51,7 +51,7 @@ pub async fn ensure_schema(pool: &MySqlPool) -> Result<()> {
     .await
     .context("creating link_images table")?;
 
-    // What recall's transcriber heard in an audio attachment; see `transcribe.rs`.
+    // What recall's transcriber heard in an audio attachment.
     // The id is the job id its runner leases. `heard` is the shim's reply, NULL
     // until done and after a refusal (`error`); the words shown are read from it.
     sqlx::query(

@@ -1,5 +1,5 @@
 //! messages — viewer for the Signal, Google Chat, IRC and Telegram archive, which
-//! can also send on IRC through irssi. Loads config, connects the shared `signal`
+//! can also send on IRC and Telegram. Loads config, connects the shared `signal`
 //! database, ensures its own tables, serves.
 
 use anyhow::Result;

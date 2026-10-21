@@ -4,7 +4,7 @@
 //! recall's `runner` already speaks (recall `runner/src/client.rs`): lease a
 //! job, fetch its audio, hand back what the model heard. recall's one runner
 //! process serves this queue with messages' own token whenever its own queue is
-//! empty (`--messages-url`, recall 28d31d2); nothing reaches recall's archive.
+//! empty (`--messages-url`); nothing reaches recall's archive.
 //!
 //! One row per audio attachment in `transcripts`: its id is the job id, and it
 //! holds the lease, then the model's reply or its refusal. A row whose lease ran

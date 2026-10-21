@@ -1,6 +1,6 @@
 //! The queue recall's transcriber polls, at the paths its `runner` already
-//! uses; see `transcribe.rs`. Every route takes the transcriber's bearer token
-//! and nothing else: it is no reader, and has no session.
+//! uses. Every route takes the transcriber's bearer token and nothing else: it
+//! is no reader, and has no session.
 
 use axum::Json;
 use axum::body::Bytes;

@@ -79,7 +79,7 @@ pub async fn resolve_one(
 }
 
 /// One in-cluster request. 204 means not a picture; a 5xx carries the reason,
-/// which is recorded.
+/// which is logged.
 async fn ask_service(
     client: &reqwest::Client,
     service: &str,

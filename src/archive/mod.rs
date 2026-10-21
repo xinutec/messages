@@ -82,7 +82,6 @@ impl ConversationKind {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 pub enum MessageKind {
-    /// Someone said something.
     Message,
     /// Someone did something, phrased in the third person about the sender.
     Action,
@@ -151,7 +150,6 @@ pub fn encode_cursor(native_ts: i64, id: i64) -> String {
     format!("{native_ts}_{id}")
 }
 
-/// Parse a cursor minted by [`encode_cursor`]; `None` for anything malformed.
 pub fn parse_cursor(s: &str) -> Option<(i64, i64)> {
     let (ts, id) = s.split_once('_')?;
     Some((ts.parse().ok()?, id.parse().ok()?))
@@ -181,7 +179,7 @@ pub struct Conversation {
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub unread: i64,
     /// When its picture last changed, in epoch seconds: the version its URL
-    /// carries. `None` without a picture; see `avatars.rs`.
+    /// carries. `None` without a picture.
     #[cfg_attr(feature = "ts", ts(type = "number | null"))]
     pub avatar: Option<i64>,
 }
@@ -255,7 +253,6 @@ pub enum DeliveryState {
     Viewed,
 }
 
-/// One person, and when they read it.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -327,10 +324,9 @@ pub struct Attachment {
     pub size: Option<i64>,
     /// Whether the bytes are held.
     pub available: bool,
-    /// Whether these bytes can be asked for.
     pub fetch: Option<FetchState>,
-    /// What recall's transcriber heard, for audio it has done; see
-    /// `transcribe.rs`. `None` until then, and for silence.
+    /// What recall's transcriber heard, for audio it has done. `None` until
+    /// then, and for silence.
     pub transcript: Option<String>,
 }
 
@@ -367,7 +363,7 @@ pub struct Entity {
     pub url: Option<String>,
 }
 
-/// A picture we hold for a link in the message; see `link_image.rs`.
+/// A picture we hold for a link in the message.
 #[derive(Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -413,7 +409,7 @@ pub struct Message {
     /// channel post.
     pub sender_key: String,
     pub is_outgoing: bool,
-    /// Said or done. Always `message` outside IRC.
+    /// Said or done. `action` only on IRC and for Telegram service events.
     pub kind: MessageKind,
     pub body: Option<String>,
     pub deleted: bool,
@@ -514,7 +510,6 @@ pub struct LinkOffer {
     pub id: String,
 }
 
-/// Each value once, sorted: the list a page's `IN (…)` asks for.
 fn distinct<T: Ord>(values: impl IntoIterator<Item = T>) -> Vec<T> {
     let mut v: Vec<T> = values.into_iter().collect();
     v.sort_unstable();
@@ -659,7 +654,6 @@ pub enum SearchScope<'a> {
 }
 
 impl SearchScope<'_> {
-    /// Whether this origin has anything to contribute to the result.
     fn covers(&self, origin: Origin) -> bool {
         match self {
             SearchScope::Everywhere => true,
@@ -667,7 +661,6 @@ impl SearchScope<'_> {
         }
     }
 
-    /// The conversation id, when this origin is the scoped one.
     fn id_for(&self, origin: Origin) -> Option<&str> {
         match self {
             SearchScope::Everywhere => None,
@@ -729,7 +722,6 @@ pub async fn messages_page(
     })
 }
 
-/// Fill in what the transcriber heard, for the page's audio.
 async fn attach_transcripts(pool: &MySqlPool, origin: Origin, msgs: &mut [Message]) -> Result<()> {
     let ids: Vec<String> = msgs
         .iter()

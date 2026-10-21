@@ -5,13 +5,9 @@ export type Attachment = { id: string, content_type: string | null, file_name: s
 /**
  * Whether the bytes are held.
  */
-available: boolean, 
+available: boolean, fetch: FetchState | null, 
 /**
- * Whether these bytes can be asked for.
- */
-fetch: FetchState | null, 
-/**
- * What recall's transcriber heard, for audio it has done; see
- * `transcribe.rs`. `None` until then, and for silence.
+ * What recall's transcriber heard, for audio it has done. `None` until
+ * then, and for silence.
  */
 transcript: string | null, };

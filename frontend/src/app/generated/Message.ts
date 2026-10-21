@@ -22,7 +22,7 @@ ts: number, sender: string,
  */
 sender_key: string, is_outgoing: boolean, 
 /**
- * Said or done. Always `message` outside IRC.
+ * Said or done. `action` only on IRC and for Telegram service events.
  */
 kind: MessageKind, body: string | null, deleted: boolean, edited: boolean, reactions: Array<Reaction>, attachments: Array<Attachment>, 
 /**

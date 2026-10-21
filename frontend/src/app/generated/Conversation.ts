@@ -25,6 +25,6 @@ last: LastMessage | null,
 unread: number, 
 /**
  * When its picture last changed, in epoch seconds: the version its URL
- * carries. `None` without a picture; see `avatars.rs`.
+ * carries. `None` without a picture.
  */
 avatar: number | null, };

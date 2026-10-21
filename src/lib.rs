@@ -1,6 +1,5 @@
 //! messages — the viewer's backend, over the Signal, Google Chat, IRC and
-//! Telegram archive in the `signal` MariaDB. The binary (`src/main.rs`) is a thin
-//! wrapper; logic lives here.
+//! Telegram archive in the `signal` MariaDB.
 //!
 //! ⚠ It can send on IRC and Telegram, as the user, to other people;
 //! [`irc_send`] and [`telegram_send`] say what bounds that.

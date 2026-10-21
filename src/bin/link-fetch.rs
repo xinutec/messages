@@ -79,7 +79,7 @@ async fn fetch(State(svc): State<Svc>, Json(req): Json<FetchRequest>) -> Respons
         }
         Ok(None) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
-            // The reason travels back to be recorded.
+            // The reason travels back to be logged.
             tracing::info!("could not fetch: {e}");
             (StatusCode::BAD_GATEWAY, e.to_string()).into_response()
         }

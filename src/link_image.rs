@@ -57,8 +57,8 @@ impl Advert {
         self.refusal().is_none()
     }
 
-    /// Why this page is not an inlineable picture, stored with the verdict so a
-    /// wrong one can be explained.
+    /// Why this page is not an inlineable picture, logged so a wrong verdict can
+    /// be explained.
     pub fn refusal(&self) -> Option<&'static str> {
         if !self.cloud {
             return Some("the server does not name itself as a file cloud");

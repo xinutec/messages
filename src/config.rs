@@ -52,14 +52,14 @@ pub struct Config {
     /// Where the Telegram feed writes fetched media. Mounted read-only here.
     pub telegram_media_dir: String,
 
-    /// The in-cluster fetch service; see `bin/link-fetch.rs`.
+    /// The in-cluster fetch service.
     pub link_fetcher_url: String,
 
     /// Where irssi is. `None` disables sending; see [`IrcSend`].
     pub irc_send: Option<IrcSend>,
 
     /// The bearer token recall's transcriber presents (`TRANSCRIBER_TOKEN`).
-    /// Unset, its routes answer 404, as if absent; see `routes/transcribe.rs`.
+    /// Unset, its routes answer 404, as if absent.
     pub transcriber_token: Option<String>,
 }
 

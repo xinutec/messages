@@ -1,5 +1,5 @@
 //! Pictures for the links in a page's messages: held ones are attached, the
-//! rest offered; see `crate::link_image`.
+//! rest offered.
 
 use anyhow::{Context, Result, bail};
 use sqlx::{AssertSqlSafe, MySqlPool, Row};

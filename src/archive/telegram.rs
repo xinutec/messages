@@ -8,7 +8,6 @@ use sqlx::{AssertSqlSafe, MySqlPool, Row};
 
 use super::*;
 
-/// Every Telegram conversation.
 pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
     let mut out = Vec::new();
     // Telegram counts only `kind = 'message'`. Aggregated in a derived table and
@@ -390,7 +389,6 @@ async fn reactors(
         return Ok(out);
     }
     let placeholders = vec!["?"; msg_ids.len()].join(",");
-    // Current reactions only.
     let sql = format!(
         "SELECT a.msg_id, a.emoji, a.peer_id,
                 COALESCE(c.name, s.sender_name, CAST(a.peer_id AS CHAR)) AS who
@@ -501,8 +499,7 @@ async fn attach_entities(
 /// `edit_date` it carried; the original carried none, so NULL sorts first.
 /// `m.edited` already honours `edit_hide`, which hides the history too. A
 /// version that reads as the one after it is left out: a reaction moved the
-/// `edit_date`, and the archive filed the unchanged words (before the archiver
-/// learned to tell).
+/// `edit_date`, and older rows filed the unchanged words.
 pub(super) async fn attach_edits(
     pool: &MySqlPool,
     conversation_id: &str,
