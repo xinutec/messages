@@ -1,6 +1,6 @@
 //! The MTProto session, kept in MariaDB: auth keys per datacentre, the home
-//! datacentre, the peer cache, and the update state. It is a credential; see the
-//! v20 migration in `db.rs`.
+//! datacentre, the peer cache, and the update state. It is a credential; see
+//! migration v20.
 //!
 //! Not `grammers-session`'s SQLite storage, whose `libsql` dependency needs a C
 //! toolchain in the image.

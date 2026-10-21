@@ -398,7 +398,6 @@ pub struct ServerTimes {
 }
 
 impl ServerTimes {
-    /// Read them off an `envelope`.
     fn of(env: &Value) -> Self {
         ServerTimes {
             received: int(env, "serverReceivedTimestamp"),

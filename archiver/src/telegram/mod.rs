@@ -1,5 +1,6 @@
 //! Telegram. `map` is the pure wire-to-row mapping; `session` persists the
-//! login; the network and database work is in `src/bin/telegram.rs`.
+//! login; the network work is in `bin/telegram.rs`, the writes in
+//! `db/telegram.rs`.
 use grammers_client::peer::Peer;
 
 pub mod map;

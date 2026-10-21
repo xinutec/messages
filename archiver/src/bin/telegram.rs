@@ -17,8 +17,8 @@
 //! storing the message as Telegram reads it back; see [`serve_outbox`].
 //!
 //! A user client, not a bot: a bot is a separate account and cannot read its
-//! owner's chats. The stored session is therefore a credential; see
-//! `telegram::session`. Secret chats are device-local and unreachable.
+//! owner's chats. The stored session is therefore a credential. Secret chats are
+//! device-local and unreachable.
 //!
 //! Four modes:
 //!

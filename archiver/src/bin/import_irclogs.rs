@@ -232,7 +232,6 @@ async fn main() -> Result<()> {
         }
     }
 
-    // The final partial batch.
     if let Some(db) = &db
         && !pending_state.is_empty()
     {
