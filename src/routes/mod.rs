@@ -47,7 +47,7 @@ fn cache_control_for(res: &Response<ServeFileSystemResponseBody>) -> Option<Head
 /// A missing file must not be answered with the page: that is a 200, and a
 /// browser asking for a font gets HTML without complaint. A dot in the last path
 /// segment marks a file; heuristic, but needs no list of asset names.
-fn spa(index: &str, path: &str) -> axum::response::Response {
+async fn spa(index: &str, path: &str) -> axum::response::Response {
     use axum::response::IntoResponse as _;
 
     if path
@@ -57,7 +57,7 @@ fn spa(index: &str, path: &str) -> axum::response::Response {
     {
         return (axum::http::StatusCode::NOT_FOUND, "not found").into_response();
     }
-    match std::fs::read_to_string(index) {
+    match tokio::fs::read_to_string(index).await {
         Ok(page) => axum::response::Html(page).into_response(),
         Err(error) => {
             // STATIC_DIR without an index is a misconfigured deployment.
@@ -113,7 +113,7 @@ pub fn router(state: AppState) -> Router {
         let index = format!("{dir}/index.html");
         let serve = ServeDir::new(&dir).fallback(get(move |uri: axum::http::Uri| {
             let index = index.clone();
-            async move { spa(&index, uri.path()) }
+            async move { spa(&index, uri.path()).await }
         }));
         // Only the static service: API responses are neither.
         let serve = ServiceBuilder::new()

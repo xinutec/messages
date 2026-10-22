@@ -7,6 +7,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::Response;
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncReadExt;
 use tower::ServiceExt;
 use tower_http::services::ServeFile;
 
@@ -60,11 +61,14 @@ pub async fn avatar(
     let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
         return Err(AppError::NotFound);
     };
-    // The type from the bytes: the names carry no extension to trust.
-    let head = tokio::fs::read(&path)
-        .await
-        .map_err(|_| AppError::NotFound)?;
-    let ct = avatars::image_type(&head).to_string();
+    // The type from the first bytes: the names carry no extension to trust.
+    let mut head = [0u8; 12];
+    let read = async {
+        let mut file = tokio::fs::File::open(&path).await?;
+        file.read(&mut head).await
+    };
+    let n = read.await.map_err(|_| AppError::NotFound)?;
+    let ct = avatars::image_type(&head[..n]).to_string();
     let what = format!("{id}'s picture");
     serve_held(
         &what,
@@ -178,6 +182,19 @@ pub(super) async fn serve_held(
     Ok(res.map(Body::new))
 }
 
+/// Serve what a blob lookup found, or 404 when it found nothing.
+async fn serve_found(
+    found: Option<(Option<String>, String)>,
+    what: impl FnOnce() -> String,
+    dir: &str,
+    asked: HeaderMap,
+) -> Result<Response, AppError> {
+    let Some((content_type, stored)) = found else {
+        return Err(AppError::NotFound);
+    };
+    serve_held(&what(), dir, &stored, content_type, asked).await
+}
+
 /// GET /api/gchat-attachments/{id} → a Google Chat picture from the PVC.
 ///
 /// Each origin's attachment ids are independent, hence a route per origin.
@@ -187,15 +204,10 @@ pub async fn gchat_attachment(
     asked: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<Response, AppError> {
-    let Some((content_type, stored)) = archive::gchat::attachment_blob(&app.pool, id).await? else {
-        return Err(AppError::NotFound);
-    };
-    let what = format!("gchat attachment {id}");
-    serve_held(
-        &what,
+    serve_found(
+        archive::gchat::attachment_blob(&app.pool, id).await?,
+        || format!("gchat attachment {id}"),
         &app.cfg.attachments_dir,
-        &stored,
-        content_type,
         asked,
     )
     .await
@@ -208,16 +220,10 @@ pub async fn attachment(
     asked: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<Response, AppError> {
-    let Some((content_type, stored)) = archive::signal::attachment_blob(&app.pool, id).await?
-    else {
-        return Err(AppError::NotFound);
-    };
-    let what = format!("attachment {id}");
-    serve_held(
-        &what,
+    serve_found(
+        archive::signal::attachment_blob(&app.pool, id).await?,
+        || format!("attachment {id}"),
         &app.cfg.attachments_dir,
-        &stored,
-        content_type,
         asked,
     )
     .await
@@ -230,16 +236,10 @@ pub async fn link_preview_image(
     asked: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<Response, AppError> {
-    let Some((content_type, stored)) = archive::signal::preview_image_blob(&app.pool, id).await?
-    else {
-        return Err(AppError::NotFound);
-    };
-    let what = format!("link preview {id}'s picture");
-    serve_held(
-        &what,
+    serve_found(
+        archive::signal::preview_image_blob(&app.pool, id).await?,
+        || format!("link preview {id}'s picture"),
         &app.cfg.attachments_dir,
-        &stored,
-        content_type,
         asked,
     )
     .await
@@ -255,15 +255,10 @@ pub async fn telegram_media(
     asked: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<Response, AppError> {
-    let Some((content_type, stored)) = archive::telegram::media_blob(&app.pool, id).await? else {
-        return Err(AppError::NotFound);
-    };
-    let what = format!("telegram media {id}");
-    serve_held(
-        &what,
+    serve_found(
+        archive::telegram::media_blob(&app.pool, id).await?,
+        || format!("telegram media {id}"),
         &app.cfg.telegram_media_dir,
-        &stored,
-        content_type,
         asked,
     )
     .await
@@ -310,15 +305,13 @@ pub async fn link_image(
     asked: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
-    let Some((content_type, stored)) = archive::links::blob(&app.pool, &id).await? else {
-        return Err(AppError::NotFound);
-    };
-    let what = format!("link image {id}");
-    serve_held(
-        &what,
+    let found = archive::links::blob(&app.pool, &id)
+        .await?
+        .map(|(content_type, stored)| (Some(content_type), stored));
+    serve_found(
+        found,
+        || format!("link image {id}"),
         &app.cfg.link_images_dir,
-        &stored,
-        Some(content_type),
         asked,
     )
     .await
@@ -405,6 +398,24 @@ pub struct SendResult {
     pub archived: bool,
 }
 
+impl SendResult {
+    fn sent(archived: bool) -> Self {
+        SendResult {
+            sent: true,
+            error: None,
+            archived,
+        }
+    }
+
+    fn not_sent(why: impl Into<String>) -> Self {
+        SendResult {
+            sent: false,
+            error: Some(why.into()),
+            archived: false,
+        }
+    }
+}
+
 /// POST /api/conversations/{irc,telegram}/{id}/send → say something.
 ///
 /// The app's one outward write. Bounded by the allow-listed session; the
@@ -439,24 +450,11 @@ async fn send_telegram(
     tracing::info!("telegram send {row} to {id}: {outcome:?}");
     use crate::telegram_send::Outcome;
     Ok(Json(match outcome {
-        Outcome::Sent { archived } => SendResult {
-            sent: true,
-            error: None,
-            archived,
-        },
-        Outcome::Refused(why) => SendResult {
-            sent: false,
-            error: Some(why),
-            archived: false,
-        },
-        Outcome::Unanswered => SendResult {
-            sent: false,
-            error: Some(
-                "Telegram has not answered yet: it may still go. Check before sending again."
-                    .to_owned(),
-            ),
-            archived: false,
-        },
+        Outcome::Sent { archived } => SendResult::sent(archived),
+        Outcome::Refused(why) => SendResult::not_sent(why),
+        Outcome::Unanswered => SendResult::not_sent(
+            "Telegram has not answered yet: it may still go. Check before sending again.",
+        ),
     }))
 }
 
@@ -468,11 +466,7 @@ async fn send_irc(
 ) -> Result<Json<SendResult>, AppError> {
     let Some(sender) = app.irc.clone() else {
         // No key mounted: sending is not configured.
-        return Ok(Json(SendResult {
-            sent: false,
-            error: Some("sending is not configured".to_string()),
-            archived: false,
-        }));
+        return Ok(Json(SendResult::not_sent("sending is not configured")));
     };
 
     let Some(target) = archive::irc::target(&app.pool, id).await? else {
@@ -496,11 +490,7 @@ async fn send_irc(
                 target.network,
                 target.target
             );
-            Ok(Json(SendResult {
-                sent: false,
-                error: Some(why),
-                archived: false,
-            }))
+            Ok(Json(SendResult::not_sent(why)))
         }
         crate::irc_send::Outcome::Sent(sent) => {
             // The message has gone, so a failed echo is logged, not returned.
@@ -522,11 +512,7 @@ async fn send_irc(
                     "echo not archived, waits for the next import"
                 }
             );
-            Ok(Json(SendResult {
-                sent: true,
-                error: None,
-                archived,
-            }))
+            Ok(Json(SendResult::sent(archived)))
         }
     }
 }

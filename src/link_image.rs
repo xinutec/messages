@@ -30,13 +30,6 @@ impl LinkState {
             _ => None,
         }
     }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Offered => "offered",
-            Self::Ok => "ok",
-        }
-    }
 }
 
 /// What a page said about itself.
@@ -51,14 +44,9 @@ pub struct Advert {
 }
 
 impl Advert {
-    /// Inlineable when the server named itself and named a picture; `og:image`
-    /// alone is on half the web.
-    pub fn is_inlineable_image(&self) -> bool {
-        self.refusal().is_none()
-    }
-
     /// Why this page is not an inlineable picture, logged so a wrong verdict can
-    /// be explained.
+    /// be explained; `None` when the server named itself and named a picture.
+    /// `og:image` alone is on half the web.
     pub fn refusal(&self) -> Option<&'static str> {
         if !self.cloud {
             return Some("the server does not name itself as a file cloud");

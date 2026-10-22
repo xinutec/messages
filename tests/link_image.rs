@@ -37,7 +37,7 @@ fn a_share_page_names_its_product_and_its_picture() {
         Some("https://cloud.example.org/nc/s/SHARETOKEN/preview")
     );
     assert_eq!(a.image_type.as_deref(), Some("image/jpeg"));
-    assert!(a.is_inlineable_image());
+    assert_eq!(a.refusal(), None);
 }
 
 #[test]
@@ -46,7 +46,7 @@ fn og_image_alone_is_not_enough() {
     let page = Url::parse(SHARE).unwrap();
     let a = read_advert(&page, ["session=abc; path=/"].into_iter(), &fixture());
     assert!(!a.cloud);
-    assert!(!a.is_inlineable_image());
+    assert!(a.refusal().is_some());
     assert!(
         a.image.is_some(),
         "the tag is still read; it is the verdict that changes"
@@ -65,14 +65,18 @@ fn a_picture_advertised_on_another_server_is_refused() {
     let a = read_advert(&page, REAL_COOKIES.into_iter(), &html);
     assert!(a.cloud);
     assert_eq!(a.image, None, "off-origin image dropped");
-    assert!(!a.is_inlineable_image());
+    assert!(a.refusal().is_some());
 }
 
 #[test]
 fn a_page_with_no_picture_is_not_one() {
     let page = Url::parse(SHARE).unwrap();
     let html = fixture().replace("og:image", "og:nothing");
-    assert!(!read_advert(&page, REAL_COOKIES.into_iter(), &html).is_inlineable_image());
+    assert!(
+        read_advert(&page, REAL_COOKIES.into_iter(), &html)
+            .refusal()
+            .is_some()
+    );
 }
 
 #[test]
@@ -81,7 +85,7 @@ fn a_non_image_type_is_refused_even_from_a_cloud() {
     let html = fixture().replace(r#"content="image/jpeg""#, r#"content="application/pdf""#);
     let a = read_advert(&page, REAL_COOKIES.into_iter(), &html);
     assert_eq!(a.image_type.as_deref(), Some("application/pdf"));
-    assert!(!a.is_inlineable_image());
+    assert!(a.refusal().is_some());
 }
 
 #[test]
@@ -124,7 +128,7 @@ fn what_is_not_a_link_is_left_alone() {
 
 #[test]
 fn an_empty_advert_is_not_inlineable() {
-    assert!(!Advert::default().is_inlineable_image());
+    assert!(Advert::default().refusal().is_some());
 }
 
 // ---- what a refusal says, and what an attribute carries --------------------

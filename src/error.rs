@@ -16,6 +16,10 @@ pub enum AppError {
     #[error("not found")]
     NotFound,
 
+    /// The client sent something this server cannot read.
+    #[error("{0}")]
+    BadRequest(String),
+
     /// Anything unexpected → 500; body is generic, detail is logged.
     #[error(transparent)]
     Other(#[from] anyhow::Error),
@@ -39,6 +43,7 @@ impl IntoResponse for AppError {
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, self.to_string()),
             AppError::Forbidden => (StatusCode::FORBIDDEN, self.to_string()),
             AppError::NotFound => (StatusCode::NOT_FOUND, self.to_string()),
+            AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             AppError::Other(e) => {
                 tracing::error!("internal error: {e:#}");
                 (

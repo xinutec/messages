@@ -8,6 +8,7 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
+use subtle::ConstantTimeEq;
 
 use crate::archive;
 use crate::error::AppError;
@@ -28,13 +29,7 @@ fn authorised(app: &AppState, headers: &HeaderMap) -> Result<(), AppError> {
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .unwrap_or("");
-    let same = given.len() == expected.len()
-        && given
-            .bytes()
-            .zip(expected.bytes())
-            .fold(0u8, |d, (a, b)| d | (a ^ b))
-            == 0;
-    if same {
+    if bool::from(given.as_bytes().ct_eq(expected.as_bytes())) {
         Ok(())
     } else {
         Err(AppError::Unauthorized)
@@ -58,21 +53,25 @@ pub async fn blob(
 ) -> Result<Response, AppError> {
     authorised(&app, &headers)?;
     let id: i64 = filename.parse().map_err(|_| AppError::NotFound)?;
-    let held = match archive::Origin::parse(&source) {
-        Some(archive::Origin::Signal) => archive::signal::attachment_blob(&app.pool, id).await?,
-        Some(archive::Origin::Gchat) => archive::gchat::attachment_blob(&app.pool, id).await?,
-        Some(archive::Origin::Telegram) => archive::telegram::media_blob(&app.pool, id).await?,
-        _ => None,
+    let (held, dir) = match archive::Origin::parse(&source) {
+        Some(archive::Origin::Signal) => (
+            archive::signal::attachment_blob(&app.pool, id).await?,
+            &app.cfg.attachments_dir,
+        ),
+        Some(archive::Origin::Gchat) => (
+            archive::gchat::attachment_blob(&app.pool, id).await?,
+            &app.cfg.attachments_dir,
+        ),
+        Some(archive::Origin::Telegram) => (
+            archive::telegram::media_blob(&app.pool, id).await?,
+            &app.cfg.telegram_media_dir,
+        ),
+        Some(archive::Origin::Irc) | None => return Err(AppError::NotFound),
     };
     let Some((Some(ct), stored)) =
         held.filter(|(ct, _)| ct.as_deref().is_some_and(|c| c.starts_with("audio/")))
     else {
         return Err(AppError::NotFound);
-    };
-    let dir = if source == "telegram" {
-        &app.cfg.telegram_media_dir
-    } else {
-        &app.cfg.attachments_dir
     };
     super::api::serve_held(
         &format!("{source} audio {id}"),
@@ -92,8 +91,9 @@ pub async fn done(
     body: Bytes,
 ) -> Result<StatusCode, AppError> {
     authorised(&app, &headers)?;
+    // Read as bytes: the runner sends its JSON as plain text.
     let finished: transcribe::Finished = serde_json::from_slice(&body)
-        .map_err(|e| AppError::Other(anyhow::anyhow!("unreadable outcome: {e}")))?;
+        .map_err(|e| AppError::BadRequest(format!("unreadable outcome: {e}")))?;
     if transcribe::finish(&app.pool, id, &finished).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {

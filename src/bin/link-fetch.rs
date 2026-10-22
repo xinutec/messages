@@ -8,7 +8,7 @@
 //!       204                 reached it; not a picture we may inline
 //!       502                 could not reach it, or it broke the limits
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use axum::extract::State;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -44,10 +44,10 @@ async fn main() -> Result<()> {
         .redirect(reqwest::redirect::Policy::limited(3))
         .build()?;
 
-    let port: u16 = std::env::var("PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(8080);
+    let port: u16 = match std::env::var("PORT") {
+        Ok(p) => p.parse().context("PORT must be a port number")?,
+        Err(_) => 8080,
+    };
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/fetch", post(fetch))
@@ -74,7 +74,7 @@ async fn fetch(State(svc): State<Svc>, Json(req): Json<FetchRequest>) -> Respons
     match fetch_picture(&svc.client, &url, svc.limits).await {
         Ok(Some((bytes, content_type))) => {
             tracing::info!("fetched {} bytes of {content_type}", bytes.len());
-            // dev-lint: allow-bytes-uncached a reply to the archiver, which stores the bytes itself; no browser sees it
+            // dev-lint: allow-bytes-uncached a reply to the web pod, which stores the bytes itself; no browser sees it
             ([(header::CONTENT_TYPE, content_type)], bytes).into_response()
         }
         Ok(None) => StatusCode::NO_CONTENT.into_response(),

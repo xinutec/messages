@@ -333,8 +333,30 @@ async fn the_transcriber_routes_take_its_token_and_nothing_else() {
             .status(),
         StatusCode::UNAUTHORIZED
     );
-    let res = ask(configured, Some("the-right-token")).await.unwrap();
+    // A prefix of the token is not the token.
+    assert_eq!(
+        ask(configured.clone(), Some("the-right-toke"))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let res = ask(configured.clone(), Some("the-right-token"))
+        .await
+        .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let body = axum::body::to_bytes(res.into_body(), 64).await.unwrap();
     assert_eq!(&body[..], br#"{"prompt":null}"#);
+
+    // An outcome that does not read is the runner's mistake, not the server's.
+    // Plain text, as the runner sends it.
+    let garbled = Request::put("/work/v1/jobs/1/done")
+        .header("authorization", "Bearer the-right-token")
+        .header("content-type", "text/plain")
+        .body(Body::from("not json"))
+        .unwrap();
+    assert_eq!(
+        configured.oneshot(garbled).await.unwrap().status(),
+        StatusCode::BAD_REQUEST
+    );
 }

@@ -105,6 +105,7 @@ async fn answer(pool: &MySqlPool, id: i64) -> Result<Option<Outcome>> {
         "failed" => Some(Outcome::Refused(
             note.unwrap_or_else(|| "not sent".to_owned()),
         )),
-        _ => None,
+        "queued" | "sending" => None,
+        other => anyhow::bail!("telegram_outbox.state holds an unknown state: {other:?}"),
     })
 }

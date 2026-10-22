@@ -17,26 +17,33 @@ use crate::pending_login::{self, Callback};
 use crate::session::{COOKIE_NAME, SESSION_TTL_DAYS, UserSession, create_session, destroy_session};
 use crate::state::AppState;
 
-fn session_cookie(value: String) -> Cookie<'static> {
-    Cookie::build((COOKIE_NAME, value))
+/// Both cookies are `Lax`: the callback arrives as a top-level navigation from
+/// Nextcloud, and a `Strict` cookie would not be sent with it.
+fn cookie(name: &'static str, value: String, max_age: time::Duration) -> Cookie<'static> {
+    Cookie::build((name, value))
         .path("/")
         .http_only(true)
         .secure(true)
         .same_site(SameSite::Lax)
-        .max_age(time::Duration::days(SESSION_TTL_DAYS))
+        .max_age(max_age)
         .build()
 }
 
-/// The login-in-progress cookie. `Lax`, because the callback arrives as a
-/// top-level navigation from Nextcloud and a `Strict` cookie would not be sent.
+fn session_cookie(value: String) -> Cookie<'static> {
+    cookie(COOKIE_NAME, value, time::Duration::days(SESSION_TTL_DAYS))
+}
+
+/// Clears a cookie this module set. At `Path=/`, where both were set: without a
+/// path the browser scopes the removal to the request's directory (`/auth` for
+/// the callback) and the cookie stays.
+fn removal(name: &'static str) -> Cookie<'static> {
+    Cookie::build(name).path("/").build()
+}
+
+/// The login-in-progress cookie.
 fn pending_cookie(value: String) -> Cookie<'static> {
-    Cookie::build((pending_login::COOKIE_NAME, value))
-        .path("/")
-        .http_only(true)
-        .secure(true)
-        .same_site(SameSite::Lax)
-        .max_age(time::Duration::seconds(pending_login::ttl().num_seconds()))
-        .build()
+    let ttl = time::Duration::seconds(pending_login::ttl().num_seconds());
+    cookie(pending_login::COOKIE_NAME, value, ttl)
 }
 
 /// Same-site paths only, judged where a browser lands: the WHATWG parser drops
@@ -171,7 +178,7 @@ async fn finish_sign_in(
     let signed = create_session(&app.pool, &app.cfg.session_secret, &user).await?;
     let dest = validate_return_to(pending.return_to.as_deref());
     // The login is over: drop its cookie so a stale one can't be replayed.
-    let jar = jar.remove(Cookie::from(pending_login::COOKIE_NAME));
+    let jar = jar.remove(removal(pending_login::COOKIE_NAME));
     Ok((jar.add(session_cookie(signed)), Redirect::to(&dest)))
 }
 
@@ -183,8 +190,5 @@ pub async fn logout(
     if let Some(c) = jar.get(COOKIE_NAME) {
         destroy_session(&app.pool, &app.cfg.session_secret, c.value()).await?;
     }
-    Ok((
-        jar.remove(Cookie::from(COOKIE_NAME)),
-        StatusCode::NO_CONTENT,
-    ))
+    Ok((jar.remove(removal(COOKIE_NAME)), StatusCode::NO_CONTENT))
 }

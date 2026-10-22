@@ -267,3 +267,15 @@ async fn a_picture_is_held() {
         "held, so not asked for"
     );
 }
+
+/// The fetcher's reply is capped as a page is: this side holds the credentials,
+/// so an oversized answer is refused rather than read whole.
+#[tokio::test]
+async fn an_oversized_picture_from_the_fetcher_is_refused() {
+    let Some(pool) = pool().await else { return };
+    let url = "https://example.com/huge.png";
+    let huge = vec![0u8; messages::link_fetch::Limits::default().max_bytes + 1].leak();
+    let (outcome, hash) = ask(&pool, url, 200, "image/png", huge).await;
+    assert_eq!(outcome, Outcome::Failed);
+    assert_eq!(stored_state(&pool, &hash).await, "offered");
+}

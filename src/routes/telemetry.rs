@@ -12,8 +12,10 @@ use crate::session::AuthUser;
 
 /// One thing that happened in the client.
 ///
-/// `kind` is `nav` for a route change, where `label` is absent, or `tap` for a
-/// control, where `label` is its visible text, verbatim.
+/// `kind` is `nav` for a route change, where `label` is absent; `tap` for a
+/// control, where `label` is its visible text, verbatim; or `error` or `http`
+/// for a failure, where `label` says what failed. A string, not an enum: the
+/// fleet's shared client names the kinds.
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]

@@ -63,7 +63,7 @@ pub async fn resolve_one(
 ) -> Result<(Outcome, Option<String>)> {
     match ask_service(client, service, url).await {
         Ok(Some((bytes, content_type))) => {
-            let name = store(dir, url, &content_type, &bytes)?;
+            let name = store(dir, url, &content_type, &bytes).await?;
             record_held(pool, url, &content_type, bytes.len(), &name).await?;
             Ok((Outcome::Ok, Some(content_type)))
         }
@@ -102,16 +102,16 @@ async fn ask_service(
             why.chars().take(200).collect::<String>()
         );
     }
-    let content_type = res
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(';').next().unwrap_or(s).trim().to_owned())
-        .unwrap_or_default();
+    let content_type = header(&res, reqwest::header::CONTENT_TYPE).unwrap_or_default();
     if !content_type.starts_with("image/") {
         return Ok(None);
     }
-    Ok(Some((res.bytes().await?.to_vec(), content_type)))
+    // Capped here too: this side holds the credentials, and the fetcher's word
+    // about size is not to be trusted.
+    Ok(Some((
+        read_capped(res, Limits::default()).await?,
+        content_type,
+    )))
 }
 
 /// Two GETs at most: the page, then the picture the page named. Returns None when
@@ -126,22 +126,14 @@ pub async fn fetch_picture(
         .timeout(limits.timeout)
         .send()
         .await?;
-    let final_url = Url::parse(res.url().as_str())?;
-    let content_type = header(&res, reqwest::header::CONTENT_TYPE);
-
-    // A link straight to a picture needs no page.
-    if content_type
-        .as_deref()
-        .is_some_and(|t| t.starts_with("image/"))
-    {
-        let ct = content_type.unwrap_or_else(|| "application/octet-stream".into());
-        return Ok(Some((read_capped(res, limits).await?, ct)));
-    }
-    if !content_type
-        .as_deref()
-        .is_some_and(|t| t.starts_with("text/html"))
-    {
-        return Ok(None);
+    let final_url = res.url().clone();
+    match header(&res, reqwest::header::CONTENT_TYPE) {
+        // A link straight to a picture needs no page.
+        Some(ct) if ct.starts_with("image/") => {
+            return Ok(Some((read_capped(res, limits).await?, ct)));
+        }
+        Some(ct) if ct.starts_with("text/html") => {}
+        _ => return Ok(None),
     }
 
     let cookies: Vec<String> = res
@@ -193,7 +185,7 @@ async fn read_capped(mut res: reqwest::Response, limits: Limits) -> Result<Vec<u
 }
 
 /// Write the bytes under the URL's hash, with an extension from the served type.
-fn store(dir: &Path, url: &Url, content_type: &str, bytes: &[u8]) -> Result<String> {
+async fn store(dir: &Path, url: &Url, content_type: &str, bytes: &[u8]) -> Result<String> {
     let ext = match content_type {
         "image/jpeg" => "jpg",
         "image/png" => "png",
@@ -204,9 +196,13 @@ fn store(dir: &Path, url: &Url, content_type: &str, bytes: &[u8]) -> Result<Stri
         _ => "bin",
     };
     let name = format!("{}.{ext}", url_hash(url));
-    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    tokio::fs::create_dir_all(dir)
+        .await
+        .with_context(|| format!("creating {}", dir.display()))?;
     let path: PathBuf = dir.join(&name);
-    std::fs::write(&path, bytes).with_context(|| format!("writing {}", path.display()))?;
+    tokio::fs::write(&path, bytes)
+        .await
+        .with_context(|| format!("writing {}", path.display()))?;
     Ok(name)
 }
 
@@ -229,7 +225,7 @@ async fn record_held(
     .bind(url_hash(url))
     .bind(url.as_str())
     .bind(content_type)
-    .bind(size as i64)
+    .bind(i64::try_from(size)?)
     .bind(stored_name)
     .execute(pool)
     .await
