@@ -160,8 +160,8 @@ impl Db {
             "INSERT IGNORE INTO messages
                 (thread_id, sender_uuid, server_ts, body, quote_target_ts, is_outgoing,
                  server_received_ts, server_delivered_ts, expires_in_seconds,
-                 quote_author_uuid, quote_text)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 quote_author_uuid, quote_text, group_call_era)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(m.thread_id.to_string())
         .bind(&m.sender)
@@ -174,6 +174,7 @@ impl Db {
         .bind(m.expires_in_seconds)
         .bind(m.quote_author.as_deref())
         .bind(m.quote_text.as_deref())
+        .bind(m.group_call.as_deref())
         .execute(&self.pool)
         .await?;
         Ok((res.rows_affected() != 0).then(|| res.last_insert_id()))

@@ -6,8 +6,8 @@
 
 use serde_json::{Value, json};
 use signal_archiver::db::{
-    BACKFILL_LINK_PREVIEWS, BACKFILL_MENTIONS, BACKFILL_PREVIEW_IMAGES, BACKFILL_QUOTES,
-    BACKFILL_TEXT_STYLES, Db,
+    BACKFILL_GROUP_CALLS, BACKFILL_LINK_PREVIEWS, BACKFILL_MENTIONS, BACKFILL_PREVIEW_IMAGES,
+    BACKFILL_QUOTES, BACKFILL_TEXT_STYLES, Db,
 };
 use signal_archiver::parse::{Action, parse_frame};
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
@@ -323,4 +323,111 @@ async fn the_backfill_reads_them_from_the_kept_frames() {
     assert!(styles_of(&pool, &me, ts + 1).await.is_empty());
     assert!(previews_of(&pool, &me, ts).await.is_empty());
     assert_eq!(quote_of(&pool, &me, ts).await, (None, None));
+}
+
+/// A group call's update, from someone else (`dataMessage`): a real frame's
+/// fields, with the ids replaced.
+fn their_group_call(them: &str, ts: i64, era: &str) -> Value {
+    json!({"envelope": {"sourceUuid": them, "timestamp": ts,
+        "dataMessage": {"expiresInSeconds": 0, "groupCallUpdate": {"eraId": era},
+                        "groupInfo": {"groupId": "GID==", "groupName": "Family",
+                                      "revision": 7, "type": "DELIVER"},
+                        "message": null, "timestamp": ts, "viewOnce": false}}})
+}
+
+/// Our own update for the same call, synced from the phone.
+fn our_group_call(me: &str, ts: i64, era: &str) -> Value {
+    sent(
+        me,
+        ts,
+        json!({"groupCallUpdate": {"eraId": era}, "message": null,
+               "groupInfo": {"groupId": "GID==", "groupName": "Family",
+                             "revision": 7, "type": "DELIVER"}}),
+    )
+}
+
+async fn era_of(pool: &MySqlPool, sender: &str, ts: i64) -> Option<String> {
+    sqlx::query_scalar(
+        "SELECT group_call_era FROM messages WHERE sender_uuid = ? AND server_ts = ?",
+    )
+    .bind(sender)
+    .bind(ts)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn the_ingester_keeps_a_group_calls_era() {
+    let Some((db, pool)) = connect().await else {
+        return;
+    };
+    let (me, ts) = ids(3);
+    let them = format!("{me}-them");
+    ingest(&db, &our_group_call(&me, ts, "e0a1b2c3d4e5f607")).await;
+    ingest(&db, &their_group_call(&them, ts + 1, "e0a1b2c3d4e5f607")).await;
+    ingest(&db, &styled(&me, ts + 2)).await;
+    assert_eq!(
+        era_of(&pool, &me, ts).await.as_deref(),
+        Some("e0a1b2c3d4e5f607")
+    );
+    assert_eq!(
+        era_of(&pool, &them, ts + 1).await.as_deref(),
+        Some("e0a1b2c3d4e5f607")
+    );
+    assert_eq!(era_of(&pool, &me, ts + 2).await, None);
+}
+
+/// Group-call rows stored before the column existed learn their call from
+/// the kept frames; a text message gains nothing.
+#[tokio::test]
+async fn the_backfill_reads_group_calls_from_the_kept_frames() {
+    let Some((db, pool)) = connect().await else {
+        return;
+    };
+    let (me, ts) = ids(4);
+    let them = format!("{me}-them");
+    for (frame, sender, t, body, out) in [
+        (
+            our_group_call(&me, ts, "f1e2d3c4b5a69788"),
+            &me,
+            ts,
+            None,
+            1,
+        ),
+        (
+            their_group_call(&them, ts + 1, "f1e2d3c4b5a69788"),
+            &them,
+            ts + 1,
+            None,
+            0,
+        ),
+        (styled(&me, ts + 2), &me, ts + 2, Some("Hello"), 1),
+    ] {
+        assert!(db.record_signal_frame(&frame).await.unwrap());
+        sqlx::query(
+            "INSERT INTO messages (thread_id, sender_uuid, server_ts, body, is_outgoing)
+             VALUES ('group:GID==', ?, ?, ?, ?)",
+        )
+        .bind(sender)
+        .bind(t)
+        .bind(body)
+        .bind(out)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(BACKFILL_GROUP_CALLS)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        era_of(&pool, &me, ts).await.as_deref(),
+        Some("f1e2d3c4b5a69788")
+    );
+    assert_eq!(
+        era_of(&pool, &them, ts + 1).await.as_deref(),
+        Some("f1e2d3c4b5a69788")
+    );
+    assert_eq!(era_of(&pool, &me, ts + 2).await, None);
 }

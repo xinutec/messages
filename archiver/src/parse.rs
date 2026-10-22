@@ -91,6 +91,9 @@ pub struct Message {
     pub styles: Vec<TextStyle>,
     pub mentions: Vec<Mention>,
     pub previews: Vec<LinkPreview>,
+    /// The call a `groupCallUpdate` announces: its `eraId`, shared by every
+    /// update of one call. The message then has no text of its own.
+    pub group_call: Option<String>,
 }
 
 /// A link preview the sender's app attached. Empty strings are absent.
@@ -504,6 +507,11 @@ fn payload_action(
         styles: text_styles(msg),
         mentions: mentions(msg),
         previews: link_previews(msg),
+        group_call: msg
+            .get("groupCallUpdate")
+            .and_then(|g| g.get("eraId"))
+            .and_then(Value::as_str)
+            .map(str::to_string),
     })
 }
 

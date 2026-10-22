@@ -99,6 +99,16 @@ pub const BACKFILL_MENTIONS: &str = r"INSERT IGNORE INTO signal_mentions (messag
                        uuid VARCHAR(64) PATH '$.uuid')) x
          WHERE x.uuid IS NOT NULL AND x.uuid <> '' AND x.start_utf16 >= 0 AND x.length_utf16 >= 0";
 
+/// Migration v62; public so tests run the statement the migration runs.
+pub const BACKFILL_GROUP_CALLS: &str = r"UPDATE messages m
+        JOIN signal_frames f ON f.envelope_ts = m.server_ts AND f.source_uuid = m.sender_uuid
+         SET m.group_call_era = COALESCE(
+                 JSON_VALUE(f.frame, '$.envelope.dataMessage.groupCallUpdate.eraId'),
+                 JSON_VALUE(f.frame, '$.envelope.syncMessage.sentMessage.groupCallUpdate.eraId'))
+       WHERE m.group_call_era IS NULL
+         AND (JSON_EXISTS(f.frame, '$.envelope.dataMessage.groupCallUpdate.eraId')
+           OR JSON_EXISTS(f.frame, '$.envelope.syncMessage.sentMessage.groupCallUpdate.eraId'))";
+
 pub(super) const MIGRATIONS: &[&str] = &[
     // v0: people, keyed by ACI UUID (E.164 when there is none).
     r"CREATE TABLE IF NOT EXISTS contacts (
@@ -682,4 +692,12 @@ pub(super) const MIGRATIONS: &[&str] = &[
          AND r.server_ts = e.edit_of_ts AND r.edit_of_ts IS NOT NULL
          SET e.edit_of_ts = r.edit_of_ts
        WHERE e.edit_of_ts IS NOT NULL",
+    // v61: the group call a `groupCallUpdate` announces, by its `eraId`. Every
+    // participant's phone sends one on joining and on leaving; the viewer shows
+    // a call once, at its first update in the thread.
+    r"ALTER TABLE messages
+        ADD COLUMN group_call_era VARCHAR(64) NULL,
+        ADD INDEX idx_messages_group_call (thread_id, group_call_era)",
+    // v62: backfill v61 from `signal_frames`.
+    BACKFILL_GROUP_CALLS,
 ];

@@ -8,11 +8,18 @@ use sqlx::{AssertSqlSafe, MySqlPool, Row};
 
 use super::*;
 
+/// A group call, as Signal's own thread names it. Every participant's phone
+/// sends an update on joining and on leaving, all under the call's era; the
+/// first one held in the thread stands for the call, and the rest are left out
+/// wherever messages are shown or counted.
+const GROUP_CALL: &str = "started a group call";
+
 pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>> {
     let mut out = Vec::new();
     // An edit's revision rows are versions, not messages: the page leaves them
     // out, so the count, the last message and its time do too. The last message
     // reads as the page shows it, in its newest revision's words.
+    // A group call's later updates are left out the same way ([`GROUP_CALL`]).
     //
     // Unread: theirs after my newest read, as the phone counts them, so not one
     // deleted for everyone (the list still says so). A read receipt on a message someone
@@ -24,17 +31,27 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
                  COALESCE(rv.id, l.id) AS last_id, l.deleted AS last_deleted, l.is_outgoing AS last_out,
                  CASE WHEN rv.id IS NULL THEN l.body ELSE rv.body END AS last_text,
                  COALESCE(ct.display_name, l.sender_uuid) AS last_sender,
+                 l.group_call_era AS last_call,
                  (SELECT a.content_type FROM attachments a
                    WHERE a.message_id = l.id ORDER BY a.id LIMIT 1) AS last_media,
                  (SELECT COUNT(*) FROM messages u
                    WHERE u.thread_id = c.thread_id AND u.is_outgoing = 0
                      AND u.edit_of_ts IS NULL AND u.deleted = 0
+                     AND (u.group_call_era IS NULL OR NOT EXISTS (
+                         SELECT 1 FROM messages g
+                          WHERE g.thread_id = u.thread_id AND g.group_call_era = u.group_call_era
+                            AND (g.server_ts < u.server_ts OR (g.server_ts = u.server_ts AND g.id < u.id))))
                      AND u.server_ts > GREATEST(COALESCE(rd.read_ts, 0), rs.since_ms)) AS unread
           FROM conversations c
           LEFT JOIN (
-              SELECT thread_id, COUNT(CASE WHEN edit_of_ts IS NULL THEN id END) AS cnt,
-                     MAX(CASE WHEN edit_of_ts IS NULL THEN server_ts END) AS last_msg_ts
-              FROM messages GROUP BY thread_id
+              SELECT m.thread_id, COUNT(CASE WHEN m.edit_of_ts IS NULL THEN m.id END) AS cnt,
+                     MAX(CASE WHEN m.edit_of_ts IS NULL THEN m.server_ts END) AS last_msg_ts
+              FROM messages m
+              WHERE (m.group_call_era IS NULL OR NOT EXISTS (
+                       SELECT 1 FROM messages g
+                        WHERE g.thread_id = m.thread_id AND g.group_call_era = m.group_call_era
+                          AND (g.server_ts < m.server_ts OR (g.server_ts = m.server_ts AND g.id < m.id))))
+              GROUP BY m.thread_id
           ) s ON s.thread_id = c.thread_id
           LEFT JOIN messages l
                  ON l.thread_id = c.thread_id AND l.server_ts = s.last_msg_ts
@@ -74,7 +91,12 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
         };
         let deleted: Option<i8> = r.try_get("last_deleted")?;
         let last_id: Option<i64> = r.try_get("last_id")?;
-        let last = LastMessage::from_row(&r, deleted.unwrap_or(0) != 0)?;
+        let mut last = LastMessage::from_row(&r, deleted.unwrap_or(0) != 0)?;
+        if let Some(l) = last.as_mut().filter(|l| l.text.is_none() && !l.deleted)
+            && r.try_get::<Option<String>, _>("last_call")?.is_some()
+        {
+            l.text = Some(GROUP_CALL.to_owned());
+        }
         if let (Some(row), Some(text)) = (last_id, r.try_get::<Option<String>, _>("last_text")?) {
             bodies.insert(row, text);
             last_rows.push((out.len(), row));
@@ -120,12 +142,17 @@ pub(super) async fn page(
                  m.is_outgoing AS is_outgoing, m.body AS body,
                  m.deleted AS deleted, m.edited AS edited,
                  m.quote_target_ts AS quote_target_ts, m.quote_text AS quote_text,
-                 COALESCE(qa.display_name, m.quote_author_uuid) AS quote_author
+                 COALESCE(qa.display_name, m.quote_author_uuid) AS quote_author,
+                 m.group_call_era AS group_call_era
           FROM messages m
           LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
           LEFT JOIN contacts qa ON qa.uuid = m.quote_author_uuid
           WHERE m.thread_id = ?
             AND m.edit_of_ts IS NULL
+            AND (m.group_call_era IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM messages g
+                      WHERE g.thread_id = m.thread_id AND g.group_call_era = m.group_call_era
+                        AND (g.server_ts < m.server_ts OR (g.server_ts = m.server_ts AND g.id < m.id))))
             AND (? IS NULL OR m.server_ts < ? OR (m.server_ts = ? AND m.id < ?))
           ORDER BY m.server_ts DESC, m.id DESC
           LIMIT ?"
@@ -136,12 +163,17 @@ pub(super) async fn page(
                  m.is_outgoing AS is_outgoing, m.body AS body,
                  m.deleted AS deleted, m.edited AS edited,
                  m.quote_target_ts AS quote_target_ts, m.quote_text AS quote_text,
-                 COALESCE(qa.display_name, m.quote_author_uuid) AS quote_author
+                 COALESCE(qa.display_name, m.quote_author_uuid) AS quote_author,
+                 m.group_call_era AS group_call_era
           FROM messages m
           LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
           LEFT JOIN contacts qa ON qa.uuid = m.quote_author_uuid
           WHERE m.thread_id = ?
             AND m.edit_of_ts IS NULL
+            AND (m.group_call_era IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM messages g
+                      WHERE g.thread_id = m.thread_id AND g.group_call_era = m.group_call_era
+                        AND (g.server_ts < m.server_ts OR (g.server_ts = m.server_ts AND g.id < m.id))))
             AND (? IS NULL OR m.server_ts > ? OR (m.server_ts = ? AND m.id > ?))
           ORDER BY m.server_ts ASC, m.id ASC
           LIMIT ?"
@@ -152,12 +184,17 @@ pub(super) async fn page(
                  m.is_outgoing AS is_outgoing, m.body AS body,
                  m.deleted AS deleted, m.edited AS edited,
                  m.quote_target_ts AS quote_target_ts, m.quote_text AS quote_text,
-                 COALESCE(qa.display_name, m.quote_author_uuid) AS quote_author
+                 COALESCE(qa.display_name, m.quote_author_uuid) AS quote_author,
+                 m.group_call_era AS group_call_era
           FROM messages m
           LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
           LEFT JOIN contacts qa ON qa.uuid = m.quote_author_uuid
           WHERE m.thread_id = ?
             AND m.edit_of_ts IS NULL
+            AND (m.group_call_era IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM messages g
+                      WHERE g.thread_id = m.thread_id AND g.group_call_era = m.group_call_era
+                        AND (g.server_ts < m.server_ts OR (g.server_ts = m.server_ts AND g.id < m.id))))
             AND (? IS NULL OR m.server_ts > ? OR (m.server_ts = ? AND m.id >= ?))
           ORDER BY m.server_ts ASC, m.id ASC
           LIMIT ?"
@@ -193,18 +230,29 @@ pub(super) async fn page(
         let is_outgoing: i8 = r.try_get("is_outgoing")?;
         let deleted: i8 = r.try_get("deleted")?;
         let edited: i8 = r.try_get("edited")?;
+        let body: Option<String> = r.try_get("body")?;
+        let call = r.try_get::<Option<String>, _>("group_call_era")?.is_some() && body.is_none();
         ts_list.push(ts);
         ids.push(id);
         msgs.push(Message {
             deleted: deleted != 0,
             edited: edited != 0,
+            kind: if call {
+                MessageKind::Action
+            } else {
+                MessageKind::Message
+            },
             ..Message::bare(
                 id,
                 ts,
                 r.try_get("sender")?,
                 r.try_get("sender_key")?,
                 is_outgoing != 0,
-                r.try_get("body")?,
+                if call {
+                    Some(GROUP_CALL.to_owned())
+                } else {
+                    body
+                },
             )
         });
     }

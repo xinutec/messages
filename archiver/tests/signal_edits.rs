@@ -44,6 +44,7 @@ fn original(sender: &str, ts: i64) -> Message {
         styles: Vec::new(),
         mentions: Vec::new(),
         previews: Vec::new(),
+        group_call: None,
     }
 }
 

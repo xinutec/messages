@@ -3507,3 +3507,107 @@ async fn a_telegram_reaction_is_not_an_edit() {
         "no history: Telegram's word stands"
     );
 }
+
+/// Each participant's phone sends an update on joining a group call and on
+/// leaving it, all sharing the call's era. The thread shows the call once, at
+/// its first update, as something its sender did; the list counts it once.
+#[tokio::test]
+async fn a_signal_group_call_shows_once_as_its_first_update() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let thread = "group:gcall";
+    sqlx::query("INSERT INTO conversations (thread_id, type, name) VALUES (?, 'group', 'Calls')")
+        .bind(thread)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (sender, ts, body, out, era) in [
+        ("alice", 31_000i64, Some("shall we call?"), 0i8, None),
+        ("me", 32_000, None, 1, Some("era-one")),
+        ("alice", 32_005, None, 0, Some("era-one")),
+        ("alice", 33_000, Some("bye"), 0, None),
+        ("me", 34_000, None, 1, Some("era-one")),
+        ("alice", 34_002, None, 0, Some("era-one")),
+        ("alice", 35_000, None, 0, Some("era-two")),
+    ] {
+        sqlx::query(
+            "INSERT INTO messages (thread_id, sender_uuid, server_ts, body, is_outgoing, group_call_era)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(thread)
+        .bind(sender)
+        .bind(ts)
+        .bind(body)
+        .bind(out)
+        .bind(era)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let page = archive::messages_page(&pool, Origin::Signal, thread, None, 50, PageDir::Older)
+        .await
+        .unwrap();
+    let shown: Vec<_> = page
+        .messages
+        .iter()
+        .map(|m| (m.ts, m.sender.as_str(), m.kind, m.body.as_deref()))
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            (
+                31_000,
+                "Alice",
+                MessageKind::Message,
+                Some("shall we call?")
+            ),
+            (
+                32_000,
+                "Me",
+                MessageKind::Action,
+                Some("started a group call")
+            ),
+            (33_000, "Alice", MessageKind::Message, Some("bye")),
+            (
+                35_000,
+                "Alice",
+                MessageKind::Action,
+                Some("started a group call")
+            ),
+        ]
+    );
+    // Every direction leaves the later updates out, so a page is still full.
+    let ts_of = |p: &archive::MessagesPage| p.messages.iter().map(|m| m.ts).collect::<Vec<_>>();
+    let newest = archive::messages_page(&pool, Origin::Signal, thread, None, 2, PageDir::Older)
+        .await
+        .unwrap();
+    assert_eq!(ts_of(&newest), [33_000, 35_000]);
+    let back = parse_cursor(newest.next_cursor.as_deref().unwrap());
+    let before = archive::messages_page(&pool, Origin::Signal, thread, back, 2, PageDir::Older)
+        .await
+        .unwrap();
+    assert_eq!(ts_of(&before), [31_000, 32_000]);
+    let first = Some((31_000, page.messages[0].id.parse::<i64>().unwrap()));
+    for dir in [PageDir::Newer, PageDir::AtAndNewer] {
+        let on = archive::messages_page(&pool, Origin::Signal, thread, first, 50, dir)
+            .await
+            .unwrap();
+        let mut want = vec![32_000, 33_000, 35_000];
+        if dir == PageDir::AtAndNewer {
+            want.insert(0, 31_000);
+        }
+        assert_eq!(ts_of(&on), want, "{dir:?}");
+    }
+
+    let convs = archive::list_conversations(&pool).await.unwrap();
+    let c = convs.iter().find(|c| c.id == thread).unwrap();
+    assert_eq!(c.message_count, 4);
+    assert_eq!(c.last_ts, Some(35_000));
+    let last = c.last.as_ref().unwrap();
+    assert_eq!(
+        (last.sender.as_str(), last.text.as_deref()),
+        ("Alice", Some("started a group call"))
+    );
+}

@@ -31,6 +31,7 @@ fn incoming_text_dm() {
             styles: vec![],
             mentions: vec![],
             previews: vec![],
+            group_call: None,
         })
     );
     assert_eq!(
@@ -70,6 +71,7 @@ fn outgoing_sync_dm_keys_thread_by_destination() {
             styles: vec![],
             mentions: vec![],
             previews: vec![],
+            group_call: None,
         })
     );
     assert_eq!(p.contact, None, "outgoing sync should not upsert a contact");
@@ -770,4 +772,58 @@ fn a_reply_keeps_who_and_what_it_quoted() {
         m.quote_text.as_deref(),
         Some("Hello bold italic strike-through mono-space, spoiler, mono strike")
     );
+}
+
+/// A group call's update, as signal-cli sends it when someone joins or leaves:
+/// no text, and the call's `eraId`. The fixture's fields are a real frame's,
+/// with the ids replaced.
+fn group_call_payload(era: &str) -> serde_json::Value {
+    json!({
+        "expiresInSeconds": 0, "groupCallUpdate": {"eraId": era},
+        "groupInfo": {"groupId": "GID==", "groupName": "Family", "revision": 7, "type": "DELIVER"},
+        "hasProfileKey": false, "isEndSession": false, "isExpirationUpdate": false,
+        "isProfileKeyUpdate": false, "message": null, "timestamp": 9000, "viewOnce": false
+    })
+}
+
+#[test]
+fn a_group_call_update_names_its_call() {
+    let f = json!({"envelope": {
+        "sourceUuid": "u1", "timestamp": 9000, "dataMessage": group_call_payload("e0a1b2c3d4e5f607")
+    }});
+    match parse_frame(&f).action {
+        Action::Message(m) => {
+            assert_eq!(m.group_call.as_deref(), Some("e0a1b2c3d4e5f607"));
+            assert_eq!(m.body, None);
+            assert_eq!(m.thread_id, ThreadId::Group("GID==".into()));
+        }
+        other => panic!("expected Message, got {other:?}"),
+    }
+}
+
+#[test]
+fn our_own_group_call_update_names_its_call() {
+    let mut sent = group_call_payload("e0a1b2c3d4e5f607");
+    sent["destination"] = serde_json::Value::Null;
+    let f = json!({"envelope": {
+        "sourceUuid": "me", "timestamp": 9000, "syncMessage": {"sentMessage": sent}
+    }});
+    match parse_frame(&f).action {
+        Action::Message(m) => {
+            assert_eq!(m.group_call.as_deref(), Some("e0a1b2c3d4e5f607"));
+            assert!(m.is_outgoing);
+        }
+        other => panic!("expected Message, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_text_message_names_no_call() {
+    let f = json!({"envelope": {
+        "sourceUuid": "u1", "timestamp": 9001, "dataMessage": {"message": "hi"}
+    }});
+    match parse_frame(&f).action {
+        Action::Message(m) => assert_eq!(m.group_call, None),
+        other => panic!("expected Message, got {other:?}"),
+    }
 }
