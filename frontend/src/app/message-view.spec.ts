@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { attachmentUrl, deliveryLabel, hostOf, isPlain, mib, reactors } from './message-view';
+import { attachmentUrl, deliveryLabel, hostOf, isEmpty, isPlain, mib, reactors } from './message-view';
 import { Attachment, Delivery } from './models';
 import { testMessage } from './test-message';
 
@@ -42,5 +42,13 @@ describe('how a message is shown', () => {
     expect(isPlain(testMessage({ body: 'hi', attachments: [file] }))).toBe(false);
     expect(isPlain(testMessage({ body: 'hi', deleted: true }))).toBe(false);
     expect(isPlain(testMessage({ body: null }))).toBe(false);
+  });
+
+  it('calls a message empty only when it has nothing at all to draw', () => {
+    expect(isEmpty(testMessage({ body: null }))).toBe(true);
+    expect(isEmpty(testMessage({ body: 'hi' }))).toBe(false);
+    expect(isEmpty(testMessage({ body: null, attachments: [file] }))).toBe(false);
+    expect(isEmpty(testMessage({ body: null, deleted: true }))).toBe(false);
+    expect(isEmpty(testMessage({ body: null, previews: [{ url: 'https://a.example', title: null, description: null, image: null }] }))).toBe(false);
   });
 });

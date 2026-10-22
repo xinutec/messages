@@ -71,6 +71,13 @@ export function isPlain(m: Message): boolean {
     && !m.link_images.length && !m.link_offers.length;
 }
 
+/** Nothing to draw: no words, nothing attached, not deleted. A kind the
+ *  archive did not record, such as Signal's before its frames were kept. */
+export function isEmpty(m: Message): boolean {
+  return !m.body && !m.deleted && !m.previews.length && !m.attachments.length
+    && !m.link_images.length && !m.link_offers.length;
+}
+
 /** One day of the rendered window, under its date separator. */
 export interface DayGroup {
   readonly key: string;

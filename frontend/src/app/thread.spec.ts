@@ -1643,3 +1643,31 @@ describe('the sender line', () => {
     expect(await render([from('1', 100, 'Alice'), from('2', 200, 'Me', true)], 'dm')).toEqual([null, null]);
   });
 });
+
+/** A message with nothing to draw says so, rather than showing an empty bubble. */
+describe('a message with nothing to show', () => {
+  async function render(messages: Message[]) {
+    const { thread, ref, fixture } = setup();
+    const api = fakeApiOf();
+    api.conversations.mockReturnValue(of([]));
+    api.messages.mockReturnValue(page(messages));
+    TestBed.inject(MessagesStore).refresh();
+    ref.setInput('origin', 'signal');
+    ref.setInput('id', 'group:g');
+    fixture.detectChanges();
+    await settle(thread);
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    return (id: string) => root.querySelector(`.msg[data-id="${id}"] .body`)?.textContent?.replace(/\s+/g, ' ').trim();
+  }
+
+  it('says the archive cannot show it', async () => {
+    const body = await render([{ ...msg('e', 1000), body: null }]);
+    expect(body('e')).toBe("a message this archive can't show");
+  });
+
+  it('shows a call as what its sender did, not as an empty message', async () => {
+    const body = await render([{ ...msg('c', 1000), kind: 'action', body: 'started a group call' }]);
+    expect(body('c')).toBe('* started a group call');
+  });
+});

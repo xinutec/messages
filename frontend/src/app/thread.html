@@ -160,6 +160,8 @@
                            address goes through the sanitising `[href]`, and an unknown kind is a plain
                            span. Flush with the tags, as above. -->
                       <ng-container *ngTemplateOutlet="text; context: { $implicit: m }" />
+                    } @else if (isEmpty(m)) {
+                      <div class="body absent">a message this archive can't show</div>
                     }
                     <!-- A preview the sender's app made. -->
                     @for (p of m.previews; track $index) {

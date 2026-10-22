@@ -28,6 +28,7 @@ import {
   deliveryLabel,
   deliveryPending,
   hostOf,
+  isEmpty,
   isPlain,
   mib,
   reactors,
@@ -252,6 +253,7 @@ export class Thread {
 
   readonly dayGroups = computed(() => dayGroups(this.rendered()));
   readonly startsRun = computed(() => runStarts(this.rendered()));
+  protected readonly isEmpty = isEmpty;
   protected readonly isPlain = isPlain;
 
   /** Others are named, except in a DM, whose bar already says who. */

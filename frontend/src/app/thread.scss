@@ -180,7 +180,9 @@
 .body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  &.deleted {
+  // Deleted, or nothing the archive can draw.
+  &.deleted,
+  &.absent {
     font-style: italic;
     opacity: 0.6;
   }
