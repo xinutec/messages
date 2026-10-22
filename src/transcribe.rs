@@ -55,24 +55,27 @@ pub async fn lease(pool: &MySqlPool) -> Result<Option<Job>> {
     .bind(LEASE_MINUTES)
     .execute(pool)
     .await?;
-    // The held audio of every origin, less what is done or leased; the newest of
-    // each origin first, so a message just received is not behind the backlog.
+    // The held audio of every origin, less what is done or leased; newest message
+    // first, so one just received is not behind the backlog. By the message's
+    // time in milliseconds: the origins' ids are separate spaces.
     let next: Option<(String, String)> = sqlx::query_as(
         r"SELECT a.origin, a.id FROM (
-              SELECT 'signal' AS origin, CAST(id AS CHAR) AS id FROM attachments
-               WHERE content_type LIKE 'audio/%' AND stored_path IS NOT NULL
+              SELECT 'signal' AS origin, CAST(x.id AS CHAR) AS id, m.server_ts AS ts
+                FROM attachments x JOIN messages m ON m.id = x.message_id
+               WHERE x.content_type LIKE 'audio/%' AND x.stored_path IS NOT NULL
               UNION ALL
-              SELECT 'gchat', CAST(id AS CHAR) FROM gchat_attachments
-               WHERE mime LIKE 'audio/%' AND stored_path IS NOT NULL
+              SELECT 'gchat', CAST(x.id AS CHAR), g.ts_us DIV 1000
+                FROM gchat_attachments x JOIN gchat_messages g ON g.id = x.message_id
+               WHERE x.mime LIKE 'audio/%' AND x.stored_path IS NOT NULL
               UNION ALL
-              SELECT 'telegram', CAST(m.id AS CHAR) FROM telegram_messages m
+              SELECT 'telegram', CAST(m.id AS CHAR), m.sent_at * 1000 FROM telegram_messages m
                 JOIN telegram_media d ON d.conversation_id = m.conversation_id AND d.msg_id = m.msg_id
                WHERE d.content_type LIKE 'audio/%' AND d.state = 'stored'
           ) a
           LEFT JOIN transcripts t ON t.origin = a.origin AND t.attachment_id = a.id
           WHERE t.id IS NULL
              OR (t.done_at IS NULL AND t.leased_at < NOW() - INTERVAL ? MINUTE)
-          ORDER BY CAST(a.id AS UNSIGNED) DESC
+          ORDER BY a.ts DESC, a.origin, CAST(a.id AS UNSIGNED) DESC
           LIMIT 1",
     )
     .bind(LEASE_MINUTES)

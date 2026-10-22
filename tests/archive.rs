@@ -3333,6 +3333,56 @@ async fn a_voice_message_is_leased_once_and_its_words_shown() {
         .await
         .unwrap();
     assert!(error.is_some(), "retired with a reason");
+
+    // Newest message first, whichever origin it came from: the origins' ids are
+    // separate spaces, so here the oldest clip has the largest id.
+    sqlx::query(
+        "INSERT INTO telegram_messages (id, conversation_id, msg_id, sent_at, sender_id, sender_name,
+             is_outgoing, kind, text, edited_at, deleted)
+         VALUES (900000, 9191, 1, 7000, 9191, 'Tom', 0, 'message', NULL, NULL, 0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO telegram_media (conversation_id, msg_id, state, stored_name, content_type)
+         VALUES (9191, 1, 'stored', 'tg_voice.ogg', 'audio/ogg')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO gchat_messages (group_id, msg_id, ts_us) VALUES ('gvoice', 'gv1', 8000000000)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO gchat_attachments (id, message_id, name, mime, stored_path)
+         SELECT 800000, id, 'v.m4a', 'audio/mp4', 'gc_voice' FROM gchat_messages WHERE msg_id = 'gv1'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO messages (thread_id, sender_uuid, server_ts, body, is_outgoing, deleted, edited)
+         VALUES ('dm:voice', 'vic', 9000000, NULL, 0, 0, 0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO attachments (message_id, content_type, file_name, size_bytes, stored_path)
+         SELECT id, 'audio/aac', 'e.m4a', 1, 'voice_e' FROM messages WHERE server_ts = 9000000",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let mut order = Vec::new();
+    while let Some(job) = messages::transcribe::lease(&pool).await.unwrap() {
+        order.push(job.source);
+    }
+    assert_eq!(order, ["signal", "gchat", "telegram"]);
 }
 
 /// A Telegram send is queued only for a DM or group the archive holds, never a
