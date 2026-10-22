@@ -56,6 +56,13 @@ impl Date {
     }
 }
 
+impl std::fmt::Display for Date {
+    /// `YYYY-MM-DD`, as [`Date::parse_iso`] reads it.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:04}-{:02}-{:02}", self.year, self.month, self.day)
+    }
+}
+
 /// When a line was logged, to the minute irssi recorded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Timestamp {
@@ -67,11 +74,7 @@ pub struct Timestamp {
 impl std::fmt::Display for Timestamp {
     /// A MariaDB `DATETIME` literal, seconds always zero.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{:04}-{:02}-{:02} {:02}:{:02}:00",
-            self.date.year, self.date.month, self.date.day, self.hour, self.minute
-        )
+        write!(f, "{} {:02}:{:02}:00", self.date, self.hour, self.minute)
     }
 }
 

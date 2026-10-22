@@ -414,3 +414,15 @@ fn a_file_date_is_read_and_a_malformed_one_refused() {
         assert_eq!(Date::parse_iso(bad), None, "{bad:?} was accepted");
     }
 }
+
+/// A date is written as it is read: the importer's `file_date` and the dedupe
+/// key are this text, zero-padded.
+#[test]
+fn a_date_writes_back_as_it_reads() {
+    for iso in ["2026-08-14", "2014-03-09", "0999-01-01"] {
+        assert_eq!(
+            Date::parse_iso(iso).map(|d| d.to_string()).as_deref(),
+            Some(iso)
+        );
+    }
+}

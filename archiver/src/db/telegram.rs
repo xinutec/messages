@@ -110,7 +110,9 @@ impl Db {
         // populate columns added after the row landed. Every column that can be
         // NULL for a reason other than "the message has none" belongs here.
         // A known value is never overwritten: these facts do not change, so a
-        // disagreement is a bug to see, not to paper over.
+        // disagreement is a bug to see, not to paper over. The WHERE repeats each
+        // value because sqlx connects with CLIENT_FOUND_ROWS: `rows_affected`
+        // counts matched rows, and only this guard makes it count changed ones.
         let enriched = sqlx::query(
             "UPDATE telegram_messages
                 SET media_kind = COALESCE(media_kind, ?),
@@ -190,17 +192,16 @@ impl Db {
         .fetch_optional(&self.pool)
         .await?;
 
+        let same_words = if enriched {
+            TelegramStored::Enriched
+        } else {
+            TelegramStored::Unchanged
+        };
         let mut tx = self.pool.begin().await?;
         let outcome = match existing {
             // Gone between the insert and the read; the next delivery inserts it.
             None => TelegramStored::Unchanged,
-            Some((_, stored_edit)) if stored_edit == row.edited_at => {
-                if enriched {
-                    TelegramStored::Enriched
-                } else {
-                    TelegramStored::Unchanged
-                }
-            }
+            Some((_, stored_edit)) if stored_edit == row.edited_at => same_words,
             // Telegram moves `edit_date` for a reaction too. The words did not
             // change, so there is no version to file; the date is kept as
             // Telegram has it, and the viewer reads "edited" off the history.
@@ -215,11 +216,7 @@ impl Db {
                 .bind(stored_edit)
                 .execute(&mut *tx)
                 .await?;
-                if enriched {
-                    TelegramStored::Enriched
-                } else {
-                    TelegramStored::Unchanged
-                }
+                same_words
             }
             Some((stored_text, stored_edit)) => {
                 // The superseded version, under the `edit_date` it carried; see v18.
@@ -574,19 +571,15 @@ impl Db {
         Ok(row)
     }
 
-    /// Whether this message's bytes are already accounted for (stored, offered or
-    /// failed), so the eager pass can skip it.
-    pub async fn telegram_media_state(
-        &self,
-        conversation_id: i64,
-        msg_id: i32,
-    ) -> Result<Option<String>> {
+    /// Whether this message's bytes are already accounted for, in any state, so
+    /// the eager pass can skip it.
+    pub async fn telegram_media_known(&self, conversation_id: i64, msg_id: i32) -> Result<bool> {
         Ok(sqlx::query_scalar(
-            "SELECT state FROM telegram_media WHERE conversation_id = ? AND msg_id = ?",
+            "SELECT EXISTS (SELECT 1 FROM telegram_media WHERE conversation_id = ? AND msg_id = ?)",
         )
         .bind(conversation_id)
         .bind(msg_id)
-        .fetch_optional(&self.pool)
+        .fetch_one(&self.pool)
         .await?)
     }
 
@@ -638,7 +631,7 @@ impl Db {
         .bind(conversation_id)
         .bind(msg_id)
         .bind(state.as_str())
-        .bind(note)
+        .bind(note.map(fit_note))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -724,7 +717,7 @@ impl Db {
               WHERE id = ? AND state = 'sending'",
         )
         .bind(msg_id)
-        .bind(note)
+        .bind(note.map(fit_note))
         .bind(id)
         .execute(&self.pool)
         .await?;
@@ -737,7 +730,7 @@ impl Db {
             "UPDATE telegram_outbox SET state = 'failed', note = ?, done_at = CURRENT_TIMESTAMP
               WHERE id = ? AND state = 'sending'",
         )
-        .bind(note.chars().take(255).collect::<String>())
+        .bind(fit_note(note))
         .bind(id)
         .execute(&self.pool)
         .await?;
@@ -855,6 +848,11 @@ impl Db {
 }
 
 /// A reaction's `reaction_key`, as the generated column computes it (v17).
+/// A note cut to its `VARCHAR(255)` column, which would refuse a longer one.
+fn fit_note(note: &str) -> String {
+    note.chars().take(255).collect()
+}
+
 fn reaction_key(emoji: Option<&str>, custom_emoji_id: Option<i64>) -> String {
     match (emoji, custom_emoji_id) {
         (Some(e), _) => e.to_string(),

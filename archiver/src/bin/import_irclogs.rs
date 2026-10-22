@@ -81,11 +81,11 @@ struct Report {
 /// The size catches what a coarse `rsync` mtime might not.
 fn file_state(path: &Path) -> Result<(i64, i64)> {
     let meta = std::fs::metadata(path)?;
-    let mtime = meta
-        .modified()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos() as i64);
-    Ok((mtime, meta.len() as i64))
+    let since_epoch = meta.modified()?.duration_since(std::time::UNIX_EPOCH)?;
+    Ok((
+        i64::try_from(since_epoch.as_nanos())?,
+        i64::try_from(meta.len())?,
+    ))
 }
 
 /// The part of a snapshot that is safe to parse: up to and including the last
@@ -170,17 +170,14 @@ async fn main() -> Result<()> {
 
         // Lossily: some old logs are not valid UTF-8.
         let bytes = std::fs::read(&full)?;
-        let text = match String::from_utf8_lossy(&bytes) {
-            std::borrow::Cow::Borrowed(s) => s.to_string(),
-            std::borrow::Cow::Owned(s) => {
-                report.lossy_files.push(rel.clone());
-                s
-            }
-        };
+        let text = String::from_utf8_lossy(&bytes);
+        if matches!(text, std::borrow::Cow::Owned(_)) {
+            report.lossy_files.push(rel.clone());
+        }
 
         let parsed = parse_log(path.date, complete_lines(&text));
         report.files += 1;
-        report.unparsed += parsed.unparsed.len() as u64;
+        report.unparsed += u64::try_from(parsed.unparsed.len())?;
         for line_no in &parsed.unparsed {
             if report.unparsed_examples.len() < 20 {
                 report.unparsed_examples.push(format!("{rel}:{line_no}"));
@@ -188,10 +185,7 @@ async fn main() -> Result<()> {
         }
 
         let is_status = args.self_nicks.contains(&path.target);
-        let file_date = format!(
-            "{:04}-{:02}-{:02}",
-            path.date.year, path.date.month, path.date.day
-        );
+        let file_date = path.date.to_string();
 
         for entry in &parsed.entries {
             *report.by_kind.entry(entry.kind.as_str()).or_default() += 1;
@@ -215,7 +209,7 @@ async fn main() -> Result<()> {
                 .insert_irc_lines(conversation_id, &path.network, &file_date, &lines)
                 .await?;
             report.inserted += written;
-            report.duplicates += lines.len() as u64 - written;
+            report.duplicates += u64::try_from(lines.len())? - written;
         }
 
         // After its lines are in, empty files included. A file that failed never

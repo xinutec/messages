@@ -5,7 +5,7 @@
 //! Skips when `SIGNAL_TEST_DATABASE_URL` is unset, and refuses to skip in CI.
 
 use signal_archiver::db::Db;
-use signal_archiver::parse::{Message, ThreadId};
+use signal_archiver::parse::{Edit, Message, ThreadId};
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
 
 async fn connect() -> Option<(Db, MySqlPool)> {
@@ -61,12 +61,12 @@ async fn an_edit_of_an_edit_is_filed_against_the_original() {
 
     db.insert_message(&original(&sender, sent)).await.unwrap();
     db.mark_edited(&sender, sent).await.unwrap();
-    db.insert_edit(&thread, &sender, first, Some("second words"), sent, false)
+    db.insert_edit(&edit(&thread, &sender, first, "second words", sent))
         .await
         .unwrap();
     // Signal names the edit it replaces, not the original.
     db.mark_edited(&sender, first).await.unwrap();
-    db.insert_edit(&thread, &sender, second, Some("third words"), first, false)
+    db.insert_edit(&edit(&thread, &sender, second, "third words", first))
         .await
         .unwrap();
 
@@ -79,4 +79,18 @@ async fn an_edit_of_an_edit_is_filed_against_the_original() {
     .await
     .unwrap();
     assert_eq!(points, [(first, sent), (second, sent)]);
+}
+
+/// Our own edit of `of`, sent at `ts`.
+fn edit(thread: &ThreadId, sender: &str, ts: i64, body: &str, of: i64) -> Edit {
+    Edit {
+        thread_id: thread.clone(),
+        sender: sender.to_string(),
+        edit_ts: ts,
+        target_ts: of,
+        body: Some(body.to_string()),
+        is_outgoing: false,
+        styles: Vec::new(),
+        mentions: Vec::new(),
+    }
 }

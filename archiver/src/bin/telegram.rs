@@ -36,6 +36,7 @@
 //! `DB_PASSWORD`, `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`.
 
 use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -504,7 +505,7 @@ async fn recapture(client: &Client, db: &Db, self_id: i64) -> Result<()> {
             }
             // After the writes; see migration v39.
             db.record_telegram_recapture(conversation_id, last).await?;
-            done += ids.len() as u64;
+            done += u64::try_from(ids.len())?;
             total += present;
             tracing::info!(
                 "conversation {conversation_id}: {done}/{held} re-read \
@@ -863,11 +864,7 @@ async fn fetch_media(
         return Ok(());
     };
     let msg_id = message.id();
-    if db
-        .telegram_media_state(conversation_id, msg_id)
-        .await?
-        .is_some()
-    {
+    if db.telegram_media_known(conversation_id, msg_id).await? {
         return Ok(());
     }
 
@@ -883,8 +880,7 @@ async fn fetch_media(
     }
 
     let (stored_name, path) = media_file(cfg, conversation_id, msg_id);
-    // `Ok(false)` means there was nothing to download.
-    match message.download_media(&path).await {
+    match download_to(message, &path).await {
         Ok(true) => {
             // No size from `stat`: it races the write. See migration v26.
             db.record_telegram_media_stored(
@@ -896,7 +892,7 @@ async fn fetch_media(
             .await?;
         }
         Ok(false) => {
-            // A thumbnail-only or expired reference; a reader may yet get it.
+            // A reader may yet get it.
             db.record_telegram_media_state(
                 conversation_id,
                 msg_id,
@@ -906,20 +902,43 @@ async fn fetch_media(
             .await?;
         }
         Err(e) => {
-            // Remove the partial file.
-            let _ = tokio::fs::remove_file(&path).await;
-            let note = format!("{e}");
-            tracing::warn!("media {conversation_id}/{msg_id} could not be fetched: {note}");
+            tracing::warn!("media {conversation_id}/{msg_id} could not be fetched: {e:#}");
+            let note = format!("{e:#}");
             db.record_telegram_media_state(
                 conversation_id,
                 msg_id,
                 TelegramMediaState::Failed,
-                Some(note.chars().take(200).collect::<String>().as_str()),
+                Some(&note),
             )
             .await?;
         }
     }
     Ok(())
+}
+
+/// Download a message's media to `path`. `Ok(false)` when Telegram had no file
+/// to give: a thumbnail-only or expired reference. A failed download leaves no
+/// partial file.
+async fn download_to(message: &grammers_client::message::Message, path: &Path) -> Result<bool> {
+    match message.download_media(path).await {
+        Ok(got) => Ok(got),
+        Err(e) => {
+            let _ = tokio::fs::remove_file(path).await;
+            Err(anyhow::anyhow!("{e}"))
+        }
+    }
+}
+
+/// The session's reference for a conversation, by the Bot-API dialog id the
+/// archive stores.
+async fn peer_ref_of(session: &DbSession, id: i64) -> Result<PeerRef> {
+    let peer_id =
+        PeerId::from_bot_api_dialog_id(id).with_context(|| format!("{id} is not a dialog id"))?;
+    session
+        .peer_ref(peer_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("resolving {id}: {e}"))?
+        .with_context(|| format!("no peer reference for {id}"))
 }
 
 /// Where a message's media is stored: its `stored_name`, and the path under
@@ -969,17 +988,12 @@ async fn serve_requests(
             if let Err(e) = serve_one(client, db, cfg, session, conversation_id, msg_id).await {
                 // Marked failed so it leaves the queue; a reader can ask again.
                 tracing::warn!("requested media {conversation_id}/{msg_id} failed: {e:#}");
+                let note = format!("{e:#}");
                 db.record_telegram_media_state(
                     conversation_id,
                     msg_id,
                     TelegramMediaState::Failed,
-                    Some(
-                        format!("{e:#}")
-                            .chars()
-                            .take(200)
-                            .collect::<String>()
-                            .as_str(),
-                    ),
+                    Some(&note),
                 )
                 .await?;
             }
@@ -996,14 +1010,7 @@ async fn serve_one(
     conversation_id: i64,
     msg_id: i32,
 ) -> Result<()> {
-    // `PeerId` uses the Bot-API dialog format, which is what the archive stores.
-    let peer_id = grammers_client::session::types::PeerId::from_bot_api_dialog_id(conversation_id)
-        .with_context(|| format!("{conversation_id} is not a dialog id"))?;
-    let peer_ref = session
-        .peer_ref(peer_id)
-        .await
-        .map_err(|e| anyhow::anyhow!("resolving {conversation_id}: {e}"))?
-        .with_context(|| format!("no peer reference for {conversation_id}"))?;
+    let peer_ref = peer_ref_of(session, conversation_id).await?;
 
     let messages = client
         .get_messages_by_id(peer_ref, &[msg_id])
@@ -1018,8 +1025,8 @@ async fn serve_one(
     };
 
     let (stored_name, path) = media_file(cfg, conversation_id, msg_id);
-    match message.download_media(&path).await {
-        Ok(true) => {
+    match download_to(&message, &path).await? {
+        true => {
             db.record_telegram_media_stored(
                 conversation_id,
                 msg_id,
@@ -1030,11 +1037,7 @@ async fn serve_one(
             tracing::info!("fetched requested media {conversation_id}/{msg_id}");
             Ok(())
         }
-        Ok(false) => anyhow::bail!("telegram returned no file"),
-        Err(e) => {
-            let _ = tokio::fs::remove_file(&path).await;
-            Err(anyhow::anyhow!("{e}"))
-        }
+        false => anyhow::bail!("telegram returned no file"),
     }
 }
 
@@ -1089,14 +1092,7 @@ async fn send_one(
     self_id: i64,
     send: &signal_archiver::db::TelegramSend,
 ) -> Result<(i32, Option<String>)> {
-    let id = send.conversation_id;
-    let peer_id =
-        PeerId::from_bot_api_dialog_id(id).with_context(|| format!("{id} is not a dialog id"))?;
-    let peer_ref = session
-        .peer_ref(peer_id)
-        .await
-        .map_err(|e| anyhow::anyhow!("resolving {id}: {e}"))?
-        .with_context(|| format!("no peer reference for {id}"))?;
+    let peer_ref = peer_ref_of(session, send.conversation_id).await?;
     // Plain text, as typed: no markdown, and a link previews as in the apps.
     let input = grammers_client::message::InputMessage::new()
         .text(send.text.as_str())
@@ -1123,7 +1119,7 @@ async fn send_one(
     if let Some(note) = &note {
         tracing::error!("outbox {}: {note}", send.id);
     }
-    Ok((msg_id, note.map(|n| n.chars().take(255).collect())))
+    Ok((msg_id, note))
 }
 
 /// The chat's small picture, as `avatars/<id>.jpg` under the media dir, where the
@@ -1208,7 +1204,7 @@ async fn walk(
     }
 
     // `messages_stored` counts new rows only, so a re-walk does not inflate it.
-    let mut walked = 0i64;
+    let mut walked = 0usize;
     let mut stored = 0i64;
     let mut enriched = 0i64;
     let mut total_walked = 0i64;
@@ -1228,7 +1224,7 @@ async fn walk(
         });
         walked += 1;
         total_walked += 1;
-        if (walked as usize).is_multiple_of(PAGE) {
+        if walked.is_multiple_of(PAGE) {
             // The delta since the last checkpoint.
             db.record_telegram_backfill(id, oldest, false, stored)
                 .await?;

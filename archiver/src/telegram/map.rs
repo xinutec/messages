@@ -473,9 +473,9 @@ fn fwd_name(header: &tl::enums::MessageFwdHeader) -> Option<String> {
     match header {
         tl::enums::MessageFwdHeader::Header(h) => h
             .from_name
-            .clone()
-            .or_else(|| h.post_author.clone())
-            .and_then(|n| non_empty(&n)),
+            .as_deref()
+            .or(h.post_author.as_deref())
+            .and_then(non_empty),
     }
 }
 

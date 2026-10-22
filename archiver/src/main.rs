@@ -110,7 +110,7 @@ async fn run_ws(ws_url: &str, ctx: &Ctx) -> Result<()> {
                 if idle_probes > MAX_IDLE_PROBES {
                     anyhow::bail!(
                         "no ws traffic for ~{}s ({idle_probes} idle windows); connection is dead",
-                        READ_TIMEOUT.as_secs() * idle_probes as u64
+                        READ_TIMEOUT.as_secs() * u64::from(idle_probes)
                     );
                 }
                 tracing::warn!(
@@ -214,18 +214,7 @@ async fn dispatch(ctx: &Ctx, frame: &Value) -> Result<()> {
         Action::Edit(e) => {
             ctx.db.upsert_conversation(&e.thread_id).await?;
             let n = ctx.db.mark_edited(&e.sender, e.target_ts).await?;
-            if let Some(row) = ctx
-                .db
-                .insert_edit(
-                    &e.thread_id,
-                    &e.sender,
-                    e.edit_ts,
-                    e.body.as_deref(),
-                    e.target_ts,
-                    e.is_outgoing,
-                )
-                .await?
-            {
+            if let Some(row) = ctx.db.insert_edit(&e).await? {
                 ctx.db.insert_text_styles(row, &e.styles).await?;
                 ctx.db.insert_mentions(row, &e.mentions).await?;
             }
@@ -237,16 +226,7 @@ async fn dispatch(ctx: &Ctx, frame: &Value) -> Result<()> {
         }
         Action::Reaction(r) => {
             ctx.db.upsert_conversation(&r.thread_id).await?;
-            ctx.db
-                .insert_reaction(
-                    &r.thread_id,
-                    r.target_ts,
-                    &r.author,
-                    r.emoji.as_deref(),
-                    r.reaction_ts,
-                    r.removed,
-                )
-                .await?;
+            ctx.db.insert_reaction(&r).await?;
         }
         Action::Message(m) => {
             ctx.db.upsert_conversation(&m.thread_id).await?;
@@ -269,13 +249,7 @@ async fn dispatch(ctx: &Ctx, frame: &Value) -> Result<()> {
                         None => None,
                     };
                     ctx.db
-                        .insert_attachment(
-                            msg_id,
-                            att.content_type.as_deref(),
-                            att.file_name.as_deref(),
-                            att.size,
-                            stored.as_deref(),
-                        )
+                        .insert_attachment(msg_id, att, stored.as_deref())
                         .await?;
                 }
             }
@@ -387,7 +361,7 @@ async fn refresh_contact_names(ctx: Ctx) {
                     }
                     let avatar =
                         format!("{}/v1/contacts/{}/{uuid}/avatar", ctx.http_base, ctx.number);
-                    let thread = ThreadId::Dm(uuid.to_string()).to_string();
+                    let thread = ThreadId::Dm(uuid.to_string());
                     if let Err(e) = keep_avatar(&ctx, &avatar, &thread).await {
                         tracing::warn!("could not keep {uuid}'s picture: {e:#}");
                     }
@@ -415,7 +389,7 @@ async fn refresh_group_names(ctx: Ctx) {
                     ) else {
                         continue;
                     };
-                    let thread = ThreadId::Group(iid.to_string()).to_string();
+                    let thread = ThreadId::Group(iid.to_string());
                     if let Err(e) = ctx.db.set_conversation_name(&thread, name).await {
                         tracing::warn!("failed to store group name for {iid}: {e}");
                     }
@@ -440,9 +414,10 @@ async fn refresh_group_names(ctx: Ctx) {
 /// Keep a conversation's picture where the viewer looks for it:
 /// `avatars/<attach::avatar_name>` under the attachments dir. Rewritten only when the bytes change, so
 /// the file's time stays the picture's version; removed once Signal has none.
-async fn keep_avatar(ctx: &Ctx, url: &str, thread: &str) -> Result<()> {
+async fn keep_avatar(ctx: &Ctx, url: &str, thread: &ThreadId) -> Result<()> {
+    let name = attach::avatar_name(&thread.to_string());
     let dir = std::path::Path::new(&ctx.attach_dir).join("avatars");
-    let path = dir.join(attach::avatar_name(thread));
+    let path = dir.join(&name);
     let res = ctx.http.get(url).timeout(GROUPS_TIMEOUT).send().await?;
     let status = res.status();
     let bytes = res.bytes().await?;
@@ -461,7 +436,7 @@ async fn keep_avatar(ctx: &Ctx, url: &str, thread: &str) -> Result<()> {
     }
     // Written aside and renamed, so the viewer never serves half a picture.
     tokio::fs::create_dir_all(&dir).await?;
-    let part = dir.join(format!("{}.part", attach::avatar_name(thread)));
+    let part = dir.join(format!("{name}.part"));
     tokio::fs::write(&part, &bytes).await?;
     tokio::fs::rename(&part, &path).await?;
     Ok(())

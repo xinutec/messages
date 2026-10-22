@@ -42,7 +42,7 @@ fn incoming_text_dm() {
             name: Some("Alice".into()),
         })
     );
-    assert_eq!(p.dm_name, Some(("dm:u1".into(), "Alice".into())));
+    assert_eq!(p.dm_name, Some((ThreadId::Dm("u1".into()), "Alice".into())));
 }
 
 #[test]
@@ -266,7 +266,7 @@ fn incoming_edit_maps_to_edit_action() {
             name: Some("Alice".into())
         })
     );
-    assert_eq!(p.dm_name, Some(("dm:u1".into(), "Alice".into())));
+    assert_eq!(p.dm_name, Some((ThreadId::Dm("u1".into()), "Alice".into())));
 }
 
 #[test]

@@ -53,13 +53,13 @@ impl Db {
 
     /// Set a conversation's display name (DM contact name or group title). No-op
     /// for an empty name.
-    pub async fn set_conversation_name(&self, thread_id: &str, name: &str) -> Result<()> {
+    pub async fn set_conversation_name(&self, thread_id: &ThreadId, name: &str) -> Result<()> {
         if name.is_empty() {
             return Ok(());
         }
         sqlx::query("UPDATE conversations SET name = ? WHERE thread_id = ?")
             .bind(name)
-            .bind(thread_id)
+            .bind(thread_id.to_string())
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -227,26 +227,18 @@ impl Db {
 
     /// Store an edited version as its own row, linked to the original via
     /// `edit_of_ts`, also when Signal named an earlier edit (`edit_root`).
-    pub async fn insert_edit(
-        &self,
-        thread_id: &ThreadId,
-        sender_uuid: &str,
-        edit_ts: i64,
-        body: Option<&str>,
-        edit_of_ts: i64,
-        is_outgoing: bool,
-    ) -> Result<Option<u64>> {
-        let edit_of_ts = self.edit_root(sender_uuid, edit_of_ts).await?;
+    pub async fn insert_edit(&self, e: &crate::parse::Edit) -> Result<Option<u64>> {
+        let edit_of_ts = self.edit_root(&e.sender, e.target_ts).await?;
         let res = sqlx::query(
             "INSERT IGNORE INTO messages \
                 (thread_id, sender_uuid, server_ts, body, is_outgoing, edit_of_ts) \
              VALUES (?, ?, ?, ?, ?, ?)",
         )
-        .bind(thread_id.to_string())
-        .bind(sender_uuid)
-        .bind(edit_ts)
-        .bind(body)
-        .bind(is_outgoing)
+        .bind(e.thread_id.to_string())
+        .bind(&e.sender)
+        .bind(e.edit_ts)
+        .bind(e.body.as_deref())
+        .bind(e.is_outgoing)
         .bind(edit_of_ts)
         .execute(&self.pool)
         .await?;
@@ -313,7 +305,7 @@ impl Db {
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(message_id)
-        .bind(position as i32)
+        .bind(i32::try_from(position)?)
         .bind(&p.url)
         .bind(p.title.as_deref())
         .bind(p.description.as_deref())
@@ -344,12 +336,12 @@ impl Db {
         Ok(())
     }
 
+    /// Record one of a message row's attachments, and where its bytes were
+    /// stored, if they were.
     pub async fn insert_attachment(
         &self,
         message_id: u64,
-        content_type: Option<&str>,
-        file_name: Option<&str>,
-        size_bytes: Option<i64>,
+        a: &crate::parse::Attachment,
         stored_path: Option<&str>,
     ) -> Result<()> {
         sqlx::query(
@@ -357,35 +349,27 @@ impl Db {
              VALUES (?, ?, ?, ?, ?)",
         )
         .bind(message_id)
-        .bind(content_type)
-        .bind(file_name)
-        .bind(size_bytes)
+        .bind(a.content_type.as_deref())
+        .bind(a.file_name.as_deref())
+        .bind(a.size)
         .bind(stored_path)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
-    pub async fn insert_reaction(
-        &self,
-        thread_id: &ThreadId,
-        target_ts: i64,
-        author_uuid: &str,
-        emoji: Option<&str>,
-        reaction_ts: i64,
-        removed: bool,
-    ) -> Result<()> {
+    pub async fn insert_reaction(&self, r: &crate::parse::Reaction) -> Result<()> {
         sqlx::query(
             "INSERT IGNORE INTO reactions
                 (thread_id, target_ts, author_uuid, emoji, reaction_ts, removed)
              VALUES (?, ?, ?, ?, ?, ?)",
         )
-        .bind(thread_id.to_string())
-        .bind(target_ts)
-        .bind(author_uuid)
-        .bind(emoji)
-        .bind(reaction_ts)
-        .bind(removed)
+        .bind(r.thread_id.to_string())
+        .bind(r.target_ts)
+        .bind(&r.author)
+        .bind(r.emoji.as_deref())
+        .bind(r.reaction_ts)
+        .bind(r.removed)
         .execute(&self.pool)
         .await?;
         Ok(())

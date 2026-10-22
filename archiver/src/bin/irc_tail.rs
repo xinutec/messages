@@ -235,16 +235,18 @@ fn beat(args: &Args) {
         let _ = std::fs::create_dir_all(dir);
     }
     if let Err(e) = std::fs::write(path, format!("{:?}\n", std::time::SystemTime::now())) {
-        eprintln!(
-            "irc_tail: could not write the heartbeat to {}: {e}",
-            path.display()
-        );
+        tracing::warn!("could not write the heartbeat to {}: {e}", path.display());
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = parse_args()?;
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+        )
+        .init();
     let db = Db::connect(&signal_archiver::db::url_from_env()?).await?;
 
     // See `poll`: the mounted secret is not readable by this process's user.
@@ -259,18 +261,15 @@ async fn main() -> Result<()> {
     // key makes harmless.
     let mut after: u64 = 0;
 
-    println!(
-        "irc_tail: polling {}:{} for logged lines",
-        args.host, args.port
-    );
+    tracing::info!("polling {}:{} for logged lines", args.host, args.port);
     beat(&args);
 
     loop {
         match poll(&args, &key, after).await {
             Ok(reply) => {
                 if reply.gap {
-                    eprintln!(
-                        "irc_tail: the plugin's ring overran our cursor — \
+                    tracing::warn!(
+                        "the plugin's ring overran our cursor — \
                          some lines will arrive with the next import, not here"
                     );
                 }
@@ -283,7 +282,7 @@ async fn main() -> Result<()> {
                         // The import will place it.
                         Err(e) => {
                             lost += 1;
-                            eprintln!("irc_tail: could not store a line: {e:#}");
+                            tracing::error!("could not store a line: {e:#}");
                         }
                     }
                 }
@@ -297,8 +296,8 @@ async fn main() -> Result<()> {
                     } else {
                         String::new()
                     };
-                    println!(
-                        "irc_tail: {offered} line(s) offered, {wrote} new, \
+                    tracing::info!(
+                        "{offered} line(s) offered, {wrote} new, \
                          {held} already archived{alarm}, seq now {seq}",
                         offered = reply.events.len(),
                         seq = reply.seq,
@@ -309,7 +308,7 @@ async fn main() -> Result<()> {
             }
             Err(e) => {
                 // No heartbeat: this is what the liveness probe is for.
-                eprintln!("irc_tail: poll failed, retrying in {RECONNECT:?}: {e:#}");
+                tracing::warn!("poll failed, retrying in {RECONNECT:?}: {e:#}");
                 tokio::time::sleep(RECONNECT).await;
             }
         }

@@ -162,12 +162,6 @@ pub struct Mention {
 /// A payload's `textStyles`, dropping any run that lacks a field or has a
 /// negative position.
 fn text_styles(msg: &Value) -> Vec<TextStyle> {
-    let int = |r: &Value, k: &str| {
-        r.get(k)
-            .and_then(Value::as_i64)
-            .and_then(|n| i32::try_from(n).ok())
-            .filter(|n| *n >= 0)
-    };
     msg.get("textStyles")
         .and_then(Value::as_array)
         .map(|runs| {
@@ -175,8 +169,8 @@ fn text_styles(msg: &Value) -> Vec<TextStyle> {
                 .filter_map(|r| {
                     Some(TextStyle {
                         style: r.get("style")?.as_str()?.to_string(),
-                        start_utf16: int(r, "start")?,
-                        length_utf16: int(r, "length")?,
+                        start_utf16: position(r, "start")?,
+                        length_utf16: position(r, "length")?,
                     })
                 })
                 .collect()
@@ -184,22 +178,21 @@ fn text_styles(msg: &Value) -> Vec<TextStyle> {
         .unwrap_or_default()
 }
 
+/// A run's UTF-16 position field, when present and not negative.
+fn position(r: &Value, key: &str) -> Option<i32> {
+    i32::try_from(int(r, key)?).ok().filter(|n| *n >= 0)
+}
+
 /// A payload's `mentions`, dropping any without a uuid or with a negative position.
 fn mentions(msg: &Value) -> Vec<Mention> {
-    let int = |r: &Value, k: &str| {
-        r.get(k)
-            .and_then(Value::as_i64)
-            .and_then(|n| i32::try_from(n).ok())
-            .filter(|n| *n >= 0)
-    };
     msg.get("mentions")
         .and_then(Value::as_array)
         .map(|ms| {
             ms.iter()
                 .filter_map(|r| {
                     Some(Mention {
-                        start_utf16: int(r, "start")?,
-                        length_utf16: int(r, "length")?,
+                        start_utf16: position(r, "start")?,
+                        length_utf16: position(r, "length")?,
                         uuid: r
                             .get("uuid")?
                             .as_str()
@@ -320,8 +313,7 @@ impl CallEventKind {
 pub struct Parsed {
     pub action: Action,
     pub contact: Option<Contact>,
-    /// `(thread_id, name)`.
-    pub dm_name: Option<(String, String)>,
+    pub dm_name: Option<(ThreadId, String)>,
 }
 
 impl Parsed {
@@ -363,7 +355,7 @@ fn sender_contact(
     env: &Value,
     sender: &str,
     payload: &Value,
-) -> (Contact, Option<(String, String)>) {
+) -> (Contact, Option<(ThreadId, String)>) {
     let name = env.get("sourceName").and_then(Value::as_str);
     let contact = Contact {
         uuid: sender.to_string(),
@@ -374,7 +366,7 @@ fn sender_contact(
         name: name.map(str::to_string),
     };
     let dm_name = match (payload.get("groupInfo"), name) {
-        (None, Some(n)) => Some((ThreadId::Dm(sender.to_string()).to_string(), n.to_string())),
+        (None, Some(n)) => Some((ThreadId::Dm(sender.to_string()), n.to_string())),
         _ => None,
     };
     (contact, dm_name)
@@ -581,8 +573,7 @@ pub fn parse_frame(frame: &Value) -> Parsed {
             if let Some(inner) = edit.get("dataMessage") {
                 let sender = source_of(env);
                 let Some(edit_ts) = sent
-                    .and_then(|s| s.get("timestamp"))
-                    .and_then(Value::as_i64)
+                    .and_then(|s| int(s, "timestamp"))
                     .or_else(|| int(inner, "timestamp"))
                 else {
                     return Parsed::skip();
@@ -628,17 +619,13 @@ pub fn parse_frame(frame: &Value) -> Parsed {
         let me = source_of(env);
         let targets: Vec<i64> = reads.iter().filter_map(|r| int(r, "timestamp")).collect();
         if !targets.is_empty() {
-            return Parsed {
-                action: Action::Receipt(Receipt {
-                    author: me,
-                    kind: ReceiptKind::Read,
-                    // A sync read has no `when`; the envelope's clock is closest.
-                    when_ts: int(env, "timestamp").unwrap_or(0),
-                    targets,
-                }),
-                contact: None,
-                dm_name: None,
-            };
+            return Parsed::only(Action::Receipt(Receipt {
+                author: me,
+                kind: ReceiptKind::Read,
+                // A sync read has no `when`; the envelope's clock is closest.
+                when_ts: int(env, "timestamp").unwrap_or(0),
+                targets,
+            }));
         }
     }
 
@@ -662,18 +649,14 @@ pub fn parse_frame(frame: &Value) -> Parsed {
         if let Some(kind) = kind
             && !targets.is_empty()
         {
-            return Parsed {
-                action: Action::Receipt(Receipt {
-                    author: source_of(env),
-                    kind,
-                    when_ts: int(receipt, "when")
-                        .or_else(|| int(env, "timestamp"))
-                        .unwrap_or(0),
-                    targets,
-                }),
-                contact: None,
-                dm_name: None,
-            };
+            return Parsed::only(Action::Receipt(Receipt {
+                author: source_of(env),
+                kind,
+                when_ts: int(receipt, "when")
+                    .or_else(|| int(env, "timestamp"))
+                    .unwrap_or(0),
+                targets,
+            }));
         }
         return Parsed::skip();
     }
@@ -693,18 +676,14 @@ pub fn parse_frame(frame: &Value) -> Parsed {
         if let Some((event, body)) = found
             && let Some(call_id) = int(body, "id")
         {
-            return Parsed {
-                action: Action::Call(CallEvent {
-                    call_id,
-                    peer,
-                    event,
-                    detail: body.get("type").and_then(Value::as_str).map(str::to_string),
-                    device_id: int(body, "deviceId"),
-                    event_ts,
-                }),
-                contact: None,
-                dm_name: None,
-            };
+            return Parsed::only(Action::Call(CallEvent {
+                call_id,
+                peer,
+                event,
+                detail: body.get("type").and_then(Value::as_str).map(str::to_string),
+                device_id: int(body, "deviceId"),
+                event_ts,
+            }));
         }
         return Parsed::skip();
     }

@@ -4,7 +4,6 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use irclog::IrcLine;
-use sqlx::Row;
 
 use super::{Db, INSERT_CHUNK};
 
@@ -69,17 +68,14 @@ impl Db {
     /// Every file the importer has already read, as `rel_path → (mtime_ns, size)`,
     /// read whole to save a round trip per file.
     pub async fn irc_import_state(&self) -> Result<HashMap<String, (i64, i64)>> {
-        let rows = sqlx::query("SELECT rel_path, mtime_ns, size_bytes FROM irc_import_state")
-            .fetch_all(&self.pool)
-            .await?;
-        rows.into_iter()
-            .map(|r| {
-                Ok((
-                    r.try_get("rel_path")?,
-                    (r.try_get("mtime_ns")?, r.try_get("size_bytes")?),
-                ))
-            })
-            .collect()
+        let rows: Vec<(String, i64, i64)> =
+            sqlx::query_as("SELECT rel_path, mtime_ns, size_bytes FROM irc_import_state")
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(path, mtime, size)| (path, (mtime, size)))
+            .collect())
     }
 
     /// Mark files as imported at the state they were read in.
