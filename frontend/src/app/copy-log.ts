@@ -11,6 +11,7 @@
 // An action's two spaces are irssi's; the parser matches on them.
 
 import { attachmentLabel } from './attachment';
+import { UNSHOWN } from './message-view';
 import { Attachment, Message } from './models';
 
 const pad2 = (n: number): string => String(n).padStart(2, '0');
@@ -38,8 +39,10 @@ function bodyLines(m: Message): string[] {
   const lines: string[] = [];
   if (m.body) lines.push(...m.body.split('\n'));
   for (const a of m.attachments) lines.push(attachmentLine(a));
+  // As the screen says it, rather than a message the copy drops.
+  if (lines.length === 0) return [`(${UNSHOWN})`];
   // On the last line, as a note about the whole message.
-  if (m.edited && lines.length > 0) lines[lines.length - 1] += ' (edited)';
+  if (m.edited) lines[lines.length - 1] += ' (edited)';
   return lines;
 }
 

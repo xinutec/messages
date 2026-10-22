@@ -217,6 +217,12 @@ describe('formatChatLog', () => {
     expect(out).toBe('--- Day changed Thu Aug 13 2026\n01:00 <a> x');
   });
 
+  it('copies a message with nothing to draw as the screen says it, not as nothing', () => {
+    const t = at(2026, 8, 13, 14, 32);
+    const log = formatChatLog([msg({ ts: t, sender: 'alice' }), msg({ ts: t + 60_000, sender: 'bob', body: 'hi' })]);
+    expect(log.split('\n').slice(1)).toEqual(["14:32 <alice> (a message this archive can't show)", '14:33 <bob> hi']);
+  });
+
   it('is empty for no messages', () => {
     expect(formatChatLog([])).toBe('');
   });

@@ -67,14 +67,21 @@ export function mib(bytes: number): string {
 
 /** Words and nothing after them, so the time can share their last line. */
 export function isPlain(m: Message): boolean {
-  return !!m.body && !m.deleted && !m.previews.length && !m.attachments.length
-    && !m.link_images.length && !m.link_offers.length;
+  return !!m.body && onlyWords(m);
 }
+
+/** What a message with nothing to draw says instead, on screen and in a copy. */
+export const UNSHOWN = "a message this archive can't show";
 
 /** Nothing to draw: no words, nothing attached, not deleted. A kind the
  *  archive did not record, such as Signal's before its frames were kept. */
 export function isEmpty(m: Message): boolean {
-  return !m.body && !m.deleted && !m.previews.length && !m.attachments.length
+  return !m.body && onlyWords(m);
+}
+
+/** Not deleted, and nothing beside the words: no preview, file or link picture. */
+function onlyWords(m: Message): boolean {
+  return !m.deleted && !m.previews.length && !m.attachments.length
     && !m.link_images.length && !m.link_offers.length;
 }
 

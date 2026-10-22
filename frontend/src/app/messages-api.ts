@@ -52,7 +52,7 @@ export class MessagesApi {
   /** The newest page as the service worker last kept it, or `null`; the URL is
    *  the one `messages` asks for, so the worker's key is the same. */
   keptMessages(origin: Origin, id: string, limit = 100): Promise<MessagesPage | null> {
-    return kept<MessagesPage>(`/api/conversations/${origin}/${encodeURIComponent(id)}/messages?limit=${limit}`);
+    return kept<MessagesPage>(`${conversationUrl(origin, id)}/messages?limit=${limit}`);
   }
 
   /** One page of a conversation. `dir`:
@@ -73,20 +73,14 @@ export class MessagesApi {
     if (cursor != null) params['cursor'] = cursor;
     if (dir != null) params['dir'] = dir;
     if (on != null) params['on'] = String(on);
-    return this.http.get<MessagesPage>(
-      `/api/conversations/${origin}/${encodeURIComponent(id)}/messages`,
-      { params },
-    );
+    return this.http.get<MessagesPage>(`${conversationUrl(origin, id)}/messages`, { params });
   }
 
   /** Say something on IRC or Telegram. The recipient comes from the
    *  conversation, server-side. A refusal resolves with `sent: false`; only a
    *  transport failure errors. */
   send(origin: Origin, id: string, text: string): Observable<SendResult> {
-    return this.http.post<SendResult>(
-      `/api/conversations/${origin}/${encodeURIComponent(id)}/send`,
-      { text },
-    );
+    return this.http.post<SendResult>(`${conversationUrl(origin, id)}/send`, { text });
   }
 
   /** Search everywhere, or inside one conversation: `origin` and `id` together
@@ -101,6 +95,11 @@ export class MessagesApi {
     }
     return this.http.get<SearchHit[]>('/api/search', { params });
   }
+}
+
+/** A conversation's API path. The id is encoded: Signal's hold `:` and `/`. */
+function conversationUrl(origin: Origin, id: string): string {
+  return `/api/conversations/${origin}/${encodeURIComponent(id)}`;
 }
 
 /** What the service worker last stored for `url`, read through the browser's

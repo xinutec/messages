@@ -30,6 +30,7 @@ import {
   hostOf,
   isEmpty,
   isPlain,
+  UNSHOWN,
   mib,
   reactors,
   readers,
@@ -262,6 +263,7 @@ export class Thread {
   readonly dayGroups = computed(() => dayGroups(this.rendered()));
   readonly startsRun = computed(() => runStarts(this.rendered()));
   protected readonly isEmpty = isEmpty;
+  protected readonly unshown = UNSHOWN;
   protected readonly isPlain = isPlain;
 
   /** Others are named, except in a DM, whose bar already says who. */
