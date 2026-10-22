@@ -1,0 +1,6 @@
+{
+  "routes": [
+    "/conversation/:origin/:id",
+    "/"
+  ]
+}

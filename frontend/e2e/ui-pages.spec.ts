@@ -9,6 +9,7 @@ import {
   expectUpInTheBar,
   expectBackClosesOverlay,
 } from "@xinutec/ui-harness";
+import { routesFrom, screens } from "@xinutec/ui-harness/routes";
 
 import type { Conversation, LinkImageState, Me, MessagesPage, SearchHit, SendResult } from "../src/app/models";
 import { testMessage } from "../src/app/test-message";
@@ -177,6 +178,19 @@ async function mockApi(page: Page): Promise<void> {
   await page.route("**/api/attachments/v24", (r) =>
     r.fulfill({ contentType: "video/webm", path: "e2e/clip.webm" }),
   );
+}
+
+/** Every screen in the route table (`routes.json`), not only those a test opens. */
+for (const { route, url } of screens(
+  routesFrom("e2e/routes.json"),
+  { origin: "signal", id: "dm:a" },
+)) {
+  test(`${route} lays out cleanly @ phone width`, async ({ page }, testInfo) => {
+    await mockApi(page);
+    await page.goto(url);
+    await page.waitForLoadState("networkidle");
+    await expectCleanLayout(page, testInfo);
+  });
 }
 
 // Fails if the device preset is lost and the suite runs at desktop width.
