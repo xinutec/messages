@@ -51,7 +51,7 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
             bail!("telegram_conversations.kind holds an unknown kind: {kind:?}");
         };
         let last_s: Option<i64> = r.try_get("last_ts")?;
-        let deleted: Option<i8> = r.try_get("last_deleted")?;
+        let deleted: Option<bool> = r.try_get("last_deleted")?;
         out.push(Conversation {
             origin: Origin::Telegram,
             id: r.try_get::<i64, _>("id")?.to_string(),
@@ -60,7 +60,7 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
             network: None,
             message_count: r.try_get("cnt")?,
             last_ts: last_s.map(s_to_ms),
-            last: LastMessage::from_row(&r, deleted.unwrap_or(0) != 0)?,
+            last: LastMessage::from_row(&r, deleted.unwrap_or(false))?,
             // How far I have read; no mark is unknown, not unread.
             unread: r.try_get("unread")?,
             // Filled by `avatars::attach`, which knows where the files are.
@@ -161,8 +161,8 @@ pub(super) async fn page(
 
     let mut msgs = Vec::with_capacity(rows.len());
     let mut keys = Vec::with_capacity(rows.len());
-    let mut msg_ids = Vec::with_capacity(rows.len());
-    let mut replies: Vec<(String, i32)> = Vec::new();
+    let mut replies: Vec<(i64, i32)> = Vec::new();
+    let mut msg_index: HashMap<i32, usize> = HashMap::new();
     for r in rows {
         let id: i64 = r.try_get("id")?;
         let sent_at: i64 = r.try_get("sent_at")?;
@@ -171,44 +171,31 @@ pub(super) async fn page(
         let elsewhere = r
             .try_get::<Option<i64>, _>("reply_to_peer_id")?
             .is_some_and(|p| p != conversation_id);
-        let reply_target = r.try_get::<Option<i32>, _>("reply_to_msg_id")?;
+        let reply_target: Option<i32> = r.try_get("reply_to_msg_id")?;
         if let Some(target) = reply_target.filter(|_| !elsewhere) {
-            replies.push((id.to_string(), target));
+            replies.push((id, target));
         }
-        let deleted: i8 = r.try_get("deleted")?;
-        let is_outgoing: i8 = r.try_get("is_outgoing")?;
         let edited_at: Option<i64> = r.try_get("edited_at")?;
         // `edit_hide` asks for the message to be shown unmodified despite its
         // `edit_date`. NULL, on rows stored before the column, reads as not hidden.
-        let edit_hidden: Option<i8> = r.try_get("edit_hidden")?;
+        let edit_hidden: Option<bool> = r.try_get("edit_hidden")?;
         // Telegram moves `edit_date` for a reaction too. A history in which no
         // version differs from the text is such a move, not an edit; a message
         // with no history was edited before the archive saw it, and Telegram's
         // word stands.
-        let edit_changed_text: i64 = r.try_get("edit_changed_text")?;
-        let edited = edited_at.is_some() && edit_hidden.unwrap_or(0) == 0 && edit_changed_text != 0;
+        let edit_changed_text: bool = r.try_get("edit_changed_text")?;
         let is_service = r.try_get::<String, _>("kind")? == "service";
-        // A call's stored text is the label "a call"; compose it from the call's
-        // columns instead.
-        let body = call_text(
-            r.try_get("call_duration_s")?,
-            r.try_get::<Option<String>, _>("call_reason")?.as_deref(),
-            r.try_get::<Option<i8>, _>("call_video")?.unwrap_or(0) != 0,
-        )
-        .map_or_else(|| r.try_get("body"), |t| Ok(Some(t)))?;
         keys.push((sent_at, id));
-        msg_ids.push(r.try_get::<i32, _>("msg_id")?);
-        let reply_to = (elsewhere && reply_target.is_some()).then(ReplyTo::not_held);
         msgs.push(Message {
-            reply_to,
+            reply_to: (elsewhere && reply_target.is_some()).then(ReplyTo::not_held),
             // Service events render as actions.
             kind: if is_service {
                 MessageKind::Action
             } else {
                 MessageKind::Message
             },
-            deleted: deleted != 0,
-            edited,
+            deleted: r.try_get("deleted")?,
+            edited: edited_at.is_some() && edit_hidden != Some(true) && edit_changed_text,
             album: r
                 .try_get::<Option<i64>, _>("grouped_id")?
                 .map(|g| g.to_string()),
@@ -219,90 +206,132 @@ pub(super) async fn page(
                 r.try_get::<Option<String>, _>("sender")?
                     .unwrap_or_default(),
                 r.try_get("sender_key")?,
-                is_outgoing != 0,
-                body,
+                r.try_get("is_outgoing")?,
+                stored_or_call_text(&r)?,
             )
         });
+        // Positioned by `msg_id`, which is unique only within the conversation.
+        msg_index.insert(r.try_get::<i32, _>("msg_id")?, msgs.len() - 1);
     }
+    let msg_ids: Vec<i32> = msg_index.keys().copied().collect();
 
-    // Telegram media as `attachments`, the one field for bytes this archive
-    // holds. `available = false` is normal for large files not yet fetched.
-    if !msg_ids.is_empty() {
-        let placeholders = vec!["?"; msg_ids.len()].join(",");
-        // The size is `telegram_messages.media_size`, from the message itself.
-        let sql = format!(
-            "SELECT d.msg_id AS msg_id, d.state AS state, d.content_type AS content_type,
-                    m.media_size AS media_size
-             FROM telegram_media d
-             JOIN telegram_messages m
-               ON m.conversation_id = d.conversation_id AND m.msg_id = d.msg_id
-             WHERE d.conversation_id = ? AND d.msg_id IN ({placeholders})",
-        );
-        let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
-        for id in &msg_ids {
-            q = q.bind(id);
-        }
-        for mr in q.fetch_all(pool).await? {
-            let msg_id: i32 = mr.try_get("msg_id")?;
-            let state: String = mr.try_get("state")?;
-            let content_type: Option<String> = mr.try_get("content_type")?;
-            let Some(i) = msg_ids.iter().position(|m| *m == msg_id) else {
-                continue;
-            };
-            let api_id = msgs[i].id.clone();
-            msgs[i].attachments.push(Attachment {
-                // The message's API id, which is what the media route takes.
-                id: api_id,
-                content_type,
-                // Telegram photos carry no filename; the frontend names them.
-                file_name: None,
-                size: mr.try_get("media_size")?,
-                available: state == "stored",
-                fetch: FetchState::parse(&state),
-                // Filled by `attach_transcripts`.
-                transcript: None,
-            });
-        }
-    }
-
-    // Reactions, current only (`removed_at IS NULL`). A custom emoji has no
-    // characters to draw, so its rows are left out.
-    if !msg_ids.is_empty() {
-        let placeholders = vec!["?"; msg_ids.len()].join(",");
-        let sql = format!(
-            "SELECT msg_id, emoji, cnt FROM telegram_reactions
-             WHERE conversation_id = ? AND emoji IS NOT NULL
-               AND removed_at IS NULL
-               AND msg_id IN ({placeholders})",
-        );
-        let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
-        for id in &msg_ids {
-            q = q.bind(id);
-        }
-        let named = reactors(pool, conversation_id, &msg_ids).await?;
-        for rr in q.fetch_all(pool).await? {
-            let msg_id: i32 = rr.try_get("msg_id")?;
-            let emoji: String = rr.try_get("emoji")?;
-            let reaction = Reaction {
-                count: i64::from(rr.try_get::<i32, _>("cnt")?),
-                who: named
-                    .get(&(msg_id, emoji.clone()))
-                    .cloned()
-                    .unwrap_or_default(),
-                emoji,
-            };
-            // Positioned by `msg_id`, not the API id.
-            if let Some(i) = msg_ids.iter().position(|m| *m == msg_id) {
-                msgs[i].reactions.push(reaction);
-            }
-        }
-    }
-
+    attach_media(pool, conversation_id, &mut msgs, &msg_index, &msg_ids).await?;
+    attach_reactions(pool, conversation_id, &mut msgs, &msg_index, &msg_ids).await?;
     attach_replies(pool, conversation_id, &mut msgs, &replies).await?;
-    attach_read(pool, conversation_id, &mut msgs, &msg_ids).await?;
-    attach_entities(pool, conversation_id, &mut msgs, &msg_ids).await?;
+    attach_read(pool, conversation_id, &mut msgs, &msg_index).await?;
+    attach_entities(pool, conversation_id, &mut msgs, &msg_index, &msg_ids).await?;
 
     Ok(Fetched::new(msgs, keys, dir))
+}
+
+/// A row's text, or for a call, the call in words: its stored text is the
+/// label "a call".
+fn stored_or_call_text(r: &sqlx::mysql::MySqlRow) -> Result<Option<String>> {
+    let call = call_text(
+        r.try_get("call_duration_s")?,
+        r.try_get::<Option<String>, _>("call_reason")?.as_deref(),
+        r.try_get::<Option<bool>, _>("call_video")?.unwrap_or(false),
+    );
+    Ok(match call {
+        Some(words) => Some(words),
+        None => r.try_get("body")?,
+    })
+}
+
+/// What `telegram_media.state` says about a file: held, or how a reader may get it.
+fn media_state_of(state: &str) -> (bool, Option<FetchState>) {
+    (state == "stored", FetchState::parse(state))
+}
+
+/// Telegram media as `attachments`, the one field for bytes this archive
+/// holds. `available = false` is normal for large files not yet fetched.
+async fn attach_media(
+    pool: &MySqlPool,
+    conversation_id: i64,
+    msgs: &mut [Message],
+    msg_index: &HashMap<i32, usize>,
+    msg_ids: &[i32],
+) -> Result<()> {
+    if msg_ids.is_empty() {
+        return Ok(());
+    }
+    // The size is `telegram_messages.media_size`, from the message itself.
+    let sql = in_list(
+        "SELECT d.msg_id AS msg_id, d.state AS state, d.content_type AS content_type,
+                m.media_size AS media_size
+         FROM telegram_media d
+         JOIN telegram_messages m
+           ON m.conversation_id = d.conversation_id AND m.msg_id = d.msg_id
+         WHERE d.conversation_id = ? AND d.msg_id IN ({in})",
+        msg_ids.len(),
+    );
+    for r in bind_all(
+        sqlx::query(AssertSqlSafe(sql)).bind(conversation_id),
+        msg_ids,
+    )
+    .fetch_all(pool)
+    .await?
+    {
+        let Some(&i) = msg_index.get(&r.try_get::<i32, _>("msg_id")?) else {
+            continue;
+        };
+        let (available, fetch) = media_state_of(&r.try_get::<String, _>("state")?);
+        let id = msgs[i].id;
+        msgs[i].attachments.push(Attachment {
+            // The message's API id, which is what the media route takes.
+            id,
+            content_type: r.try_get("content_type")?,
+            // Telegram photos carry no filename; the frontend names them.
+            file_name: None,
+            size: r.try_get("media_size")?,
+            available,
+            fetch,
+            // Filled by `attach_transcripts`.
+            transcript: None,
+        });
+    }
+    Ok(())
+}
+
+/// Reactions, current only (`removed_at IS NULL`). A custom emoji has no
+/// characters to draw, so its rows are left out.
+async fn attach_reactions(
+    pool: &MySqlPool,
+    conversation_id: i64,
+    msgs: &mut [Message],
+    msg_index: &HashMap<i32, usize>,
+    msg_ids: &[i32],
+) -> Result<()> {
+    if msg_ids.is_empty() {
+        return Ok(());
+    }
+    let sql = in_list(
+        "SELECT msg_id, emoji, cnt FROM telegram_reactions
+         WHERE conversation_id = ? AND emoji IS NOT NULL
+           AND removed_at IS NULL
+           AND msg_id IN ({in})",
+        msg_ids.len(),
+    );
+    let rows = bind_all(
+        sqlx::query(AssertSqlSafe(sql)).bind(conversation_id),
+        msg_ids,
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut named = reactors(pool, conversation_id, msg_ids).await?;
+    for r in rows {
+        let msg_id: i32 = r.try_get("msg_id")?;
+        let Some(&i) = msg_index.get(&msg_id) else {
+            continue;
+        };
+        let emoji: String = r.try_get("emoji")?;
+        msgs[i].reactions.push(Reaction {
+            count: r.try_get::<i32, _>("cnt")?.into(),
+            who: named.remove(&(msg_id, emoji.clone())).unwrap_or_default(),
+            emoji,
+        });
+    }
+    Ok(())
 }
 
 /// Resolve Telegram's replies for one page. Service events resolve too, since
@@ -312,14 +341,13 @@ async fn attach_replies(
     pool: &MySqlPool,
     conversation_id: i64,
     msgs: &mut [Message],
-    replies: &[(String, i32)],
+    replies: &[(i64, i32)],
 ) -> Result<()> {
     if replies.is_empty() {
         return Ok(());
     }
     let targets = distinct(replies.iter().map(|(_, m)| *m));
-    let placeholders = vec!["?"; targets.len()].join(",");
-    let sql = format!(
+    let sql = in_list(
         "SELECT m.id AS id, m.msg_id AS msg_id, m.sent_at AS sent_at, m.text AS body,
                 m.deleted AS deleted, m.sender_name AS sender,
                 c.duration_s AS call_duration_s, c.reason AS call_reason,
@@ -328,35 +356,31 @@ async fn attach_replies(
          LEFT JOIN telegram_calls c
                 ON c.conversation_id = m.conversation_id AND c.msg_id = m.msg_id
          WHERE m.conversation_id = ?
-           AND m.msg_id IN ({placeholders})",
+           AND m.msg_id IN ({in})",
+        targets.len(),
     );
-    let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
-    for id in &targets {
-        q = q.bind(id);
-    }
     let mut found: HashMap<i32, ReplyTo> = HashMap::new();
-    for r in q.fetch_all(pool).await? {
+    for r in bind_all(
+        sqlx::query(AssertSqlSafe(sql)).bind(conversation_id),
+        &targets,
+    )
+    .fetch_all(pool)
+    .await?
+    {
         let id: i64 = r.try_get("id")?;
-        let msg_id: i32 = r.try_get("msg_id")?;
         let sent_at: i64 = r.try_get("sent_at")?;
-        let deleted: i8 = r.try_get("deleted")?;
-        let deleted = deleted != 0;
+        let deleted: bool = r.try_get("deleted")?;
         // Composed as the page composes it, so a reply quotes what the call
         // message shows.
-        let body: Option<String> = call_text(
-            r.try_get("call_duration_s")?,
-            r.try_get::<Option<String>, _>("call_reason")?.as_deref(),
-            r.try_get::<Option<i8>, _>("call_video")?.unwrap_or(0) != 0,
-        )
-        .map_or_else(|| r.try_get("body"), |t| Ok(Some(t)))?;
+        let body = stored_or_call_text(&r)?;
         found.insert(
-            msg_id,
+            r.try_get("msg_id")?,
             ReplyTo {
-                id: Some(id.to_string()),
+                id: Some(id),
                 // The cursor in Telegram's seconds; `ts` in milliseconds.
                 cursor: Some(encode_cursor(sent_at, id)),
                 ts: Some(s_to_ms(sent_at)),
-                sender: r.try_get::<Option<String>, _>("sender").ok().flatten(),
+                sender: r.try_get("sender")?,
                 excerpt: if deleted {
                     None
                 } else {
@@ -366,8 +390,9 @@ async fn attach_replies(
             },
         );
     }
+    let mut by = by_row(msgs);
     for (msg_id, target) in replies {
-        let Some(m) = msgs.iter_mut().find(|m| &m.id == msg_id) else {
+        let Some(m) = by.get_mut(msg_id) else {
             continue;
         };
         // A Telegram reply names an id, which carries no time.
@@ -388,8 +413,7 @@ async fn reactors(
     if msg_ids.is_empty() {
         return Ok(out);
     }
-    let placeholders = vec!["?"; msg_ids.len()].join(",");
-    let sql = format!(
+    let sql = in_list(
         "SELECT a.msg_id, a.emoji, a.peer_id,
                 COALESCE(c.name, s.sender_name, CAST(a.peer_id AS CHAR)) AS who
            FROM telegram_reaction_authors a
@@ -400,14 +424,17 @@ async fn reactors(
                        GROUP BY sender_id) s ON s.sender_id = a.peer_id
           WHERE a.conversation_id = ? AND a.removed_at IS NULL
             AND a.emoji IS NOT NULL
-            AND a.msg_id IN ({placeholders})
+            AND a.msg_id IN ({in})
           ORDER BY a.reacted_at, who",
+        msg_ids.len(),
     );
-    let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
-    for id in msg_ids {
-        q = q.bind(id);
-    }
-    for r in q.fetch_all(pool).await? {
+    for r in bind_all(
+        sqlx::query(AssertSqlSafe(sql)).bind(conversation_id),
+        msg_ids,
+    )
+    .fetch_all(pool)
+    .await?
+    {
         let key = (r.try_get("msg_id")?, r.try_get("emoji")?);
         let who: String = r.try_get("who")?;
         let names = out.entry(key).or_default();
@@ -425,7 +452,7 @@ async fn attach_read(
     pool: &MySqlPool,
     conversation_id: i64,
     msgs: &mut [Message],
-    msg_ids: &[i32],
+    msg_index: &HashMap<i32, usize>,
 ) -> Result<()> {
     let mark: Option<i32> = sqlx::query_scalar(
         "SELECT MAX(max_id) FROM telegram_read_marks
@@ -438,16 +465,15 @@ async fn attach_read(
     let Some(mark) = mark else {
         return Ok(());
     };
-    for (i, msg_id) in msg_ids.iter().enumerate() {
+    for (&msg_id, &i) in msg_index {
         if msgs[i].is_outgoing {
-            let state = if *msg_id <= mark {
-                DeliveryState::Read
-            } else {
-                DeliveryState::Sent
-            };
-            // Telegram names nobody who read.
             msgs[i].delivery = Some(Delivery {
-                state,
+                state: if msg_id <= mark {
+                    DeliveryState::Read
+                } else {
+                    DeliveryState::Sent
+                },
+                // Telegram names nobody who read.
                 read_by: Vec::new(),
             });
         }
@@ -461,35 +487,35 @@ async fn attach_entities(
     pool: &MySqlPool,
     conversation_id: i64,
     msgs: &mut [Message],
+    msg_index: &HashMap<i32, usize>,
     msg_ids: &[i32],
 ) -> Result<()> {
     if msg_ids.is_empty() {
         return Ok(());
     }
-    let placeholders = vec!["?"; msg_ids.len()].join(",");
-    let sql = format!(
+    let sql = in_list(
         "SELECT msg_id, kind, offset_utf16, length_utf16, url
            FROM telegram_message_entities
           WHERE conversation_id = ? AND removed_at IS NULL
-            AND msg_id IN ({placeholders})
+            AND msg_id IN ({in})
           ORDER BY msg_id, offset_utf16, length_utf16",
+        msg_ids.len(),
     );
-    let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
-    for id in msg_ids {
-        q = q.bind(id);
-    }
-    for row in q.fetch_all(pool).await? {
-        let msg_id: i32 = row.try_get("msg_id")?;
-        let Some(i) = msg_ids.iter().position(|m| *m == msg_id) else {
+    for r in bind_all(
+        sqlx::query(AssertSqlSafe(sql)).bind(conversation_id),
+        msg_ids,
+    )
+    .fetch_all(pool)
+    .await?
+    {
+        let Some(&i) = msg_index.get(&r.try_get::<i32, _>("msg_id")?) else {
             continue;
         };
-        let offset: i32 = row.try_get("offset_utf16")?;
-        let length: i32 = row.try_get("length_utf16")?;
         msgs[i].entities.push(Entity {
-            kind: row.try_get("kind")?,
-            offset: offset.into(),
-            length: length.into(),
-            url: row.try_get("url")?,
+            kind: r.try_get("kind")?,
+            offset: r.try_get::<i32, _>("offset_utf16")?.into(),
+            length: r.try_get::<i32, _>("length_utf16")?.into(),
+            url: r.try_get("url")?,
         });
     }
     Ok(())
@@ -508,58 +534,49 @@ pub(super) async fn attach_edits(
     let Ok(conversation_id) = conversation_id.parse::<i64>() else {
         return Ok(());
     };
-    let ids: Vec<i64> = msgs
-        .iter()
-        .filter(|m| m.edited)
-        .filter_map(|m| m.id.parse::<i64>().ok())
-        .collect();
+    let ids: Vec<i64> = msgs.iter().filter(|m| m.edited).map(|m| m.id).collect();
     if ids.is_empty() {
         return Ok(());
     }
-    let placeholders = vec!["?"; ids.len()].join(",");
-    let sql = format!(
+    let sql = in_list(
         "SELECT m.id AS row_id, e.was_edited_at AS was_edited_at, e.text AS text,
                 m.sent_at AS sent_at
          FROM telegram_message_edits e
          JOIN telegram_messages m
            ON m.conversation_id = e.conversation_id AND m.msg_id = e.msg_id
-         WHERE e.conversation_id = ? AND m.id IN ({placeholders})
+         WHERE e.conversation_id = ? AND m.id IN ({in})
          ORDER BY e.was_edited_at IS NOT NULL, e.was_edited_at ASC, e.id ASC",
+        ids.len(),
     );
-    let mut q = sqlx::query(AssertSqlSafe(sql)).bind(conversation_id);
-    for id in &ids {
-        q = q.bind(id);
-    }
-    for row in q.fetch_all(pool).await? {
-        let row_id: i64 = row.try_get("row_id")?;
-        let row_id = row_id.to_string();
+    let rows = bind_all(sqlx::query(AssertSqlSafe(sql)).bind(conversation_id), &ids)
+        .fetch_all(pool)
+        .await?;
+    let mut by = by_row(msgs);
+    for r in rows {
+        let Some(m) = by.get_mut(&r.try_get::<i64, _>("row_id")?) else {
+            continue;
+        };
         // The original is dated by the message; later versions by the edit date
         // they carried.
-        let was: Option<i64> = row.try_get("was_edited_at")?;
-        let sent_at: i64 = row.try_get("sent_at")?;
-        let edit = MessageEdit {
-            ts: s_to_ms(was.unwrap_or(sent_at)),
-            body: row.try_get("text")?,
-        };
-        if let Some(m) = msgs.iter_mut().find(|m| m.id == row_id) {
-            m.edits.push(edit);
-        }
+        let was: Option<i64> = r.try_get("was_edited_at")?;
+        m.edits.push(MessageEdit {
+            ts: s_to_ms(was.unwrap_or(r.try_get("sent_at")?)),
+            body: r.try_get("text")?,
+        });
     }
-    // In order, so each version is compared with the one that replaced it; the
-    // last with the text itself.
-    for m in msgs.iter_mut().filter(|m| !m.edits.is_empty()) {
-        let keep: Vec<bool> = (0..m.edits.len())
-            .map(|i| {
-                let next = m
-                    .edits
-                    .get(i + 1)
-                    .map(|e| e.body.as_deref())
-                    .unwrap_or(m.body.as_deref());
-                m.edits[i].body.as_deref() != next
-            })
-            .collect();
-        let mut keep = keep.into_iter();
-        m.edits.retain(|_| keep.next().unwrap_or(true));
+    // Newest first: each version against the one that replaced it, the newest
+    // against the text itself.
+    for m in by.into_values().filter(|m| !m.edits.is_empty()) {
+        let mut next = m.body.clone();
+        let mut kept: Vec<MessageEdit> = Vec::with_capacity(m.edits.len());
+        for e in m.edits.drain(..).rev() {
+            if e.body != next {
+                next.clone_from(&e.body);
+                kept.push(e);
+            }
+        }
+        kept.reverse();
+        m.edits = kept;
     }
     Ok(())
 }
@@ -577,10 +594,13 @@ pub async fn media_state(pool: &MySqlPool, row_id: i64) -> Result<Option<MediaSt
     .bind(row_id)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(|(state, content_type)| MediaState {
-        available: state == "stored",
-        fetch: FetchState::parse(&state),
-        content_type,
+    Ok(row.map(|(state, content_type)| {
+        let (available, fetch) = media_state_of(&state);
+        MediaState {
+            available,
+            fetch,
+            content_type,
+        }
     }))
 }
 
@@ -656,7 +676,6 @@ pub(super) async fn search(
     for r in rows {
         let sent_at: i64 = r.try_get("sent_at")?;
         let id: i64 = r.try_get("id")?;
-        let deleted: i8 = r.try_get("deleted")?;
         hits.push(SearchHit {
             origin: Origin::Telegram,
             conversation_id: r.try_get::<i64, _>("cid")?.to_string(),
@@ -666,7 +685,7 @@ pub(super) async fn search(
                 .try_get::<Option<String>, _>("sender")?
                 .unwrap_or_default(),
             snippet: r.try_get::<Option<String>, _>("body")?.unwrap_or_default(),
-            deleted: deleted != 0,
+            deleted: r.try_get("deleted")?,
             // Seconds, as `telegram_messages` pages on.
             cursor: encode_cursor(sent_at, id),
         });

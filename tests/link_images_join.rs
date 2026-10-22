@@ -41,7 +41,7 @@ async fn pool() -> Option<MySqlPool> {
 
 fn msg(body: &str) -> Message {
     Message {
-        id: "1".into(),
+        id: 1,
         ts: 0,
         sender: "s".into(),
         sender_key: "s".into(),

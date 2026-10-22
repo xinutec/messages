@@ -42,13 +42,13 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
         if !seen.insert(id) {
             continue;
         }
-        let is_channel: i8 = r.try_get("is_channel")?;
+        let is_channel: bool = r.try_get("is_channel")?;
         let last_s: Option<i64> = r.try_get("last_s")?;
         out.push(Conversation {
             origin: Origin::Irc,
             id: id.to_string(),
             name: r.try_get("name")?,
-            kind: kind_from_is_dm(is_channel == 0),
+            kind: kind_from_is_dm(!is_channel),
             network: r.try_get("network")?,
             message_count: r.try_get("cnt")?,
             last_ts: last_s.map(s_to_ms),
@@ -134,7 +134,6 @@ pub(super) async fn page(
         let id: i64 = r.try_get("id")?;
         let ts_s: i64 = r.try_get("ts_s")?;
         keys.push((ts_s, id));
-        let is_self: i8 = r.try_get("is_self")?;
         let kind: String = r.try_get("kind")?;
         // The query admits only kinds this parses; anything else is reported
         // rather than drawn as speech.
@@ -149,7 +148,7 @@ pub(super) async fn page(
                 r.try_get::<Option<String>, _>("sender")?
                     .unwrap_or_default(),
                 None,
-                is_self != 0,
+                r.try_get("is_self")?,
                 r.try_get("body")?,
             )
         });
@@ -174,16 +173,15 @@ pub struct IrcTarget {
 /// Look up an IRC conversation's network and target. `None` if there is no such
 /// conversation.
 pub async fn target(pool: &MySqlPool, conversation_id: &str) -> Result<Option<IrcTarget>> {
-    let row = sqlx::query("SELECT network, target, is_status FROM irc_conversations WHERE id = ?")
-        .bind(conversation_id)
-        .fetch_optional(pool)
-        .await?;
-    let Some(r) = row else { return Ok(None) };
-    let is_status: i8 = r.try_get("is_status")?;
-    Ok(Some(IrcTarget {
-        network: r.try_get("network")?,
-        target: r.try_get("target")?,
-        is_status: is_status != 0,
+    let row: Option<(String, String, bool)> =
+        sqlx::query_as("SELECT network, target, is_status FROM irc_conversations WHERE id = ?")
+            .bind(conversation_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.map(|(network, target, is_status)| IrcTarget {
+        network,
+        target,
+        is_status,
     }))
 }
 

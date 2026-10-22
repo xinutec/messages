@@ -11,6 +11,8 @@
 
 use anyhow::Result;
 use serde::Serialize;
+use std::collections::HashMap;
+
 use sqlx::{MySqlPool, Row};
 
 pub mod gchat;
@@ -155,6 +157,47 @@ pub fn parse_cursor(s: &str) -> Option<(i64, i64)> {
     Some((ts.parse().ok()?, id.parse().ok()?))
 }
 
+// The API's row ids are text: the frontend keys on them as strings.
+fn as_text<S: serde::Serializer>(id: &i64, s: S) -> std::result::Result<S::Ok, S::Error> {
+    s.collect_str(id)
+}
+
+fn opt_as_text<S: serde::Serializer>(
+    id: &Option<i64>,
+    s: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    match id {
+        Some(id) => s.collect_str(id),
+        None => s.serialize_none(),
+    }
+}
+
+/// `sql` with `{in}` replaced by one `?` per value, for an `IN ({in})` list.
+/// Only placeholders are spliced in, so every value is still bound: what each
+/// `AssertSqlSafe(in_list(…))` asserts.
+pub(crate) fn in_list(sql: &str, n: usize) -> String {
+    sql.replace("{in}", &vec!["?"; n].join(","))
+}
+
+/// Bind each of `values` in order: the values of an [`in_list`].
+pub(crate) fn bind_all<'q, T>(
+    mut q: sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments>,
+    values: &'q [T],
+) -> sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments>
+where
+    T: sqlx::Encode<'q, sqlx::MySql> + sqlx::Type<sqlx::MySql> + Sync,
+{
+    for v in values {
+        q = q.bind(v);
+    }
+    q
+}
+
+/// A page's messages by row id, for hanging what a second query found on them.
+fn by_row(msgs: &mut [Message]) -> HashMap<i64, &mut Message> {
+    msgs.iter_mut().map(|m| (m.id, m)).collect()
+}
+
 #[derive(Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -206,12 +249,12 @@ impl LastMessage {
         let Some(sender) = r.try_get::<Option<String>, _>("last_sender")? else {
             return Ok(None);
         };
-        let out: i8 = r.try_get("last_out")?;
+        let is_outgoing: bool = r.try_get("last_out")?;
         let text: Option<String> = r.try_get("last_text")?;
         let media: Option<String> = r.try_get("last_media")?;
         Ok(Some(LastMessage {
             sender,
-            is_outgoing: out != 0,
+            is_outgoing,
             deleted,
             text: if deleted {
                 None
@@ -317,7 +360,9 @@ pub struct MediaState {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct Attachment {
-    pub id: String,
+    #[serde(serialize_with = "as_text")]
+    #[cfg_attr(feature = "ts", ts(type = "string"))]
+    pub id: i64,
     pub content_type: Option<String>,
     pub file_name: Option<String>,
     #[cfg_attr(feature = "ts", ts(type = "number | null"))]
@@ -382,7 +427,9 @@ pub struct LinkImage {
 /// still renders, with only what is known.
 pub struct ReplyTo {
     /// The target's API id, or `None` when the archive does not hold it.
-    pub id: Option<String>,
+    #[serde(serialize_with = "opt_as_text")]
+    #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    pub id: Option<i64>,
     /// Cursor for `?at`, landing on the target. `None` exactly when `id` is.
     pub cursor: Option<String>,
     /// Epoch milliseconds of the message replied to, when known.
@@ -399,7 +446,9 @@ pub struct ReplyTo {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct Message {
-    pub id: String,
+    #[serde(serialize_with = "as_text")]
+    #[cfg_attr(feature = "ts", ts(type = "string"))]
+    pub id: i64,
     /// Epoch milliseconds.
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub ts: i64,
@@ -449,7 +498,7 @@ impl Message {
         body: Option<String>,
     ) -> Self {
         Message {
-            id: id.to_string(),
+            id,
             ts,
             sender_key: key.unwrap_or_else(|| sender.clone()),
             sender,
@@ -731,11 +780,11 @@ async fn attach_transcripts(pool: &MySqlPool, origin: Origin, msgs: &mut [Messag
                 .as_deref()
                 .is_some_and(|c| c.starts_with("audio/"))
         })
-        .map(|a| a.id.clone())
+        .map(|a| a.id.to_string())
         .collect();
     let texts = crate::transcribe::texts(pool, origin, &ids).await?;
     for a in msgs.iter_mut().flat_map(|m| m.attachments.iter_mut()) {
-        a.transcript = texts.get(&a.id).cloned();
+        a.transcript = texts.get(&a.id.to_string()).cloned();
     }
     Ok(())
 }

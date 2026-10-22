@@ -6,7 +6,7 @@ use sqlx::{AssertSqlSafe, MySqlPool, Row};
 
 use crate::link_image::LinkState;
 
-use super::{LinkImage, LinkOffer, Message, distinct};
+use super::{LinkImage, LinkOffer, Message, bind_all, distinct, in_list};
 
 /// Hang any pictures we hold onto the messages whose text linked them.
 ///
@@ -25,17 +25,15 @@ pub async fn attach(pool: &MySqlPool, msgs: &mut [Message]) -> Result<()> {
         return Ok(());
     }
     let hashes = distinct(wanted.iter().map(|(h, _, _)| h.as_str()));
-    let placeholders = vec!["?"; hashes.len()].join(",");
-    let sql = format!(
-        "SELECT url_hash, state, content_type FROM link_images
-         WHERE url_hash IN ({placeholders})",
+    let sql = in_list(
+        "SELECT url_hash, state, content_type FROM link_images WHERE url_hash IN ({in})",
+        hashes.len(),
     );
-    let mut q = sqlx::query(AssertSqlSafe(sql));
-    for h in &hashes {
-        q = q.bind(*h);
-    }
     let mut known: Vec<(String, LinkState, Option<String>)> = Vec::new();
-    for row in q.fetch_all(pool).await? {
+    for row in bind_all(sqlx::query(AssertSqlSafe(sql)), &hashes)
+        .fetch_all(pool)
+        .await?
+    {
         let raw: String = row.try_get("state")?;
         let Some(state) = LinkState::parse(&raw) else {
             bail!("link_images.state holds {raw:?}, which is not a state this app writes");

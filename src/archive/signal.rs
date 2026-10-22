@@ -89,9 +89,9 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
         let Some(kind) = ConversationKind::parse(&kind) else {
             bail!("conversations.type holds an unknown kind: {kind:?}");
         };
-        let deleted: Option<i8> = r.try_get("last_deleted")?;
+        let deleted: Option<bool> = r.try_get("last_deleted")?;
         let last_id: Option<i64> = r.try_get("last_id")?;
-        let mut last = LastMessage::from_row(&r, deleted.unwrap_or(0) != 0)?;
+        let mut last = LastMessage::from_row(&r, deleted.unwrap_or(false))?;
         if let Some(l) = last.as_mut().filter(|l| l.text.is_none() && !l.deleted)
             && r.try_get::<Option<String>, _>("last_call")?.is_some()
         {
@@ -211,32 +211,25 @@ pub(super) async fn page(
         .await?;
 
     let mut msgs = Vec::with_capacity(rows.len());
-    let mut ts_list = Vec::with_capacity(rows.len());
-    let mut ids = Vec::with_capacity(rows.len());
     let mut keys = Vec::with_capacity(rows.len());
     let mut quotes: Vec<Quote> = Vec::new();
     for r in rows {
         let id: i64 = r.try_get("id")?;
         let ts: i64 = r.try_get("ts")?;
-        if let Some(target) = r.try_get::<Option<i64>, _>("quote_target_ts")? {
+        if let Some(target_ts) = r.try_get("quote_target_ts")? {
             quotes.push(Quote {
-                msg_id: id.to_string(),
-                target_ts: target,
+                msg_id: id,
+                target_ts,
                 author: r.try_get("quote_author")?,
                 text: r.try_get("quote_text")?,
             });
         }
         keys.push((ts, id));
-        let is_outgoing: i8 = r.try_get("is_outgoing")?;
-        let deleted: i8 = r.try_get("deleted")?;
-        let edited: i8 = r.try_get("edited")?;
         let body: Option<String> = r.try_get("body")?;
         let call = r.try_get::<Option<String>, _>("group_call_era")?.is_some() && body.is_none();
-        ts_list.push(ts);
-        ids.push(id);
         msgs.push(Message {
-            deleted: deleted != 0,
-            edited: edited != 0,
+            deleted: r.try_get("deleted")?,
+            edited: r.try_get("edited")?,
             kind: if call {
                 MessageKind::Action
             } else {
@@ -247,7 +240,7 @@ pub(super) async fn page(
                 ts,
                 r.try_get("sender")?,
                 r.try_get("sender_key")?,
-                is_outgoing != 0,
+                r.try_get("is_outgoing")?,
                 if call {
                     Some(GROUP_CALL.to_owned())
                 } else {
@@ -257,102 +250,108 @@ pub(super) async fn page(
         });
     }
 
-    if !ids.is_empty() {
-        let placeholders = vec!["?"; ids.len()].join(",");
-        let sql = format!(
-            "SELECT id, message_id, content_type, file_name, size_bytes, stored_path
-             FROM attachments WHERE message_id IN ({placeholders})",
-        );
-        let mut q = sqlx::query(AssertSqlSafe(sql));
-        for id in &ids {
-            q = q.bind(id);
-        }
-        for ar in q.fetch_all(pool).await? {
-            let mid: i64 = ar.try_get("message_id")?;
-            let mid = mid.to_string();
-            let content_type: Option<String> = ar.try_get("content_type")?;
-            let stored_path: Option<String> = ar.try_get("stored_path")?;
-            let att = Attachment {
-                id: ar.try_get::<i64, _>("id")?.to_string(),
-                content_type,
-                file_name: ar.try_get("file_name")?,
-                size: ar.try_get("size_bytes")?,
-                available: stored_path.is_some(),
-                fetch: None,
-                // Filled by `attach_transcripts`.
-                transcript: None,
-            };
-            if let Some(m) = msgs.iter_mut().find(|m| m.id == mid) {
-                m.attachments.push(att);
-            }
-        }
-    }
-
-    // Reactions key on (thread_id, target_ts = the message's server_ts). Signal
-    // keeps one per person per message: each event replaces the last, and a
-    // removal leaves none, so only each person's latest event counts.
-    if !ts_list.is_empty() {
-        let placeholders = vec!["?"; ts_list.len()].join(",");
-        // Names grouped in Rust rather than by `GROUP_CONCAT`, which truncates at
-        // `group_concat_max_len` without an error.
-        let sql = format!(
-            "SELECT r.target_ts, r.emoji,
-                    COALESCE(ct.display_name, r.author_uuid) AS who
-             FROM reactions r
-             JOIN (SELECT target_ts, author_uuid, MAX(reaction_ts) AS latest
-                     FROM reactions
-                    WHERE thread_id = ? AND target_ts IN ({placeholders})
-                    GROUP BY target_ts, author_uuid) l
-               ON l.target_ts = r.target_ts AND l.author_uuid = r.author_uuid
-              AND l.latest = r.reaction_ts
-             LEFT JOIN contacts ct ON ct.uuid = r.author_uuid
-             WHERE r.thread_id = ? AND r.removed = 0 AND r.emoji IS NOT NULL
-             ORDER BY r.target_ts, r.emoji, who",
-        );
-        let mut q = sqlx::query(AssertSqlSafe(sql)).bind(thread_id);
-        for ts in &ts_list {
-            q = q.bind(ts);
-        }
-        q = q.bind(thread_id);
-        let rrows = q.fetch_all(pool).await?;
-        // One author reacting twice with an emoji counts and is named once.
-        let mut grouped: HashMap<(i64, String), Vec<String>> = HashMap::new();
-        let mut order: Vec<(i64, String)> = Vec::new();
-        for rr in rrows {
-            let key = (rr.try_get("target_ts")?, rr.try_get("emoji")?);
-            let who: String = rr.try_get("who")?;
-            let names = grouped.entry(key.clone()).or_insert_with(|| {
-                order.push(key.clone());
-                Vec::new()
-            });
-            if !names.contains(&who) {
-                names.push(who);
-            }
-        }
-        for (target_ts, emoji) in order {
-            let who = grouped
-                .remove(&(target_ts, emoji.clone()))
-                .unwrap_or_default();
-            if let Some(m) = msgs.iter_mut().find(|m| m.ts == target_ts) {
-                m.reactions.push(Reaction {
-                    emoji,
-                    count: who.len() as i64,
-                    who,
-                });
-            }
-        }
-    }
-
+    attach_attachments(pool, &mut msgs).await?;
+    attach_reactions(pool, thread_id, &mut msgs).await?;
     attach_replies(pool, thread_id, &mut msgs, &quotes).await?;
     attach_read(pool, &mut msgs).await?;
 
     Ok(Fetched::new(msgs, keys, dir))
 }
 
+async fn attach_attachments(pool: &MySqlPool, msgs: &mut [Message]) -> Result<()> {
+    let ids: Vec<i64> = msgs.iter().map(|m| m.id).collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let sql = in_list(
+        "SELECT id, message_id, content_type, file_name, size_bytes, stored_path
+           FROM attachments WHERE message_id IN ({in}) ORDER BY id",
+        ids.len(),
+    );
+    let rows = bind_all(sqlx::query(AssertSqlSafe(sql)), &ids)
+        .fetch_all(pool)
+        .await?;
+    let mut by = by_row(msgs);
+    for r in rows {
+        let Some(m) = by.get_mut(&r.try_get::<i64, _>("message_id")?) else {
+            continue;
+        };
+        let stored_path: Option<String> = r.try_get("stored_path")?;
+        m.attachments.push(Attachment {
+            id: r.try_get("id")?,
+            content_type: r.try_get("content_type")?,
+            file_name: r.try_get("file_name")?,
+            size: r.try_get("size_bytes")?,
+            available: stored_path.is_some(),
+            fetch: None,
+            // Filled by `attach_transcripts`.
+            transcript: None,
+        });
+    }
+    Ok(())
+}
+
+/// Reactions key on (thread_id, target_ts = the message's server_ts). Signal
+/// keeps one per person per message: each event replaces the last, and a
+/// removal leaves none, so only each person's latest event counts.
+async fn attach_reactions(pool: &MySqlPool, thread_id: &str, msgs: &mut [Message]) -> Result<()> {
+    let ts: Vec<i64> = msgs.iter().map(|m| m.ts).collect();
+    if ts.is_empty() {
+        return Ok(());
+    }
+    // Names gathered here rather than by `GROUP_CONCAT`, which truncates at
+    // `group_concat_max_len` without an error.
+    let sql = in_list(
+        "SELECT r.target_ts, r.emoji, COALESCE(ct.display_name, r.author_uuid) AS who
+           FROM reactions r
+           JOIN (SELECT target_ts, author_uuid, MAX(reaction_ts) AS latest
+                   FROM reactions
+                  WHERE thread_id = ? AND target_ts IN ({in})
+                  GROUP BY target_ts, author_uuid) l
+             ON l.target_ts = r.target_ts AND l.author_uuid = r.author_uuid
+            AND l.latest = r.reaction_ts
+           LEFT JOIN contacts ct ON ct.uuid = r.author_uuid
+          WHERE r.thread_id = ? AND r.removed = 0 AND r.emoji IS NOT NULL
+          ORDER BY r.target_ts, r.emoji, who",
+        ts.len(),
+    );
+    let rows = bind_all(sqlx::query(AssertSqlSafe(sql)).bind(thread_id), &ts)
+        .bind(thread_id)
+        .fetch_all(pool)
+        .await?;
+    let mut by_ts: HashMap<i64, &mut Message> = HashMap::new();
+    for m in msgs.iter_mut() {
+        by_ts.entry(m.ts).or_insert(m);
+    }
+    // Sorted, so one emoji's names arrive together, and a name twice in a row.
+    for r in rows {
+        let Some(m) = by_ts.get_mut(&r.try_get::<i64, _>("target_ts")?) else {
+            continue;
+        };
+        let emoji: String = r.try_get("emoji")?;
+        let who: String = r.try_get("who")?;
+        match m.reactions.last_mut() {
+            // One author reacting twice with an emoji counts and is named once.
+            Some(last) if last.emoji == emoji => {
+                if last.who.last() != Some(&who) {
+                    last.who.push(who);
+                    last.count += 1;
+                }
+            }
+            _ => m.reactions.push(Reaction {
+                emoji,
+                count: 1,
+                who: vec![who],
+            }),
+        }
+    }
+    Ok(())
+}
+
 /// A Signal quote: the target's timestamp, and its author and text as the quote
 /// carries them.
 struct Quote {
-    msg_id: String,
+    msg_id: i64,
     target_ts: i64,
     author: Option<String>,
     text: Option<String>,
@@ -370,24 +369,22 @@ async fn attach_replies(
         return Ok(());
     }
     let targets = distinct(quotes.iter().map(|q| q.target_ts));
-    let placeholders = vec!["?"; targets.len()].join(",");
-    let sql = format!(
+    let sql = in_list(
         "SELECT m.id AS id, m.server_ts AS ts, m.body AS body, m.deleted AS deleted,
                 COALESCE(ct.display_name, m.sender_uuid) AS sender
          FROM messages m
          LEFT JOIN contacts ct ON ct.uuid = m.sender_uuid
          WHERE m.thread_id = ? AND m.edit_of_ts IS NULL
-           AND m.server_ts IN ({placeholders})",
+           AND m.server_ts IN ({in})",
+        targets.len(),
     );
-    let mut q = sqlx::query(AssertSqlSafe(sql)).bind(thread_id);
-    for ts in &targets {
-        q = q.bind(ts);
-    }
-    let rows = q.fetch_all(pool).await?;
+    let rows = bind_all(sqlx::query(AssertSqlSafe(sql)).bind(thread_id), &targets)
+        .fetch_all(pool)
+        .await?;
     let mut bodies: HashMap<i64, String> = HashMap::new();
     for r in &rows {
-        let deleted: i8 = r.try_get("deleted")?;
-        if let (0, Some(body)) = (deleted, r.try_get::<Option<String>, _>("body")?) {
+        // A deleted target's words are withheld.
+        if let (false, Some(body)) = (r.try_get("deleted")?, r.try_get("body")?) {
             bodies.insert(r.try_get("id")?, body);
         }
     }
@@ -396,19 +393,24 @@ async fn attach_replies(
     for r in &rows {
         let id: i64 = r.try_get("id")?;
         let ts: i64 = r.try_get("ts")?;
-        let deleted: i8 = r.try_get("deleted")?;
-        found.entry(ts).or_insert_with(|| ReplyTo {
-            id: Some(id.to_string()),
-            cursor: Some(encode_cursor(ts, id)),
-            ts: Some(ts),
-            sender: r.try_get("sender").ok(),
-            // A deleted target has no body here.
-            excerpt: excerpt(bodies.get(&id).map(String::as_str)),
-            deleted: deleted != 0,
-        });
+        if found.contains_key(&ts) {
+            continue;
+        }
+        found.insert(
+            ts,
+            ReplyTo {
+                id: Some(id),
+                cursor: Some(encode_cursor(ts, id)),
+                ts: Some(ts),
+                sender: Some(r.try_get("sender")?),
+                excerpt: excerpt(bodies.get(&id).map(String::as_str)),
+                deleted: r.try_get("deleted")?,
+            },
+        );
     }
+    let mut by = by_row(msgs);
     for q in quotes {
-        let Some(m) = msgs.iter_mut().find(|m| m.id == q.msg_id) else {
+        let Some(m) = by.get_mut(&q.msg_id) else {
             continue;
         };
         m.reply_to = Some(found.get(&q.target_ts).cloned().unwrap_or_else(|| ReplyTo {
@@ -422,9 +424,6 @@ async fn attach_replies(
     Ok(())
 }
 
-/// One stored version of a message: when it was sent, and what it said.
-type Version = (i64, Option<String>);
-
 /// Hang an edited Signal message's history on it, with the newest text as its
 /// body and the original's position. The revision rows are excluded from the
 /// page itself.
@@ -435,63 +434,55 @@ pub(super) async fn attach_edits(
     pool: &MySqlPool,
     thread_id: &str,
     msgs: &mut [Message],
-) -> Result<HashMap<String, i64>> {
+) -> Result<HashMap<i64, i64>> {
     let mut shown = HashMap::new();
     let originals: Vec<i64> = msgs.iter().filter(|m| m.edited).map(|m| m.ts).collect();
     if originals.is_empty() {
         return Ok(shown);
     }
-    let placeholders = vec!["?"; originals.len()].join(",");
     // Scoped to the thread: `edit_of_ts` is a timestamp, and two threads can
     // share one.
-    let sql = format!(
+    let sql = in_list(
         "SELECT id, edit_of_ts, server_ts, body FROM messages
-         WHERE thread_id = ? AND edit_of_ts IN ({placeholders})
+         WHERE thread_id = ? AND edit_of_ts IN ({in})
          ORDER BY server_ts ASC",
+        originals.len(),
     );
-    let mut q = sqlx::query(AssertSqlSafe(sql)).bind(thread_id);
-    for ts in &originals {
-        q = q.bind(ts);
+    // Each original's revisions, oldest first: (row, sent, text).
+    let mut revisions: HashMap<i64, Vec<(i64, i64, Option<String>)>> = HashMap::new();
+    for r in bind_all(sqlx::query(AssertSqlSafe(sql)).bind(thread_id), &originals)
+        .fetch_all(pool)
+        .await?
+    {
+        revisions
+            .entry(r.try_get("edit_of_ts")?)
+            .or_default()
+            .push((
+                r.try_get("id")?,
+                r.try_get("server_ts")?,
+                r.try_get("body")?,
+            ));
     }
-
-    // Group first, then assign: each version's time comes from the row before
-    // it, not the row carrying its text.
-    let mut revisions: Vec<(i64, Vec<Version>)> = Vec::new();
-    let mut newest_row: HashMap<i64, i64> = HashMap::new();
-    for row in q.fetch_all(pool).await? {
-        let of: i64 = row.try_get("edit_of_ts")?;
-        newest_row.insert(of, row.try_get("id")?);
-        let ts: i64 = row.try_get("server_ts")?;
-        let body: Option<String> = row.try_get("body")?;
-        match revisions.iter_mut().find(|(k, _)| *k == of) {
-            Some((_, list)) => list.push((ts, body)),
-            None => revisions.push((of, vec![(ts, body)])),
-        }
-    }
-
-    for (of, list) in revisions {
-        let Some(m) = msgs.iter_mut().find(|m| m.ts == of) else {
+    for m in msgs.iter_mut().filter(|m| m.edited) {
+        let Some(mut list) = revisions.remove(&m.ts) else {
             continue;
         };
-        let Some((_, newest)) = list.last().cloned() else {
+        let Some((row, _, newest)) = list.pop() else {
             continue;
         };
         // Earlier versions, in order: the original's text, then every revision
         // but the newest, each stamped with when it was sent.
-        let Some((_, earlier)) = list.split_last() else {
-            continue;
-        };
-        let older_bodies =
-            std::iter::once(m.body.clone()).chain(earlier.iter().map(|(_, b)| b.clone()));
-        let stamps = std::iter::once(m.ts).chain(earlier.iter().map(|(t, _)| *t));
+        let stamps: Vec<i64> = std::iter::once(m.ts)
+            .chain(list.iter().map(|(_, ts, _)| *ts))
+            .collect();
+        let texts = std::iter::once(m.body.take()).chain(list.into_iter().map(|(_, _, b)| b));
         m.edits = stamps
-            .zip(older_bodies)
+            .into_iter()
+            .zip(texts)
             .map(|(ts, body)| MessageEdit { ts, body })
             .collect();
         m.body = newest;
-        if let Some(row) = newest_row.get(&of) {
-            shown.insert(m.id.clone(), *row);
-        }
+        shown.insert(m.id, row);
     }
     Ok(shown)
 }
@@ -537,48 +528,47 @@ impl SignalStyle {
 pub(super) async fn attach_styles(
     pool: &MySqlPool,
     msgs: &mut [Message],
-    shown: &HashMap<String, i64>,
+    shown: &HashMap<i64, i64>,
 ) -> Result<()> {
-    let rows = shown_rows(msgs, shown);
-    if rows.is_empty() {
+    let index = shown_rows(msgs, shown);
+    if index.is_empty() {
         return Ok(());
     }
-    let placeholders = vec!["?"; rows.len()].join(",");
-    let sql = format!(
+    let rows: Vec<i64> = index.keys().copied().collect();
+    let sql = in_list(
         "SELECT message_id, style, start_utf16, length_utf16 FROM signal_text_styles
-          WHERE message_id IN ({placeholders})
+          WHERE message_id IN ({in})
           ORDER BY message_id, start_utf16, length_utf16, style",
+        rows.len(),
     );
-    let mut q = sqlx::query(AssertSqlSafe(sql));
-    for (_, row) in &rows {
-        q = q.bind(row);
-    }
-    for r in q.fetch_all(pool).await? {
-        let row: i64 = r.try_get("message_id")?;
+    for r in bind_all(sqlx::query(AssertSqlSafe(sql)), &rows)
+        .fetch_all(pool)
+        .await?
+    {
+        let Some(&i) = index.get(&r.try_get::<i64, _>("message_id")?) else {
+            continue;
+        };
         let style: String = r.try_get("style")?;
-        let start: i32 = r.try_get("start_utf16")?;
-        let length: i32 = r.try_get("length_utf16")?;
-        for (i, _) in rows.iter().filter(|(_, rr)| *rr == row) {
-            msgs[*i].entities.push(Entity {
-                // An unknown style passes through, and renders as plain text.
-                kind: SignalStyle::parse(&style).map_or(style.clone(), |st| st.kind().to_string()),
-                offset: start.into(),
-                length: length.into(),
-                url: None,
-            });
-        }
+        msgs[i].entities.push(Entity {
+            // An unknown style passes through, and renders as plain text.
+            kind: match SignalStyle::parse(&style) {
+                Some(known) => known.kind().to_owned(),
+                None => style,
+            },
+            offset: r.try_get::<i32, _>("start_utf16")?.into(),
+            length: r.try_get::<i32, _>("length_utf16")?.into(),
+            url: None,
+        });
     }
     Ok(())
 }
 
-/// Each message's index on the page, with the row whose text it shows.
-fn shown_rows(msgs: &[Message], shown: &HashMap<String, i64>) -> Vec<(usize, i64)> {
+/// The row whose text each message on the page shows, to its index: its own,
+/// or for an edited one its newest revision (`shown`).
+fn shown_rows(msgs: &[Message], shown: &HashMap<i64, i64>) -> HashMap<i64, usize> {
     msgs.iter()
         .enumerate()
-        .filter_map(|(i, m)| {
-            let row = shown.get(&m.id).copied().or_else(|| m.id.parse().ok())?;
-            Some((i, row))
-        })
+        .map(|(i, m)| (shown.get(&m.id).copied().unwrap_or(m.id), i))
         .collect()
 }
 
@@ -597,19 +587,16 @@ async fn mentions_in(pool: &MySqlPool, rows: &[i64]) -> Result<HashMap<i64, Vec<
     if rows.is_empty() {
         return Ok(out);
     }
-    let placeholders = vec!["?"; rows.len()].join(",");
-    let sql = format!(
+    let sql = in_list(
         "SELECT x.message_id, x.start_utf16, x.length_utf16,
                 COALESCE(ct.display_name, x.uuid) AS who
            FROM signal_mentions x
            LEFT JOIN contacts ct ON ct.uuid = x.uuid
-          WHERE x.message_id IN ({placeholders})
+          WHERE x.message_id IN ({in})
           ORDER BY x.message_id, x.start_utf16 DESC",
+        rows.len(),
     );
-    let mut q = sqlx::query(AssertSqlSafe(sql));
-    for row in rows {
-        q = q.bind(row);
-    }
+    let q = bind_all(sqlx::query(AssertSqlSafe(sql)), rows);
     for r in q.fetch_all(pool).await? {
         let start: i32 = r.try_get("start_utf16")?;
         let length: i32 = r.try_get("length_utf16")?;
@@ -631,12 +618,12 @@ async fn mentions_in(pool: &MySqlPool, rows: &[i64]) -> Result<HashMap<i64, Vec<
 pub(super) async fn attach_mentions(
     pool: &MySqlPool,
     msgs: &mut [Message],
-    shown: &HashMap<String, i64>,
+    shown: &HashMap<i64, i64>,
 ) -> Result<()> {
-    let rows = shown_rows(msgs, shown);
-    let ids: Vec<i64> = rows.iter().map(|(_, row)| *row).collect();
-    let mentions = mentions_in(pool, &ids).await?;
-    for (i, row) in rows {
+    let index = shown_rows(msgs, shown);
+    let rows: Vec<i64> = index.keys().copied().collect();
+    let mentions = mentions_in(pool, &rows).await?;
+    for (row, i) in index {
         let m = &mut msgs[i];
         for x in mentions.get(&row).into_iter().flatten() {
             let Some(named) = m.body.as_mut().and_then(|b| put_name(b, x)) else {
@@ -703,34 +690,33 @@ fn byte_at(s: &str, at: i64) -> Option<usize> {
 
 /// Link previews for this page's Signal messages, in the order sent.
 pub(super) async fn attach_previews(pool: &MySqlPool, msgs: &mut [Message]) -> Result<()> {
-    let ids: Vec<i64> = msgs.iter().filter_map(|m| m.id.parse().ok()).collect();
+    let ids: Vec<i64> = msgs.iter().map(|m| m.id).collect();
     if ids.is_empty() {
         return Ok(());
     }
-    let placeholders = vec!["?"; ids.len()].join(",");
-    let sql = format!(
+    let sql = in_list(
         "SELECT id, message_id, url, title, description, image_path
            FROM signal_link_previews
-          WHERE message_id IN ({placeholders})
+          WHERE message_id IN ({in})
           ORDER BY message_id, position",
+        ids.len(),
     );
-    let mut q = sqlx::query(AssertSqlSafe(sql));
-    for id in &ids {
-        q = q.bind(id);
-    }
-    for r in q.fetch_all(pool).await? {
-        let message_id: i64 = r.try_get("message_id")?;
-        let message_id = message_id.to_string();
-        if let Some(m) = msgs.iter_mut().find(|m| m.id == message_id) {
-            let id: i64 = r.try_get("id")?;
-            let held: Option<String> = r.try_get("image_path")?;
-            m.previews.push(LinkPreview {
-                url: r.try_get("url")?,
-                title: r.try_get("title")?,
-                description: r.try_get("description")?,
-                image: held.map(|_| id.to_string()),
-            });
-        }
+    let rows = bind_all(sqlx::query(AssertSqlSafe(sql)), &ids)
+        .fetch_all(pool)
+        .await?;
+    let mut by = by_row(msgs);
+    for r in rows {
+        let Some(m) = by.get_mut(&r.try_get::<i64, _>("message_id")?) else {
+            continue;
+        };
+        let id: i64 = r.try_get("id")?;
+        let held: Option<String> = r.try_get("image_path")?;
+        m.previews.push(LinkPreview {
+            url: r.try_get("url")?,
+            title: r.try_get("title")?,
+            description: r.try_get("description")?,
+            image: held.map(|_| id.to_string()),
+        });
     }
     Ok(())
 }
@@ -746,7 +732,7 @@ async fn attach_read(pool: &MySqlPool, msgs: &mut [Message]) -> Result<()> {
     let ids: Vec<i64> = msgs
         .iter()
         .filter(|m| m.is_outgoing)
-        .filter_map(|m| m.id.parse().ok())
+        .map(|m| m.id)
         .collect();
     if ids.is_empty() {
         return Ok(());
@@ -756,26 +742,24 @@ async fn attach_read(pool: &MySqlPool, msgs: &mut [Message]) -> Result<()> {
             .fetch_optional(pool)
             .await?
             .flatten();
-
-    let placeholders = vec!["?"; ids.len()].join(",");
-    let sql = format!(
+    let sql = in_list(
         "SELECT m.id AS id, r.kind AS kind, r.when_ts AS when_ts,
                 COALESCE(ct.display_name, r.author_uuid) AS who
          FROM signal_receipts r
          JOIN messages m ON m.server_ts = r.target_ts
          LEFT JOIN contacts ct ON ct.uuid = r.author_uuid
-         WHERE m.id IN ({placeholders}) AND r.author_uuid <> m.sender_uuid
+         WHERE m.id IN ({in}) AND r.author_uuid <> m.sender_uuid
          ORDER BY r.when_ts",
+        ids.len(),
     );
-    let mut q = sqlx::query(AssertSqlSafe(sql));
-    for id in &ids {
-        q = q.bind(id);
-    }
-    let mut best: HashMap<String, DeliveryState> = HashMap::new();
-    let mut read_by: HashMap<String, Vec<ReadBy>> = HashMap::new();
-    for row in q.fetch_all(pool).await? {
-        let id: i64 = row.try_get("id")?;
-        let id = id.to_string();
+    let rows = bind_all(sqlx::query(AssertSqlSafe(sql)), &ids)
+        .fetch_all(pool)
+        .await?;
+    let mut by = by_row(msgs);
+    for row in rows {
+        let Some(m) = by.get_mut(&row.try_get::<i64, _>("id")?) else {
+            continue;
+        };
         let kind: String = row.try_get("kind")?;
         let state = match kind.as_str() {
             "delivery" => DeliveryState::Delivered,
@@ -784,36 +768,33 @@ async fn attach_read(pool: &MySqlPool, msgs: &mut [Message]) -> Result<()> {
             // An unknown kind is a schema change this build has not seen.
             other => bail!("signal_receipts.kind holds an unknown kind: {other:?}"),
         };
-        let slot = best.entry(id.clone()).or_insert(DeliveryState::Sent);
-        *slot = (*slot).max(state);
+        let d = m.delivery.get_or_insert_with(|| Delivery {
+            state: DeliveryState::Sent,
+            read_by: Vec::new(),
+        });
+        d.state = d.state.max(state);
         if state >= DeliveryState::Read {
             // Ordered by `when_ts`; a person who read and then viewed is named once.
             let who: String = row.try_get("who")?;
-            let entry = read_by.entry(id).or_default();
-            if !entry.iter().any(|r| r.who == who) {
-                entry.push(ReadBy {
+            if !d.read_by.iter().any(|r| r.who == who) {
+                d.read_by.push(ReadBy {
                     who,
                     at: row.try_get("when_ts")?,
                 });
             }
         }
     }
-    for m in msgs.iter_mut().filter(|m| m.is_outgoing) {
-        match best.get(&m.id) {
-            Some(state) => {
-                m.delivery = Some(Delivery {
-                    state: *state,
-                    read_by: read_by.remove(&m.id).unwrap_or_default(),
-                });
-            }
-            // Nothing came back: meaningful only if we were listening then.
-            None if floor_ms.is_some_and(|f| m.ts >= f) => {
-                m.delivery = Some(Delivery {
-                    state: DeliveryState::Sent,
-                    read_by: Vec::new(),
-                });
-            }
-            None => {}
+    drop(by);
+    // Nothing came back: meaningful only if we were listening then.
+    for m in msgs
+        .iter_mut()
+        .filter(|m| m.is_outgoing && m.delivery.is_none())
+    {
+        if floor_ms.is_some_and(|f| m.ts >= f) {
+            m.delivery = Some(Delivery {
+                state: DeliveryState::Sent,
+                read_by: Vec::new(),
+            });
         }
     }
     Ok(())
@@ -824,19 +805,12 @@ pub async fn attachment_blob(
     pool: &MySqlPool,
     id: i64,
 ) -> Result<Option<(Option<String>, String)>> {
-    let row = sqlx::query(
+    Ok(sqlx::query_as(
         "SELECT content_type, stored_path FROM attachments WHERE id = ? AND stored_path IS NOT NULL",
     )
     .bind(id)
     .fetch_optional(pool)
-    .await?;
-    match row {
-        Some(r) => Ok(Some((
-            r.try_get("content_type")?,
-            r.try_get("stored_path")?,
-        ))),
-        None => Ok(None),
-    }
+    .await?)
 }
 
 /// A link preview's stored picture: its content type and where it was stored.
@@ -844,20 +818,13 @@ pub async fn preview_image_blob(
     pool: &MySqlPool,
     id: i64,
 ) -> Result<Option<(Option<String>, String)>> {
-    let row = sqlx::query(
+    Ok(sqlx::query_as(
         "SELECT image_content_type, image_path FROM signal_link_previews
           WHERE id = ? AND image_path IS NOT NULL",
     )
     .bind(id)
     .fetch_optional(pool)
-    .await?;
-    match row {
-        Some(r) => Ok(Some((
-            r.try_get("image_content_type")?,
-            r.try_get("image_path")?,
-        ))),
-        None => Ok(None),
-    }
+    .await?)
 }
 
 /// Signal messages whose text matches `like`, in one thread when `id` is given.
@@ -911,7 +878,6 @@ pub(super) async fn search(
     // The row each hit's text came from: mentions are kept per row.
     let mut matched = Vec::new();
     for r in rows {
-        let deleted: i8 = r.try_get("deleted")?;
         let id: i64 = r.try_get("id")?;
         if !seen.insert(id) {
             continue;
@@ -925,7 +891,7 @@ pub(super) async fn search(
             ts,
             sender: r.try_get("sender")?,
             snippet: r.try_get::<Option<String>, _>("body")?.unwrap_or_default(),
-            deleted: deleted != 0,
+            deleted: r.try_get("deleted")?,
             // Signal's native unit is milliseconds, the same as `ts`.
             cursor: encode_cursor(ts, id),
         });

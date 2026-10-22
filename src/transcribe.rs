@@ -196,12 +196,11 @@ pub async fn texts(
     if ids.is_empty() {
         return Ok(Default::default());
     }
-    let placeholders = vec!["?"; ids.len()].join(",");
-    let sql = format!(
+    let sql = crate::archive::in_list(
         "SELECT attachment_id, heard FROM transcripts
-          WHERE origin = ? AND heard IS NOT NULL AND attachment_id IN ({placeholders})"
+          WHERE origin = ? AND heard IS NOT NULL AND attachment_id IN ({in})",
+        ids.len(),
     );
-    // Only `?` placeholders are spliced in; every value is bound.
     let mut q = sqlx::query_as::<_, (String, String)>(AssertSqlSafe(sql)).bind(origin_name(origin));
     for id in ids {
         q = q.bind(id);

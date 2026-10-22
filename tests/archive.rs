@@ -734,8 +734,7 @@ async fn signal_attachments_available_flag_and_blob_lookup() {
 
     assert!(page.messages[1].attachments.is_empty());
 
-    let img_id: i64 = img.id.parse().unwrap();
-    let pdf_id: i64 = pdf.id.parse().unwrap();
+    let (img_id, pdf_id) = (img.id, pdf.id);
     assert_eq!(
         archive::signal::attachment_blob(&pool, img_id)
             .await
@@ -848,7 +847,7 @@ async fn a_signal_edit_is_found_as_the_message_it_edits() {
     assert_eq!(hits.len(), 1);
     assert_eq!(
         parse_cursor(&hits[0].cursor),
-        Some((3000, edited.id.parse().unwrap())),
+        Some((3000, edited.id)),
         "the hit lands on the message as the thread shows it"
     );
     assert_eq!(hits[0].ts, 3000);
@@ -1412,11 +1411,11 @@ async fn paging_forward_mirrors_reading_the_whole_conversation() {
             .await
             .unwrap();
         // By id: `dm:tie`'s timestamps are all equal.
-        let all: Vec<String> = whole.messages.iter().map(|m| m.id.clone()).collect();
+        let all: Vec<i64> = whole.messages.iter().map(|m| m.id).collect();
         assert!(all.len() >= 2, "{origin:?}: fixture too small to page");
 
         // The oldest row starts the walk, so it is seeded by hand.
-        let mut fwd = vec![all[0].clone()];
+        let mut fwd = vec![all[0]];
         let mut cursor = whole.next_cursor.as_deref().and_then(parse_cursor);
         while let Some(c) = cursor {
             // One at a time, so every step is a page boundary.
@@ -1426,7 +1425,7 @@ async fn paging_forward_mirrors_reading_the_whole_conversation() {
             if p.messages.is_empty() {
                 break;
             }
-            fwd.extend(p.messages.iter().map(|m| m.id.clone()));
+            fwd.extend(p.messages.iter().map(|m| m.id));
             if !p.has_more {
                 break;
             }
@@ -1525,15 +1524,15 @@ async fn a_landing_contains_the_message_it_landed_on() {
         .unwrap();
 
         // By id: IRC rows share timestamps.
-        let want = cursor.1.to_string();
-        let landed: Vec<&str> = older
+        let want = cursor.1;
+        let landed: Vec<i64> = older
             .messages
             .iter()
             .chain(newer.messages.iter())
-            .map(|m| m.id.as_str())
+            .map(|m| m.id)
             .collect();
         assert!(
-            landed.contains(&want.as_str()),
+            landed.contains(&want),
             "{:?}: the landing is missing the hit (row {want}) — loaded {landed:?}",
             hit.origin
         );
@@ -2105,8 +2104,6 @@ async fn requesting_media_queues_only_what_is_not_held() {
             .find(|m| m.body.as_deref() == Some(body))
             .unwrap_or_else(|| panic!("no message {body:?}"))
             .id
-            .parse::<i64>()
-            .expect("a numeric api id")
     };
 
     let video = id_of("third go");
@@ -2171,9 +2168,9 @@ async fn a_signal_quote_resolves_withholds_a_deletion_and_survives_a_miss() {
     assert_eq!(r.excerpt.as_deref(), Some("hi"));
     assert!(!r.deleted);
     // The id and the cursor come together.
-    let id = r.id.as_deref().expect("held → an id to go to");
+    let id = r.id.expect("held → an id to go to");
     let cursor = r.cursor.as_deref().expect("held → a cursor to land on");
-    assert_eq!(parse_cursor(cursor), Some((1000, id.parse().unwrap())));
+    assert_eq!(parse_cursor(cursor), Some((1000, id)));
 
     // The target is deleted, so its words are withheld.
     let r = by_ts(3000).reply_to.as_ref().expect("3000 quotes 4000");
@@ -3289,7 +3286,7 @@ async fn a_voice_message_is_leased_once_and_its_words_shown() {
         page.messages[0]
             .attachments
             .iter()
-            .find(|a| a.id == id)
+            .find(|a| a.id.to_string() == id)
             .unwrap()
             .transcript
             .clone()
@@ -3639,7 +3636,7 @@ async fn a_signal_group_call_shows_once_as_its_first_update() {
         .await
         .unwrap();
     assert_eq!(ts_of(&before), [31_000, 32_000]);
-    let first = Some((31_000, page.messages[0].id.parse::<i64>().unwrap()));
+    let first = Some((31_000, page.messages[0].id));
     for dir in [PageDir::Newer, PageDir::AtAndNewer] {
         let on = archive::messages_page(&pool, Origin::Signal, thread, first, 50, dir)
             .await
@@ -3660,4 +3657,49 @@ async fn a_signal_group_call_shows_once_as_its_first_update() {
         (last.sender.as_str(), last.text.as_deref()),
         ("Alice", Some("started a group call"))
     );
+}
+
+/// Row ids are integers here and text on the wire: the frontend keys on them as
+/// strings, and its generated types say `string`.
+#[tokio::test]
+async fn row_ids_reach_the_api_as_text() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let page = archive::messages_page(&pool, Origin::Signal, "dm:alice", None, 100, PageDir::Older)
+        .await
+        .unwrap();
+    let json = serde_json::to_value(&page).unwrap();
+    let msgs = json["messages"].as_array().unwrap();
+    let ids = |f: &dyn Fn(&serde_json::Value) -> Vec<serde_json::Value>| -> Vec<serde_json::Value> {
+        msgs.iter().flat_map(f).collect()
+    };
+    let message_ids = ids(&|m| vec![m["id"].clone()]);
+    let attachment_ids = ids(&|m| {
+        m["attachments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["id"].clone())
+            .collect()
+    });
+    let reply_ids = ids(&|m| {
+        m["reply_to"]
+            .get("id")
+            .filter(|v| !v.is_null())
+            .cloned()
+            .into_iter()
+            .collect()
+    });
+    for (what, found) in [
+        ("message", &message_ids),
+        ("attachment", &attachment_ids),
+        ("reply", &reply_ids),
+    ] {
+        assert!(!found.is_empty(), "the fixture has no {what} id to check");
+        assert!(
+            found.iter().all(serde_json::Value::is_string),
+            "{what} ids: {found:?}"
+        );
+    }
 }
