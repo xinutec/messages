@@ -21,8 +21,8 @@ export class Composer {
 
   constructor(
     private readonly api: MessagesApi,
-    private readonly origin: Signal<Origin | undefined>,
-    private readonly id: Signal<string | undefined>,
+    /** The open conversation, or null. */
+    private readonly where: Signal<{ origin: Origin; id: string } | null>,
     /** Something went and is archived: show it. */
     private readonly sent: () => Promise<void>,
   ) {}
@@ -41,13 +41,12 @@ export class Composer {
   }
 
   async send(): Promise<void> {
-    const o = this.origin();
-    const i = this.id();
+    const w = this.where();
     const text = this.draft().trim();
-    if (o == null || i == null || !text || this.sending() || this.composing()) return;
+    if (!w || !text || this.sending() || this.composing()) return;
     // IRC carries one line per message, so a paragraph goes as its lines, in
     // order, as every client sends a paste; Telegram carries the breaks.
-    const lines = o === 'irc' ? text.split('\n').map((l) => l.trim()).filter(Boolean) : [text];
+    const lines = w.origin === 'irc' ? text.split('\n').map((l) => l.trim()).filter(Boolean) : [text];
     const asked = lines.length;
 
     this.sending.set(true);
@@ -55,7 +54,7 @@ export class Composer {
     let archived = true;
     try {
       while (lines.length > 0) {
-        const res = await firstValueFrom(this.api.send(o, i, lines[0]));
+        const res = await firstValueFrom(this.api.send(w.origin, w.id, lines[0]));
         if (!res.sent) {
           this.error.set(res.error ?? 'Not sent.');
           break;
@@ -73,7 +72,7 @@ export class Composer {
     if (lines.length === asked) return;
     if (archived) await this.sent();
     else if (this.error() == null) {
-      this.error.set(o === 'irc' ? 'Sent. It will appear here after the next import.' : 'Sent, but not archived yet.');
+      this.error.set(w.origin === 'irc' ? 'Sent. It will appear here after the next import.' : 'Sent, but not archived yet.');
     }
   }
 

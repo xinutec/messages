@@ -1671,3 +1671,18 @@ describe('a message with nothing to show', () => {
     expect(body('c')).toBe('* started a group call');
   });
 });
+
+/** The route's origin is parsed where it enters: one the app does not know names
+ *  no conversation, and the API is never asked about it. */
+describe('an origin the app does not know', () => {
+  it('opens nothing and asks nothing', async () => {
+    const { thread, ref, fixture } = setup();
+    const api = fakeApiOf();
+    ref.setInput('origin', 'bogus');
+    ref.setInput('id', 'dm:a');
+    fixture.detectChanges();
+    await settle(thread);
+    expect(thread.routed()).toBe(false);
+    expect(api.messages).not.toHaveBeenCalled();
+  });
+});

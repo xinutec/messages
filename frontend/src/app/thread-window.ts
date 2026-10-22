@@ -5,7 +5,7 @@
 // so the scrollbar is approximate; what the reader sees stays exact because
 // every mutation re-anchors the viewport on the message at its top.
 
-import { Signal, computed, signal } from '@angular/core';
+import { Signal, WritableSignal, computed, signal } from '@angular/core';
 
 import { Message } from './models';
 
@@ -28,6 +28,9 @@ const ROW_GUESS = 64;
 /** How close (px) to the bottom counts as at the latest; small, so a short
  *  thread is not always at the bottom. */
 const BOTTOM_EPS = 64;
+
+/** One end of the rendered window. */
+type Side = 'top' | 'bottom';
 
 /** A run of messages collapsed out of the DOM, and the height it occupied. */
 interface Chunk {
@@ -130,7 +133,7 @@ export class ThreadWindow {
     let needNewer = false;
     if (nearTop) {
       if (this.above().length) {
-        this.revealTop();
+        this.reveal('top');
         this.enforceMax('bottom');
       } else {
         needOlder = true;
@@ -138,7 +141,7 @@ export class ThreadWindow {
     }
     if (nearBottom) {
       if (this.below().length) {
-        this.revealBottom();
+        this.reveal('bottom');
         this.enforceMax('top');
       } else {
         needNewer = true;
@@ -185,12 +188,9 @@ export class ThreadWindow {
 
   /** Collapse the far end until the DOM is under the cap. Call after growing the
    *  opposite end. */
-  enforceMax(side: 'top' | 'bottom'): void {
+  enforceMax(side: Side): void {
     let guard = 0;
-    while (this.renderCount() > MAX_RENDERED && guard++ < 64) {
-      if (side === 'bottom') this.collapseBottom(PAGE);
-      else this.collapseTop(PAGE);
-    }
+    while (this.renderCount() > MAX_RENDERED && guard++ < 64) this.collapse(side, PAGE);
   }
 
   /** Collapse off-screen ends until the DOM is under the cap, after a restore
@@ -199,36 +199,32 @@ export class ThreadWindow {
     let guard = 0;
     while (this.renderCount() > MAX_RENDERED && guard++ < 128) {
       const { above, below } = this.offscreenCounts();
-      if (below >= above && below > 0) this.collapseBottom(Math.min(PAGE, below));
-      else if (above > 0) this.collapseTop(Math.min(PAGE, above));
+      if (below >= above && below > 0) this.collapse('bottom', Math.min(PAGE, below));
+      else if (above > 0) this.collapse('top', Math.min(PAGE, above));
       else break; // nothing off-screen to collapse (viewport bigger than cap)
     }
   }
 
-  private revealTop(): void {
-    const cs = this.above();
-    if (!cs.length) return;
-    this.keepingAnchor('revealTop', () => this.above.set(cs.slice(0, -1)));
+  /** The collapsed runs at one end of the window. */
+  private runs(side: Side): WritableSignal<Chunk[]> {
+    return side === 'top' ? this.above : this.below;
   }
 
-  private revealBottom(): void {
-    const cs = this.below();
-    if (!cs.length) return;
-    this.keepingAnchor('revealBottom', () => this.below.set(cs.slice(0, -1)));
+  /** Bring back the run nearest the window at `side`. */
+  private reveal(side: Side): void {
+    const runs = this.runs(side);
+    if (!runs().length) return;
+    this.keepingAnchor(`reveal ${side}`, () => runs.update((c) => c.slice(0, -1)));
   }
 
-  private collapseTop(count: number): void {
+  /** Take `count` rendered messages off the window at `side`. */
+  private collapse(side: Side, count: number): void {
     const n = Math.min(count, this.renderCount());
     if (n <= 0) return;
     const height = this.avgRowH() * n;
-    this.keepingAnchor('collapseTop', () => this.above.update((c) => [...c, { count: n, height }]));
-  }
-
-  private collapseBottom(count: number): void {
-    const n = Math.min(count, this.renderCount());
-    if (n <= 0) return;
-    const height = this.avgRowH() * n;
-    this.keepingAnchor('collapseBottom', () => this.below.update((c) => [...c, { count: n, height }]));
+    this.keepingAnchor(`collapse ${side}`, () =>
+      this.runs(side).update((c) => [...c, { count: n, height }]),
+    );
   }
 
   // ---- viewport ------------------------------------------------------------
@@ -302,11 +298,7 @@ export class ThreadWindow {
   }
 
   watchScroller(el: HTMLElement | undefined): void {
-    const next = el ?? null;
-    if (!this.ro || next === this.watchedScroller) return;
-    if (this.watchedScroller) this.ro.unobserve(this.watchedScroller);
-    this.watchedScroller = next;
-    if (next) this.ro.observe(next);
+    this.watchedScroller = this.rewatch(this.watchedScroller, el);
   }
 
   /** Watch the message block too: an image loading after the open has scrolled
@@ -314,11 +306,16 @@ export class ThreadWindow {
    *  cannot miss an image that finished before it was attached. Re-pointed at
    *  each new block the caller offers. */
   watchContent(el: HTMLElement | undefined): void {
+    this.watched = this.rewatch(this.watched, el);
+  }
+
+  /** Observe `el` in place of `was`, and return what is now watched. */
+  private rewatch(was: HTMLElement | null, el: HTMLElement | undefined): HTMLElement | null {
     const next = el ?? null;
-    if (!this.ro || next === this.watched) return;
-    if (this.watched) this.ro.unobserve(this.watched);
-    this.watched = next;
+    if (!this.ro || next === was) return was;
+    if (was) this.ro.unobserve(was);
     if (next) this.ro.observe(next);
+    return next;
   }
 
   /** Follow the end down to the new bottom, or leave a reader in history where

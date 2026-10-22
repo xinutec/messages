@@ -129,9 +129,15 @@ export class FetchRequests {
     });
   }
 
+  /** Only the message holding it is replaced: the rest stay the same objects,
+   *  so their bubbles are not redrawn. */
   private updateAttachment(id: string, change: (a: Attachment) => Attachment): void {
     this.messages.update((cur) =>
-      cur.map((m) => ({ ...m, attachments: m.attachments.map((a) => (a.id === id ? change(a) : a)) })),
+      cur.map((m) =>
+        m.attachments.some((a) => a.id === id)
+          ? { ...m, attachments: m.attachments.map((a) => (a.id === id ? change(a) : a)) }
+          : m,
+      ),
     );
   }
 

@@ -34,43 +34,6 @@
   flex: none;
 }
 
-// Formatting runs, Telegram's and Signal's. Kinds without a rule render as
-// plain text.
-.body {
-  // A link in the words' own colour, underlined, as Signal draws it: legible on
-  // either bubble, where the browser's blue is not.
-  a {
-    color: inherit;
-    text-decoration: underline;
-  }
-  .fmt-bold { font-weight: 700; }
-  .fmt-italic { font-style: italic; }
-  .fmt-strike { text-decoration: line-through; }
-  .fmt-underline { text-decoration: underline; }
-  .fmt-strike.fmt-underline { text-decoration: line-through underline; }
-  .fmt-mention,
-  .fmt-mentionName {
-    color: var(--mat-sys-primary);
-    font-weight: 500;
-  }
-  // Family only: sizes come from the M3 scale (DL-SCSS-ADHOC-FONT-SIZE).
-  .fmt-code,
-  .fmt-pre {
-    font-family: ui-monospace, monospace;
-  }
-  // Hidden until asked for, as the sender chose.
-  .fmt-spoiler {
-    border-radius: 0.2em;
-    cursor: pointer;
-    // Not `currentColor`, which the next rule makes transparent: the cover
-    // would vanish with the text.
-    background: var(--mat-sys-on-surface);
-    &:not(:hover):not(:focus) {
-      color: transparent;
-    }
-  }
-}
-
 // In-thread search, pinned above the messages; the thread stays in place behind it.
 .thread-search {
   position: sticky;
@@ -174,18 +137,6 @@
   flex-wrap: wrap;
   margin-top: 0.1rem;
   user-select: none;
-}
-
-// A message's words, in its bubble or as an album's caption.
-.body {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  // Deleted, or nothing the archive can draw.
-  &.deleted,
-  &.absent {
-    font-style: italic;
-    opacity: 0.6;
-  }
 }
 
 // A message's bubble. Tight within one sender's run, a gap where the next begins.

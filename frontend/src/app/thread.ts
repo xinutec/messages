@@ -19,7 +19,7 @@ import { attachmentName, attachmentNoun, isAudio, isImage, isVideo } from './att
 import { Avatar } from './avatar';
 import { FetchRequests } from './fetch-requests';
 import { segments } from './formatting';
-import { hue } from './list-row';
+import { hue, isOrigin } from './list-row';
 import { clipboardOf, writeClipboard } from './copy-log';
 import { Picking, selectedMessages } from './selection';
 import {
@@ -150,16 +150,24 @@ export class Thread {
   }
 
   // Bound from the route; both absent on `/`. The router encodes ids containing
-  // ':' and '/'.
-  readonly origin = input<Origin>();
+  // ':' and '/'. An origin the app does not know names no conversation.
+  readonly origin = input(undefined, {
+    transform: (v: string | undefined): Origin | undefined => (isOrigin(v) ? v : undefined),
+  });
   readonly id = input<string>();
 
-  readonly routed = computed(() => this.origin() != null && this.id() != null);
+  /** The conversation the route names, or null on `/`. */
+  private readonly where = computed(() => {
+    const origin = this.origin();
+    const id = this.id();
+    return origin != null && id != null ? { origin, id } : null;
+  });
+
+  readonly routed = computed(() => this.where() != null);
 
   readonly conversation = computed<Conversation | null>(() => {
-    const o = this.origin();
-    const i = this.id();
-    return o != null && i != null ? this.store.find(o, i) : null;
+    const w = this.where();
+    return w ? this.store.find(w.origin, w.id) : null;
   });
 
   protected barName(c: Conversation): string {
@@ -174,7 +182,7 @@ export class Thread {
     return c ? this.store.title(c) : { text: 'Conversation', provisional: true };
   });
 
-  protected readonly search = new ThreadSearch(this.api, this.origin, this.id);
+  protected readonly search = new ThreadSearch(this.api, this.where);
 
   /** All fetched messages, ascending by ts; only a window is rendered. */
   readonly messages = signal<Message[]>([]);
@@ -265,14 +273,13 @@ export class Thread {
     // Reload when the routed conversation changes; Angular reuses this instance.
     let loadedKey: string | null = null;
     effect(() => {
-      const o = this.origin();
-      const i = this.id();
-      const key = o != null && i != null ? `${o}:${i}` : null;
+      const w = this.where();
+      const key = w ? `${w.origin}:${w.id}` : null;
       if (key === loadedKey) return;
       loadedKey = key;
       this.picking.clear();
       this.composer.switchTo(key);
-      if (o != null && i != null) void this.loadThread(o, i);
+      if (w) void this.loadThread(w.origin, w.id);
       else this.resetState();
     });
 
@@ -535,9 +542,8 @@ export class Thread {
   }
 
   private async reloadNow(): Promise<void> {
-    const o = this.origin();
-    const i = this.id();
-    if (o != null && i != null) await this.loadThread(o, i);
+    const w = this.where();
+    if (w) await this.loadThread(w.origin, w.id);
   }
 
   // ---- copying a selection as a chat log -----------------------------------
@@ -595,9 +601,8 @@ export class Thread {
    *  shows its state as of the landing. Silent on failure: the next tick
    *  retries. */
   async pollNewer(): Promise<void> {
-    const o = this.origin();
-    const i = this.id();
-    if (o == null || i == null) return;
+    const w = this.where();
+    if (!w) return;
     if (this.polling || this.loadingThread() || this.loadingOlder() || this.composer.sending()) return;
     if (this.floating()) return;
     if (document.visibilityState !== 'visible') return;
@@ -606,7 +611,7 @@ export class Thread {
     this.polling = true;
     const gen = this.generation;
     try {
-      const page = await firstValueFrom(this.api.messages(o, i, undefined, PAGE));
+      const page = await firstValueFrom(this.api.messages(w.origin, w.id, undefined, PAGE));
       this.store.noteAnswer();
       // The reader may have switched conversations meanwhile.
       if (gen !== this.generation) return;
@@ -619,7 +624,7 @@ export class Thread {
       // the end wants the present, so reload; one back in history keeps their
       // place, and the rest comes forwards as they scroll (`fetchNewer`).
       if (fresh.length > 0 && fresh.length === page.messages.length) {
-        if (this.win.isFollowing()) await this.loadThread(o, i);
+        if (this.win.isFollowing()) await this.loadThread(w.origin, w.id);
         else this.place.reachesPresent(false);
         return;
       }
@@ -664,7 +669,7 @@ export class Thread {
     const kind = this.conversation()?.kind;
     return this.origin() === 'telegram' && (kind === 'dm' || kind === 'group');
   });
-  readonly composer = new Composer(this.api, this.origin, this.id, () => this.afterSend());
+  readonly composer = new Composer(this.api, this.where, () => this.afterSend());
 
   /** Show what was just sent: the newest page merged in and the view at the
    *  end, with no reload; a window floating in the past is reloaded into the
@@ -725,13 +730,12 @@ export class Thread {
   }
 
   async fetchOlder(): Promise<void> {
-    const o = this.origin();
-    const i = this.id();
-    if (o == null || i == null || !this.hasMore() || this.cursor == null || this.loadingOlder()) return;
+    const w = this.where();
+    if (!w || !this.hasMore() || this.cursor == null || this.loadingOlder()) return;
     this.loadingOlder.set(true);
     const gen = this.generation;
     try {
-      const page = await firstValueFrom(this.api.messages(o, i, this.cursor, PAGE));
+      const page = await firstValueFrom(this.api.messages(w.origin, w.id, this.cursor, PAGE));
       if (gen !== this.generation) return;
       this.win.keepingAnchor('fetchOlder', () => {
         this.messages.update((cur) => [...page.messages, ...cur]);
@@ -752,14 +756,13 @@ export class Thread {
   /** Grow the window forwards. When the forward page runs out the window has
    *  reached the present: `floating` goes false and polling resumes. */
   async fetchNewer(): Promise<void> {
-    const o = this.origin();
-    const i = this.id();
-    if (o == null || i == null || !this.floating()) return;
+    const w = this.where();
+    if (!w || !this.floating()) return;
     if (this.newerCursor == null || this.loadingNewer()) return;
     this.loadingNewer.set(true);
     const gen = this.generation;
     try {
-      const page = await firstValueFrom(this.api.messages(o, i, this.newerCursor, PAGE, 'newer'));
+      const page = await firstValueFrom(this.api.messages(w.origin, w.id, this.newerCursor, PAGE, 'newer'));
       if (gen !== this.generation) return;
       this.win.keepingAnchor('fetchNewer', () => {
         this.messages.update((cur) => [...cur, ...page.messages]);
@@ -787,10 +790,7 @@ export class Thread {
     // Not while picking: this replaces the history entry on top, which is then
     // the picking's step, and the close would have none to take away. The
     // picking's end catches up.
-    if (this.picking.picked().length > 0) return;
-    const o = this.origin();
-    const i = this.id();
-    if (o == null || i == null) return;
+    if (this.picking.picked().length > 0 || !this.routed()) return;
     // Where the viewport is, whoever moved it; the landing stays in the address
     // until the reader scrolls (`ReaderPlace.address`).
     const top = this.win.atBottom() ? null : this.win.topAnchor()?.id;

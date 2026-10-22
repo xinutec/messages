@@ -25,6 +25,8 @@ export class MessagesStore {
    *  the service worker kept, and the shell says so. Cleared by any answer. */
   readonly stale = signal(false);
   private started = false;
+  /** The network has answered for the list; what the worker kept no longer counts. */
+  private fresh = false;
 
   noteAnswer(): void {
     this.stale.set(false);
@@ -35,9 +37,6 @@ export class MessagesStore {
   noteFailure(e: unknown): void {
     if (noNetwork(e)) this.stale.set(true);
   }
-  /** The network has answered for the list; what the worker kept no longer counts. */
-  private fresh = false;
-
   /** Load the user then the conversation list. Idempotent (the shell calls it). */
   init(): void {
     if (this.started) return;

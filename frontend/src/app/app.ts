@@ -15,7 +15,7 @@ import { Subject, catchError, filter, fromEvent, of, switchMap } from 'rxjs';
 
 import { BUILD_INFO } from './build-info';
 import { Avatar } from './avatar';
-import { ORIGIN_LABELS, preview, whenFormat } from './list-row';
+import { ORIGIN_LABELS, ORIGINS, isOrigin, preview, whenFormat } from './list-row';
 import { MessagesApi } from './messages-api';
 import { MessagesStore } from './messages-store';
 import { AppSwUpdates } from './sw-updates';
@@ -59,7 +59,7 @@ export class App {
   readonly conversations = this.store.conversations;
 
   readonly originLabels = ORIGIN_LABELS;
-  readonly origins: readonly Origin[] = ['signal', 'gchat', 'irc', 'telegram'];
+  readonly origins = ORIGINS;
 
   protected readonly whenFormat = whenFormat;
   protected readonly preview = preview;
@@ -67,19 +67,18 @@ export class App {
   private params = toSignal(this.route.queryParamMap);
   readonly originFilter = computed<Origin | 'all'>(() => {
     const o = this.params()?.get('origin');
-    // Matched against the list, so a new origin is filterable automatically.
-    return this.origins.find((known) => known === o) ?? 'all';
+    return isOrigin(o) ? o : 'all';
   });
 
   // The open conversation, from the router, so the list can highlight it and
   // the phone layout switch panes.
   private navEnd = toSignal(this.router.events.pipe(filter((e) => e instanceof NavigationEnd)));
-  readonly active = computed<{ origin: string; id: string } | null>(() => {
+  readonly active = computed<{ origin: Origin; id: string } | null>(() => {
     this.navEnd();
-    const pm = this.leaf().snapshot.paramMap; // typed get() → string | null
+    const pm = this.leaf().snapshot.paramMap;
     const origin = pm.get('origin');
     const id = pm.get('id');
-    return origin != null && id != null ? { origin, id } : null;
+    return isOrigin(origin) && id != null ? { origin, id } : null;
   });
 
   // Search overlays the list and is not URL state. `switchMap` cancels a stale

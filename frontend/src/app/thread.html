@@ -324,12 +324,13 @@
     <!-- Grows with the draft, to six lines. Never disabled: a disabled box loses
          focus, and with it the phone's keyboard, on every send. -->
     <textarea
+      #draft
       name="draft"
       rows="1"
       cdkTextareaAutosize
       cdkAutosizeMaxRows="6"
       [value]="composer.draft()"
-      (input)="composer.draft.set($any($event.target).value)"
+      (input)="composer.draft.set(draft.value)"
       (keydown)="composer.onKey($event)"
       (compositionstart)="composer.composing.set(true)"
       (compositionend)="composer.composing.set(false)"

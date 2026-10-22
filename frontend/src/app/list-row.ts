@@ -12,6 +12,14 @@ export const ORIGIN_LABELS: Record<Origin, string> = {
   telegram: 'Telegram',
 };
 
+/** Whether text from outside, a URL segment or query parameter, names an origin. */
+export function isOrigin(v: string | null | undefined): v is Origin {
+  return v != null && Object.hasOwn(ORIGIN_LABELS, v);
+}
+
+/** Every origin, in the order the filter offers them. */
+export const ORIGINS: readonly Origin[] = Object.keys(ORIGIN_LABELS).filter(isOrigin);
+
 /** Up to two letters for the round picture: the first two words' initials,
  *  past an IRC channel's `#`. */
 export function initials(name: string): string {

@@ -19,16 +19,15 @@ export class ThreadSearch {
   private readonly asked = new Subject<string>();
 
   /** Built with the thread, which is the injection context `takeUntilDestroyed` needs. */
-  constructor(api: MessagesApi, origin: Signal<Origin | undefined>, id: Signal<string | undefined>) {
+  constructor(api: MessagesApi, where: Signal<{ origin: Origin; id: string } | null>) {
     // `switchMap`, so a slow answer cannot land after a newer one.
     this.asked
       .pipe(
         switchMap((q) => {
-          const o = origin();
-          const i = id();
+          const w = where();
           // Offered only on a routed conversation; never widened to global.
-          if (o == null || i == null) return of<SearchHit[]>([]);
-          return api.search(q, { origin: o, id: i }).pipe(
+          if (!w) return of<SearchHit[]>([]);
+          return api.search(q, w).pipe(
             catchError(() => {
               this.failed.set(true);
               return of<SearchHit[]>([]);
