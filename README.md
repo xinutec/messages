@@ -220,6 +220,14 @@ withdrawn if the feed never took it.
 - A Telegram edit that swaps a message's photo or file keeps the old file.
 - Signal attachments that failed to download before raw frames were kept
   (2026-09-21) cannot be fetched again: their ids were never stored.
+- Signal 1:1 calls are absent: signal-cli parses no call-log sync, and a call's
+  own signalling reaches this linked device only rarely. A group call shows once,
+  as "started a group call", with no duration.
+- signal-cli writes most sync messages from the phone as `{}`: only sent
+  messages, reads, blocks and contact or group syncs come through. Views,
+  view-once opens and message-request answers are parsed inside signal-cli but
+  never sent on; the call log is not parsed at all. A message the archive cannot
+  draw reads "a message this archive can't show".
 - A drag selection reaches only the rendered window (400 messages); a select-all
   of a longer conversation ends with `--- copied 400 of N messages; the rest were
   not loaded on screen`. Messages picked by hand stay picked when they scroll out
