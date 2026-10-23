@@ -26,6 +26,14 @@ impl StaticDir {
         std::fs::create_dir_all(&dir).expect("create static dir");
         std::fs::write(dir.join("index.html"), "<!doctype html><html></html>").expect("index");
         std::fs::write(dir.join("main-ABC123.js"), "export {};").expect("bundle");
+        for name in [
+            "main-JLBKO2QH.js",
+            "icon.svg",
+            "manifest.webmanifest",
+            "ngsw-worker.js",
+        ] {
+            std::fs::write(dir.join(name), "x").expect("file");
+        }
         Self(dir)
     }
 }
@@ -105,4 +113,23 @@ async fn a_real_asset_is_still_served() {
         !ct.starts_with("text/html"),
         "the bundle came back as HTML: {ct}"
     );
+}
+
+/// Only a name carrying its content hash may be kept for good. An icon, the
+/// manifest and the service worker's files keep their names across builds, so a
+/// year of `immutable` pins the old one on every phone; a 404 marked so is a name
+/// never asked for again.
+#[tokio::test]
+async fn only_a_content_hashed_file_is_cached_for_good() {
+    let (status, _, cache) = get("/main-JLBKO2QH.js").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(cache.contains("immutable"), "a hashed chunk: {cache}");
+    for path in ["/icon.svg", "/manifest.webmanifest", "/ngsw-worker.js"] {
+        let (status, _, cache) = get(path).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert_eq!(cache, "no-cache", "{path}");
+    }
+    let (status, _, cache) = get("/favicon.ico").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(!cache.contains("immutable"), "a 404: {cache}");
 }
