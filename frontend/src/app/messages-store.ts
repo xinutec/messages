@@ -21,6 +21,9 @@ export class MessagesStore {
    *  identity: offline, not sign-in. */
   readonly offline = signal(false);
   readonly conversations = signal<Conversation[]>([]);
+  /** The list has had an answer: what the worker kept, or the network's, or its
+   *  failure. Before that an empty list is not yet known to be empty. */
+  readonly listKnown = signal(false);
   /** The last word from the network was no network: what is on view is what
    *  the service worker kept, and the shell says so. Cleared by any answer. */
   readonly stale = signal(false);
@@ -43,7 +46,10 @@ export class MessagesStore {
     this.started = true;
     // The list as last seen, at once; the network's replaces it.
     void this.api.keptConversations().then((kept) => {
-      if (kept != null && !this.fresh) this.conversations.set(kept);
+      if (kept != null && !this.fresh) {
+        this.conversations.set(kept);
+        this.listKnown.set(true);
+      }
     });
     this.api.me().subscribe({
       next: (m) => {
@@ -84,8 +90,12 @@ export class MessagesStore {
         this.fresh = true;
         this.noteAnswer();
         this.conversations.set(cs);
+        this.listKnown.set(true);
       },
-      error: (e: unknown) => this.noteFailure(e),
+      error: (e: unknown) => {
+        this.noteFailure(e);
+        this.listKnown.set(true);
+      },
     });
   }
 

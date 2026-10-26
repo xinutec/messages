@@ -100,7 +100,7 @@
               }
             </button>
           } @empty {
-            <p class="empty">No conversations.</p>
+            <p class="empty">{{ listKnown() ? 'No conversations.' : 'Loading conversations…' }}</p>
           }
         </div>
       }

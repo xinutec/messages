@@ -2,7 +2,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { NavigationEnd, Router, provideRouter } from '@angular/router';
 import { provideServiceWorker } from '@angular/service-worker';
-import { filter, firstValueFrom, of, throwError } from 'rxjs';
+import { Subject, filter, firstValueFrom, of, throwError } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 
 import { App } from './app';
@@ -264,5 +264,20 @@ describe('App — saying when the view is what was kept', () => {
     store.stale.set(false);
     fixture.detectChanges();
     expect(root.querySelector('.offline-note')).toBeNull();
+  });
+});
+
+describe('App — the list before it has an answer', () => {
+  it('says the list is loading until it is known, and only then that it is empty', async () => {
+    const network = new Subject<Conversation[]>();
+    const fixture = render(appApi({ conversations: vi.fn<MessagesApi['conversations']>(() => network) }));
+    const root = fixture.nativeElement as HTMLElement;
+    // Nothing kept by the worker, and the network has not answered.
+    await new Promise((r) => setTimeout(r, 0));
+    fixture.detectChanges();
+    expect(root.querySelector('.rows .empty')?.textContent?.trim()).toBe('Loading conversations…');
+    network.next([]);
+    fixture.detectChanges();
+    expect(root.querySelector('.rows .empty')?.textContent?.trim()).toBe('No conversations.');
   });
 });

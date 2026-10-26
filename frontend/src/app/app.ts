@@ -54,6 +54,7 @@ export class App {
 
   readonly me = this.store.me;
   readonly loading = this.store.loading;
+  readonly listKnown = this.store.listKnown;
   readonly offline = this.store.offline;
   readonly stale = this.store.stale;
   readonly conversations = this.store.conversations;
