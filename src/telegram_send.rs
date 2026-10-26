@@ -35,18 +35,32 @@ pub enum Outcome {
     Unanswered,
 }
 
-/// Queue `text` for a DM or group the archive holds, or `None` for anything
-/// else.
-pub async fn queue(pool: &MySqlPool, conversation: &str, text: &str) -> Result<Option<i64>> {
+/// Queue `text` for a DM or group the archive holds, answering the message
+/// whose archive row is `reply_to` when given. `None` for anything else, a
+/// `reply_to` outside this conversation included.
+pub async fn queue(
+    pool: &MySqlPool,
+    conversation: &str,
+    text: &str,
+    reply_to: Option<i64>,
+) -> Result<Option<i64>> {
     let Ok(id) = conversation.parse::<i64>() else {
         return Ok(None);
     };
+    // The row is looked up in this conversation, so a reply cannot reach into
+    // another; Telegram is sent the message's own `msg_id`.
     let queued = sqlx::query(
-        "INSERT INTO telegram_outbox (conversation_id, text)
-         SELECT id, ? FROM telegram_conversations WHERE id = ? AND kind IN ('dm', 'group')",
+        "INSERT INTO telegram_outbox (conversation_id, text, reply_to_msg_id)
+         SELECT c.id, ?, m.msg_id
+           FROM telegram_conversations c
+           LEFT JOIN telegram_messages m ON m.conversation_id = c.id AND m.id = ?
+          WHERE c.id = ? AND c.kind IN ('dm', 'group')
+            AND (? IS NULL OR m.msg_id IS NOT NULL)",
     )
     .bind(text)
+    .bind(reply_to)
     .bind(id)
+    .bind(reply_to)
     .execute(pool)
     .await?;
     if queued.rows_affected() != 1 {

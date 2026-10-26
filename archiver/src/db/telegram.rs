@@ -679,13 +679,13 @@ impl Db {
         .bind(fresh_secs)
         .execute(&self.pool)
         .await?;
-        let next: Option<(i64, i64, String)> = sqlx::query_as(
-            "SELECT id, conversation_id, text FROM telegram_outbox
+        let next: Option<(i64, i64, String, Option<i32>)> = sqlx::query_as(
+            "SELECT id, conversation_id, text, reply_to_msg_id FROM telegram_outbox
               WHERE state = 'queued' ORDER BY queued_at, id LIMIT 1",
         )
         .fetch_optional(&self.pool)
         .await?;
-        let Some((id, conversation_id, text)) = next else {
+        let Some((id, conversation_id, text, reply_to)) = next else {
             return Ok(None);
         };
         // Conditional, so a viewer withdrawing it in between wins.
@@ -700,6 +700,7 @@ impl Db {
             id,
             conversation_id,
             text,
+            reply_to,
         }))
     }
 
@@ -869,6 +870,8 @@ pub struct TelegramSend {
     /// Where it goes: a conversation the archive holds, never the reader's word.
     pub conversation_id: i64,
     pub text: String,
+    /// The `msg_id` it answers, in the same conversation.
+    pub reply_to: Option<i32>,
 }
 
 /// What [`Db::store_telegram_message`] did.

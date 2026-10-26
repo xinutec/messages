@@ -8,4 +8,9 @@ export type SendRequest = {
  * The body only. The recipient comes from the conversation in the URL, so
  * a request cannot address anyone the archive has not seen.
  */
-text: string, };
+text: string, 
+/**
+ * The message this answers, by its `Message.id`, in the same conversation.
+ * Telegram only: IRC has no replies.
+ */
+reply_to?: string, };

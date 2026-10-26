@@ -381,6 +381,11 @@ pub struct SendRequest {
     /// The body only. The recipient comes from the conversation in the URL, so
     /// a request cannot address anyone the archive has not seen.
     pub text: String,
+    /// The message this answers, by its `Message.id`, in the same conversation.
+    /// Telegram only: IRC has no replies.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub reply_to: Option<String>,
 }
 
 /// What happened, in the words of the irssi or Telegram feed that did it.
@@ -442,7 +447,12 @@ async fn send_telegram(
     id: &str,
     req: &SendRequest,
 ) -> Result<Json<SendResult>, AppError> {
-    let Some(row) = crate::telegram_send::queue(&app.pool, id, &req.text).await? else {
+    let reply_to = match req.reply_to.as_deref().map(str::parse::<i64>) {
+        None => None,
+        Some(Ok(row)) => Some(row),
+        Some(Err(_)) => return Err(AppError::BadRequest("reply_to is not a message id".into())),
+    };
+    let Some(row) = crate::telegram_send::queue(&app.pool, id, &req.text, reply_to).await? else {
         return Err(AppError::NotFound);
     };
     let outcome = crate::telegram_send::wait(&app.pool, row).await?;
@@ -464,6 +474,9 @@ async fn send_irc(
     id: &str,
     req: &SendRequest,
 ) -> Result<Json<SendResult>, AppError> {
+    if req.reply_to.is_some() {
+        return Err(AppError::BadRequest("IRC has no replies".into()));
+    }
     let Some(sender) = app.irc.clone() else {
         // No key mounted: sending is not configured.
         return Ok(Json(SendResult::not_sent("sending is not configured")));

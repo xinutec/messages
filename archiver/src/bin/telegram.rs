@@ -1096,7 +1096,8 @@ async fn send_one(
     // Plain text, as typed: no markdown, and a link previews as in the apps.
     let input = grammers_client::message::InputMessage::new()
         .text(send.text.as_str())
-        .link_preview(true);
+        .link_preview(true)
+        .reply_to(send.reply_to);
     let sent = client
         .send_message(peer_ref, input)
         .await

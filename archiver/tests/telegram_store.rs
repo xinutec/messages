@@ -1256,6 +1256,12 @@ async fn the_outbox_sends_each_fresh_row_at_most_once() {
     let first = queue("first", 0).await;
     let second = queue("second", 0).await;
     let withdrawn = queue("withdrawn", 0).await;
+    // A reply names the message it answers.
+    sqlx::query("UPDATE telegram_outbox SET reply_to_msg_id = 41 WHERE id = ?")
+        .bind(second)
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query("UPDATE telegram_outbox SET state = 'failed' WHERE id = ?")
         .bind(withdrawn)
         .execute(&pool)
@@ -1266,12 +1272,15 @@ async fn the_outbox_sends_each_fresh_row_at_most_once() {
     let mut claimed = Vec::new();
     while let Some(send) = db.claim_telegram_send(60).await.unwrap() {
         if send.conversation_id == conversation {
-            claimed.push((send.id, send.text));
+            claimed.push((send.id, send.text, send.reply_to));
         }
     }
     assert_eq!(
         claimed,
-        vec![(first, "first".to_owned()), (second, "second".to_owned())]
+        vec![
+            (first, "first".to_owned(), None),
+            (second, "second".to_owned(), Some(41))
+        ]
     );
     assert_eq!(state(first).await.0, "sending", "claimed before the call");
     let (s, _, note) = state(stale).await;

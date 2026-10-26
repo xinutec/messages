@@ -3437,27 +3437,75 @@ async fn a_telegram_send_is_queued_only_for_a_held_dm_or_group() {
     };
     use messages::telegram_send::queue;
     assert!(
-        queue(&pool, "4242", "hi").await.unwrap().is_some(),
+        queue(&pool, "4242", "hi", None).await.unwrap().is_some(),
         "the DM"
     );
     assert!(
-        queue(&pool, "-77", "hi").await.unwrap().is_some(),
+        queue(&pool, "-77", "hi", None).await.unwrap().is_some(),
         "the group"
     );
     assert!(
-        queue(&pool, "-1000000000055", "hi")
+        queue(&pool, "-1000000000055", "hi", None)
             .await
             .unwrap()
             .is_none(),
         "a broadcast"
     );
     assert!(
-        queue(&pool, "999999", "hi").await.unwrap().is_none(),
+        queue(&pool, "999999", "hi", None).await.unwrap().is_none(),
         "unseen"
     );
     assert!(
-        queue(&pool, "x", "hi").await.unwrap().is_none(),
+        queue(&pool, "x", "hi", None).await.unwrap().is_none(),
         "not an id"
+    );
+}
+
+/// A reply names a message by its archive row, and goes out answering that
+/// message's `msg_id`; a row from another conversation is no reply here.
+#[tokio::test]
+async fn a_telegram_reply_answers_a_message_in_the_same_conversation() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    use messages::telegram_send::queue;
+    let row_of = async |conversation: i64, msg_id: i32| -> i64 {
+        sqlx::query_scalar(
+            "SELECT id FROM telegram_messages WHERE conversation_id = ? AND msg_id = ?",
+        )
+        .bind(conversation)
+        .bind(msg_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    let hoi = row_of(4242, 10).await;
+    let queued = queue(&pool, "4242", "yes", Some(hoi))
+        .await
+        .unwrap()
+        .unwrap();
+    let answers: Option<i32> =
+        sqlx::query_scalar("SELECT reply_to_msg_id FROM telegram_outbox WHERE id = ?")
+            .bind(queued)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(answers, Some(10), "Telegram's msg_id, not the row");
+
+    let elsewhere = row_of(-1_000_000_000_055, 3).await;
+    assert!(
+        queue(&pool, "4242", "yes", Some(elsewhere))
+            .await
+            .unwrap()
+            .is_none(),
+        "a message in another conversation"
+    );
+    assert!(
+        queue(&pool, "4242", "yes", Some(i64::MAX))
+            .await
+            .unwrap()
+            .is_none(),
+        "no such message"
     );
 }
 
@@ -3481,21 +3529,21 @@ async fn a_telegram_send_reports_the_feeds_answer() {
             .unwrap();
     }
 
-    let row = queue(&pool, "4242", "hi").await.unwrap().unwrap();
+    let row = queue(&pool, "4242", "hi", None).await.unwrap().unwrap();
     answer(&pool, row, "sent", None).await;
     assert_eq!(
         wait_for(&pool, row, patience).await.unwrap(),
         Outcome::Sent { archived: true }
     );
 
-    let row = queue(&pool, "4242", "hi").await.unwrap().unwrap();
+    let row = queue(&pool, "4242", "hi", None).await.unwrap().unwrap();
     answer(&pool, row, "sent", Some("sent, but not stored")).await;
     assert_eq!(
         wait_for(&pool, row, patience).await.unwrap(),
         Outcome::Sent { archived: false }
     );
 
-    let row = queue(&pool, "4242", "hi").await.unwrap().unwrap();
+    let row = queue(&pool, "4242", "hi", None).await.unwrap().unwrap();
     answer(&pool, row, "failed", Some("telegram refused it")).await;
     assert_eq!(
         wait_for(&pool, row, patience).await.unwrap(),
@@ -3503,7 +3551,7 @@ async fn a_telegram_send_reports_the_feeds_answer() {
     );
 
     // An answer that arrives while the viewer waits.
-    let row = queue(&pool, "4242", "hi").await.unwrap().unwrap();
+    let row = queue(&pool, "4242", "hi", None).await.unwrap().unwrap();
     let later = {
         let pool = pool.clone();
         tokio::spawn(async move {
@@ -3519,7 +3567,7 @@ async fn a_telegram_send_reports_the_feeds_answer() {
     );
     later.await.unwrap();
 
-    let row = queue(&pool, "4242", "hi").await.unwrap().unwrap();
+    let row = queue(&pool, "4242", "hi", None).await.unwrap().unwrap();
     assert!(matches!(
         wait_for(&pool, row, patience).await.unwrap(),
         Outcome::Refused(_)
@@ -3532,7 +3580,7 @@ async fn a_telegram_send_reports_the_feeds_answer() {
             .unwrap();
     assert_eq!(state, "failed", "withdrawn, so the feed will not send it");
 
-    let row = queue(&pool, "4242", "hi").await.unwrap().unwrap();
+    let row = queue(&pool, "4242", "hi", None).await.unwrap().unwrap();
     answer(&pool, row, "sending", None).await;
     assert_eq!(
         wait_for(&pool, row, patience).await.unwrap(),

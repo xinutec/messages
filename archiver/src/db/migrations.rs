@@ -700,4 +700,7 @@ pub(super) const MIGRATIONS: &[&str] = &[
         ADD INDEX idx_messages_group_call (thread_id, group_call_era)",
     // v62: backfill v61 from `signal_frames`.
     BACKFILL_GROUP_CALLS,
+    // v63: the message a Telegram send answers, as Telegram's `msg_id` in the
+    // same conversation; NULL for a plain message.
+    r"ALTER TABLE telegram_outbox ADD COLUMN reply_to_msg_id INT NULL",
 ];
