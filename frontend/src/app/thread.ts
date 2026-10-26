@@ -619,8 +619,8 @@ export class Thread {
       if (gen !== this.generation) return;
 
       const held = this.messages();
-      const known = new Set(held.map((m) => m.id));
-      const fresh = page.messages.filter((m) => !known.has(m.id));
+      const heldById = new Map(held.map((m) => [m.id, m]));
+      const fresh = page.messages.filter((m) => !heldById.has(m.id));
 
       // None of the newest page is known: more than a page arrived. A reader at
       // the end wants the present, so reload; one back in history keeps their
@@ -631,25 +631,26 @@ export class Thread {
         return;
       }
 
-      // A held message as it is now: deleted, edited or reacted to since it
-      // loaded. The newest page is where that happens; an unchanged one stays
-      // the same object, so its bubble is not redrawn.
-      const now = new Map(page.messages.map((m) => [m.id, m]));
-      let changed = false;
-      const current = held.map((m) => {
-        const fresher = now.get(m.id);
-        if (fresher == null || JSON.stringify(fresher) === JSON.stringify(m)) return m;
-        changed = true;
-        return fresher;
-      });
-      if (fresh.length === 0 && !changed) return;
+      // The newest page is the server's order and state for what it covers: a
+      // line archived late takes its place, and a held message is as it is now,
+      // deleted, edited or reacted to. What is older than the page stays, and an
+      // unchanged message stays the same object, so its bubble is not redrawn.
+      const onPage = new Set(page.messages.map((m) => m.id));
+      const overlap = held.findIndex((m) => onPage.has(m.id));
+      // An empty page: nothing to place.
+      if (overlap < 0) return;
+      const merged = [
+        ...held.slice(0, overlap),
+        ...page.messages.map((m) => {
+          const was = heldById.get(m.id);
+          return was != null && JSON.stringify(was) === JSON.stringify(m) ? was : m;
+        }),
+      ];
+      if (merged.length === held.length && merged.every((m, i) => m === held[i])) return;
 
       const following = this.win.isFollowing();
       if (fresh.length > 0) this.newerCursor = page.prev_cursor;
-      // Sorted: an import can land an older line late.
-      this.messages.set(
-        [...current, ...fresh].sort((a, b) => a.ts - b.ts || a.id.localeCompare(b.id)),
-      );
+      this.messages.set(merged);
       this.appRef.tick();
       if (following) this.win.scrollToBottom();
       this.win.trimToWindow();

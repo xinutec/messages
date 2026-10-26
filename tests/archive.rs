@@ -343,12 +343,13 @@ async fn seed(pool: &MySqlPool) {
         .await
         .unwrap();
     // 2020-01-01 00:00:00Z is 1577836800. Three of the channel's lines share
-    // 00:01; the id orders them.
+    // 00:01, and line 3 is written before line 2: the tail stored it, and the
+    // import filled line 2 later. The log's line order is theirs.
     sqlx::query(
         "INSERT INTO irc_messages (conversation_id, source_tag, file_date, line_no, sent_at, nick, is_self, kind, text) VALUES
          (?,'net','2020-01-01',1,'2020-01-01 00:00:00','alice',0,'event','alice has joined #chan'),
-         (?,'net','2020-01-01',2,'2020-01-01 00:01:00','alice',0,'message','first findme'),
          (?,'net','2020-01-01',3,'2020-01-01 00:01:00','me',1,'message','second'),
+         (?,'net','2020-01-01',2,'2020-01-01 00:01:00','alice',0,'message','first findme'),
          (?,'net','2020-01-01',4,'2020-01-01 00:01:00','alice',0,'action','waves'),
          (?,'net','2020-01-01',5,'2020-01-01 00:02:00','irc.example.invalid',0,'notice','findme in a notice')",
     )
@@ -983,7 +984,8 @@ async fn irc_page_shows_speech_only_and_marks_actions() {
     );
 }
 
-/// Three of the channel's lines share a minute, so the id orders them.
+/// Three of the channel's lines share a minute, so their place in the log orders
+/// them, whichever was archived first.
 #[tokio::test]
 async fn irc_page_orders_lines_that_share_a_minute() {
     let Some(pool) = seeded_pool().await else {
@@ -1015,6 +1017,44 @@ async fn irc_page_orders_lines_that_share_a_minute() {
     }
     seen.reverse(); // paged newest→oldest
     assert_eq!(seen, ["first findme", "second", "waves"], "file order");
+}
+
+/// A hit inside a shared minute lands on itself, not on the minute's first
+/// line: the hit's cursor carries its place in the log.
+#[tokio::test]
+async fn an_irc_hit_mid_minute_lands_on_itself() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let convs = archive::list_conversations(&pool).await.unwrap();
+    let chan = convs
+        .iter()
+        .find(|c| c.origin == Origin::Irc && c.name.as_deref() == Some("#chan"))
+        .unwrap();
+    let scope = archive::SearchScope::Conversation {
+        origin: Origin::Irc,
+        id: &chan.id,
+    };
+    let hits = archive::search(&pool, "second", 5, scope).await.unwrap();
+    let [hit] = hits.as_slice() else {
+        panic!("one hit, not {}", hits.len());
+    };
+    let newer = archive::messages_page(
+        &pool,
+        Origin::Irc,
+        &chan.id,
+        parse_cursor(&hit.cursor),
+        5,
+        PageDir::AtAndNewer,
+    )
+    .await
+    .unwrap();
+    let bodies: Vec<_> = newer
+        .messages
+        .iter()
+        .map(|m| m.body.as_deref().unwrap_or(""))
+        .collect();
+    assert_eq!(bodies, ["second", "waves"]);
 }
 
 #[tokio::test]
@@ -1523,24 +1563,30 @@ async fn a_landing_contains_the_message_it_landed_on() {
         .await
         .unwrap();
 
-        // By id: IRC rows share timestamps.
-        let want = cursor.1;
-        let landed: Vec<i64> = older
+        // By what the reader sees: a cursor's second half is not always a row
+        // id, and IRC rows share timestamps.
+        let landed: Vec<(i64, &str)> = older
             .messages
             .iter()
             .chain(newer.messages.iter())
-            .map(|m| m.id)
+            .map(|m| (m.ts, m.body.as_deref().unwrap_or("")))
             .collect();
-        assert!(
-            landed.contains(&want),
-            "{:?}: the landing is missing the hit (row {want}) — loaded {landed:?}",
+        let want = (hit.ts, hit.snippet.as_str());
+        let first = newer
+            .messages
+            .first()
+            .map(|m| (m.ts, m.body.as_deref().unwrap_or("")));
+        assert_eq!(
+            first,
+            Some(want),
+            "{:?}: the landing starts at the hit",
             hit.origin
         );
         // Exactly once.
         assert_eq!(
-            landed.iter().filter(|&&i| i == want).count(),
+            landed.iter().filter(|&&m| m == want).count(),
             1,
-            "{:?}: the hit appears more than once",
+            "{:?}: the landing should hold the hit {want:?} once — loaded {landed:?}",
             hit.origin
         );
     }

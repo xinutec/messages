@@ -259,6 +259,22 @@ describe('Thread', () => {
     expect(thread.messages().map((m) => m.id)).toEqual(['1', '2', '3']);
   });
 
+  it('keeps the server order of a page whose lines share a timestamp', async () => {
+    // IRC logs minutes: line 3 was archived before line 2, and the server
+    // orders them by their place in the log.
+    const { thread, api } = await opened([msg('10', 60_000), msg('11', 60_000)]);
+    api.messages.mockReturnValueOnce(page([msg('10', 60_000), msg('12', 60_000), msg('11', 60_000)]));
+    await thread.pollNewer();
+    expect(thread.messages().map((m) => m.id)).toEqual(['10', '12', '11']);
+  });
+
+  it('does not order ids as text', async () => {
+    const { thread, api } = await opened([msg('9', 100)]);
+    api.messages.mockReturnValueOnce(page([msg('9', 100), msg('10', 100)]));
+    await thread.pollNewer();
+    expect(thread.messages().map((m) => m.id)).toEqual(['9', '10']);
+  });
+
   it('shows a held message as it is now: deleted, edited or reacted to since it loaded', async () => {
     const { thread, api } = await opened([msg('1', 100), msg('2', 200), msg('3', 300)]);
     const untouched = thread.messages()[2];

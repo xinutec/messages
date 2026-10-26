@@ -63,9 +63,14 @@ pub(super) async fn conversations(pool: &MySqlPool) -> Result<Vec<Conversation>>
 }
 
 /// One page of an IRC conversation. irssi logs only `%H:%M`, so many lines share
-/// a timestamp and `id` carries the order: the importer writes files in path
-/// order, and logs only append. Only messages and actions, the population
-/// [`list_conversations`] counts.
+/// a timestamp and their place in the log orders them: `id` is the order rows
+/// were archived, and a line the tail missed is archived by the next import,
+/// after the lines around it.
+///
+/// The order within a minute is one number, the cursor's second half:
+/// `line_no * 2^32 + id`, the log line, then `id` for two networks' lines
+/// merged into one conversation. Exact while `id < 2^32`. Only messages and
+/// actions, the population [`list_conversations`] counts.
 pub(super) async fn page(
     pool: &MySqlPool,
     conversation_id: &str,
@@ -78,43 +83,46 @@ pub(super) async fn page(
         PageDir::Older => {
             r"SELECT m.id AS id,
                  TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) AS ts_s,
-                 m.nick AS sender, m.is_self AS is_self, m.text AS body, m.kind AS kind
+                 m.nick AS sender, m.is_self AS is_self, m.text AS body, m.kind AS kind,
+                 m.line_no * 4294967296 + m.id AS tie
           FROM irc_messages m
           WHERE m.conversation_id = ?
             AND m.kind IN ('message', 'action')
             AND (? IS NULL
                  OR TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) < ?
                  OR (TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) = ?
-                     AND m.id < ?))
-          ORDER BY ts_s DESC, m.id DESC
+                     AND m.line_no * 4294967296 + m.id < ?))
+          ORDER BY ts_s DESC, tie DESC
           LIMIT ?"
         }
         PageDir::Newer => {
             r"SELECT m.id AS id,
                  TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) AS ts_s,
-                 m.nick AS sender, m.is_self AS is_self, m.text AS body, m.kind AS kind
+                 m.nick AS sender, m.is_self AS is_self, m.text AS body, m.kind AS kind,
+                 m.line_no * 4294967296 + m.id AS tie
           FROM irc_messages m
           WHERE m.conversation_id = ?
             AND m.kind IN ('message', 'action')
             AND (? IS NULL
                  OR TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) > ?
                  OR (TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) = ?
-                     AND m.id > ?))
-          ORDER BY ts_s ASC, m.id ASC
+                     AND m.line_no * 4294967296 + m.id > ?))
+          ORDER BY ts_s ASC, tie ASC
           LIMIT ?"
         }
         PageDir::AtAndNewer => {
             r"SELECT m.id AS id,
                  TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) AS ts_s,
-                 m.nick AS sender, m.is_self AS is_self, m.text AS body, m.kind AS kind
+                 m.nick AS sender, m.is_self AS is_self, m.text AS body, m.kind AS kind,
+                 m.line_no * 4294967296 + m.id AS tie
           FROM irc_messages m
           WHERE m.conversation_id = ?
             AND m.kind IN ('message', 'action')
             AND (? IS NULL
                  OR TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) > ?
                  OR (TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) = ?
-                     AND m.id >= ?))
-          ORDER BY ts_s ASC, m.id ASC
+                     AND m.line_no * 4294967296 + m.id >= ?))
+          ORDER BY ts_s ASC, tie ASC
           LIMIT ?"
         }
     };
@@ -133,7 +141,7 @@ pub(super) async fn page(
     for r in rows {
         let id: i64 = r.try_get("id")?;
         let ts_s: i64 = r.try_get("ts_s")?;
-        keys.push((ts_s, id));
+        keys.push((ts_s, r.try_get("tie")?));
         let kind: String = r.try_get("kind")?;
         // The query admits only kinds this parses; anything else is reported
         // rather than drawn as speech.
@@ -205,9 +213,9 @@ pub(super) async fn search(
     let sql = if id.is_some() {
         r"SELECT m.conversation_id AS cid, c.target AS cname,
                  TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) AS ts_s,
-                 m.nick AS sender, m.text AS body, m.id AS id
+                 m.nick AS sender, m.text AS body, m.line_no * 4294967296 + m.id AS tie
           FROM (
-              SELECT conversation_id, sent_at, id, nick, text
+              SELECT conversation_id, sent_at, id, line_no, nick, text
                 FROM irc_messages
                WHERE kind IN ('message', 'action')
                  AND conversation_id = ?
@@ -222,9 +230,9 @@ pub(super) async fn search(
     } else {
         r"SELECT m.conversation_id AS cid, c.target AS cname,
                  TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', m.sent_at) AS ts_s,
-                 m.nick AS sender, m.text AS body, m.id AS id
+                 m.nick AS sender, m.text AS body, m.line_no * 4294967296 + m.id AS tie
           FROM (
-              SELECT conversation_id, sent_at, id, nick, text
+              SELECT conversation_id, sent_at, id, line_no, nick, text
                 FROM irc_messages
                WHERE kind IN ('message', 'action')
                  AND text LIKE ?
@@ -245,7 +253,7 @@ pub(super) async fn search(
     for r in rows {
         let cid: i32 = r.try_get("cid")?;
         let ts_s: i64 = r.try_get("ts_s")?;
-        let id: i64 = r.try_get("id")?;
+        let tie: i64 = r.try_get("tie")?;
         hits.push(SearchHit {
             origin: Origin::Irc,
             conversation_id: cid.to_string(),
@@ -256,8 +264,8 @@ pub(super) async fn search(
                 .unwrap_or_default(),
             snippet: r.try_get::<Option<String>, _>("body")?.unwrap_or_default(),
             deleted: false,
-            // Whole seconds; `id` orders lines within a minute.
-            cursor: encode_cursor(ts_s, id),
+            // Whole minutes; `tie` orders lines within one.
+            cursor: encode_cursor(ts_s, tie),
         });
     }
     Ok(hits)
