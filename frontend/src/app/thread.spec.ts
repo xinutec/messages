@@ -549,8 +549,8 @@ describe('Thread edit history', () => {
     expect(el.querySelector('.edit-history')).toBeNull();
   });
 
-  it('an edited message with no stored history is still marked, without a control', async () => {
-    // No versions: the tag must not become a button that opens nothing.
+  it('an edited message with no stored history says, when asked, that the earlier text was not kept', async () => {
+    // No versions: the tag still answers a tap, with why there is nothing to show.
     const { thread, ref, fixture } = setup();
     const api = fakeApiOf();
     api.messages.mockReturnValue(page([{ ...msg('e', 100), edited: true, edits: [] }]));
@@ -560,8 +560,9 @@ describe('Thread edit history', () => {
     await settle(thread);
     fixture.detectChanges();
     const el = fixture.nativeElement as HTMLElement;
-    expect(el.querySelector('.tag')?.textContent).toContain('edited');
-    expect(el.querySelector('.tag.history-toggle')).toBeNull();
+    el.querySelector<HTMLButtonElement>('.tag.history-toggle')!.click();
+    fixture.detectChanges();
+    expect(el.querySelector('.edit-history')?.textContent?.trim()).toBe('The earlier text was not kept.');
   });
 });
 

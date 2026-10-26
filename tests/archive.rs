@@ -3540,10 +3540,11 @@ async fn a_telegram_send_reports_the_feeds_answer() {
     );
 }
 
-/// Telegram moves `edit_date` for a reaction. A history in which every version
-/// reads as the text is that, and not an edit; one with no history was edited
-/// before the archive saw it, and stays edited; a real edit's history leaves out
-/// the version a later reaction filed.
+/// Telegram moves `edit_date` for a reaction, and for each move of a live
+/// location. A history in which every version reads as the text is that, and not
+/// an edit; a real edit's history leaves out the version a later reaction filed.
+/// With no history, a reaction at the edit date or a live location explains the
+/// date, and anything else was edited before the archive saw it.
 #[tokio::test]
 async fn a_telegram_reaction_is_not_an_edit() {
     let Some(pool) = seeded_pool().await else {
@@ -3559,7 +3560,27 @@ async fn a_telegram_reaction_is_not_an_edit() {
          VALUES
             (4343, 1, 1700000000, 4343, 'Rea', 0, 'message', 'same', 1700000700, 0),
             (4343, 2, 1700000060, 4343, 'Rea', 0, 'message', 'now', 1700000800, 0),
-            (4343, 3, 1700000120, 4343, 'Rea', 0, 'message', 'before capture', 1700000130, 0)",
+            (4343, 3, 1700000120, 4343, 'Rea', 0, 'message', 'before capture', 1700000130, 0),
+            (4343, 4, 1700000180, 4343, 'Rea', 0, 'message', 'reacted to', 1700000900, 0),
+            (4343, 6, 1700000300, 4343, 'Rea', 0, 'message', 'reacted to later', 1700000310, 0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO telegram_messages
+            (conversation_id, msg_id, sent_at, sender_id, sender_name, is_outgoing, kind, text, media_kind, edited_at, deleted)
+         VALUES (4343, 5, 1700000240, 4343, 'Rea', 0, 'message', 'live here', 'geo', 1700000999, 0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    // The reaction to 4 lands a second after its edit date, as Telegram's do; the
+    // one to 6 comes minutes after its real edit.
+    sqlx::query(
+        "INSERT INTO telegram_reaction_authors (conversation_id, msg_id, peer_id, emoji, reacted_at) VALUES
+            (4343, 4, 77, '👍', 1700000901),
+            (4343, 6, 77, '👍', 1700000600)",
     )
     .execute(&pool)
     .await
@@ -3597,7 +3618,16 @@ async fn a_telegram_reaction_is_not_an_edit() {
     );
     assert!(
         by("before capture").edited,
-        "no history: Telegram's word stands"
+        "no history and nothing else to explain the date: edited"
+    );
+    assert!(
+        !by("reacted to").edited,
+        "no history, a reaction at the edit date"
+    );
+    assert!(!by("live here").edited, "a live location moving");
+    assert!(
+        by("reacted to later").edited,
+        "a reaction minutes away does not explain the date"
     );
 }
 

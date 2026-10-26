@@ -91,8 +91,13 @@ pub(super) async fn page(
                      m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at,
                      m.edit_hidden AS edit_hidden,
                      COALESCE((SELECT MAX(NOT (e.text <=> m.text)) FROM telegram_message_edits e
-                                WHERE e.conversation_id = m.conversation_id AND e.msg_id = m.msg_id), 1)
-                       AS edit_changed_text,
+                                WHERE e.conversation_id = m.conversation_id AND e.msg_id = m.msg_id),
+                              NOT (m.media_kind <=> 'geo')
+                              AND NOT EXISTS (SELECT 1 FROM telegram_reaction_authors r
+                                               WHERE r.conversation_id = m.conversation_id
+                                                 AND r.msg_id = m.msg_id
+                                                 AND ABS(r.reacted_at - m.edited_at) <= 2))
+                       AS reworded,
                      m.reply_to_msg_id AS reply_to_msg_id,
                      m.reply_to_peer_id AS reply_to_peer_id, m.kind AS kind,
                      m.grouped_id AS grouped_id,
@@ -112,8 +117,13 @@ pub(super) async fn page(
                      m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at,
                      m.edit_hidden AS edit_hidden,
                      COALESCE((SELECT MAX(NOT (e.text <=> m.text)) FROM telegram_message_edits e
-                                WHERE e.conversation_id = m.conversation_id AND e.msg_id = m.msg_id), 1)
-                       AS edit_changed_text,
+                                WHERE e.conversation_id = m.conversation_id AND e.msg_id = m.msg_id),
+                              NOT (m.media_kind <=> 'geo')
+                              AND NOT EXISTS (SELECT 1 FROM telegram_reaction_authors r
+                                               WHERE r.conversation_id = m.conversation_id
+                                                 AND r.msg_id = m.msg_id
+                                                 AND ABS(r.reacted_at - m.edited_at) <= 2))
+                       AS reworded,
                      m.reply_to_msg_id AS reply_to_msg_id,
                      m.reply_to_peer_id AS reply_to_peer_id, m.kind AS kind,
                      m.grouped_id AS grouped_id,
@@ -133,8 +143,13 @@ pub(super) async fn page(
                      m.text AS body, m.deleted AS deleted, m.edited_at AS edited_at,
                      m.edit_hidden AS edit_hidden,
                      COALESCE((SELECT MAX(NOT (e.text <=> m.text)) FROM telegram_message_edits e
-                                WHERE e.conversation_id = m.conversation_id AND e.msg_id = m.msg_id), 1)
-                       AS edit_changed_text,
+                                WHERE e.conversation_id = m.conversation_id AND e.msg_id = m.msg_id),
+                              NOT (m.media_kind <=> 'geo')
+                              AND NOT EXISTS (SELECT 1 FROM telegram_reaction_authors r
+                                               WHERE r.conversation_id = m.conversation_id
+                                                 AND r.msg_id = m.msg_id
+                                                 AND ABS(r.reacted_at - m.edited_at) <= 2))
+                       AS reworded,
                      m.reply_to_msg_id AS reply_to_msg_id,
                      m.reply_to_peer_id AS reply_to_peer_id, m.kind AS kind,
                      m.grouped_id AS grouped_id,
@@ -179,11 +194,11 @@ pub(super) async fn page(
         // `edit_hide` asks for the message to be shown unmodified despite its
         // `edit_date`. NULL, on rows stored before the column, reads as not hidden.
         let edit_hidden: Option<bool> = r.try_get("edit_hidden")?;
-        // Telegram moves `edit_date` for a reaction too. A history in which no
-        // version differs from the text is such a move, not an edit; a message
-        // with no history was edited before the archive saw it, and Telegram's
-        // word stands.
-        let edit_changed_text: bool = r.try_get("edit_changed_text")?;
+        // Telegram moves `edit_date` for a reaction and for a live location's
+        // move, as well as for an edit. With a history, an edit is a version whose
+        // words differ. Without one, a reaction within 2 s of the date or a live
+        // location explains it; otherwise it was edited before the archive saw it.
+        let reworded: bool = r.try_get("reworded")?;
         let is_service = r.try_get::<String, _>("kind")? == "service";
         keys.push((sent_at, id));
         msgs.push(Message {
@@ -195,7 +210,7 @@ pub(super) async fn page(
                 MessageKind::Message
             },
             deleted: r.try_get("deleted")?,
-            edited: edited_at.is_some() && edit_hidden != Some(true) && edit_changed_text,
+            edited: edited_at.is_some() && edit_hidden != Some(true) && reworded,
             album: r
                 .try_get::<Option<i64>, _>("grouped_id")?
                 .map(|g| g.to_string()),

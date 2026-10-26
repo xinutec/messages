@@ -150,6 +150,10 @@
                             <span class="when">{{ e.ts | date: 'shortTime' }}</span>
                             <span class="said">{{ e.body }}</span>
                           </div>
+                        } @empty {
+                          <!-- Edited before the archive saw it: Telegram sends only the
+                               latest text and an edit date. -->
+                          <div class="version">The earlier text was not kept.</div>
                         }
                       </div>
                     }
@@ -252,16 +256,12 @@
                   <!-- When, and what became of it, small at the foot as Signal puts it. -->
                   <div class="meta">
                     <span>{{ m.ts | date: 'shortTime' }}</span>
-                    <!-- The tag opens the earlier versions. -->
+                    <!-- The tag opens the earlier versions, or says none were kept. -->
                     @if (m.edited) {
-                      @if (m.edits.length) {
-                        <button type="button" class="tag history-toggle inline-button" (click)="toggleHistory(m.id)"
-                                [attr.aria-expanded]="isHistoryOpen(m.id)">
-                          edited
-                        </button>
-                      } @else {
-                        <span class="tag">edited</span>
-                      }
+                      <button type="button" class="tag history-toggle inline-button" (click)="toggleHistory(m.id)"
+                              [attr.aria-expanded]="isHistoryOpen(m.id)">
+                        edited
+                      </button>
                     }
                     <!-- Only once revealed; while hidden the body already says `(deleted)`. -->
                     @if (m.deleted && isRevealed(m.id)) {
