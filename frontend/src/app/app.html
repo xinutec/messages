@@ -101,10 +101,12 @@
             </button>
           } @empty {
             <p class="empty">
-              @switch (listState()) {
+              @let state = list().state;
+              @switch (state) {
                 @case ('loading') { Loading conversations… }
                 @case ('failed') { Couldn't load conversations. }
                 @case ('loaded') { No conversations. }
+                @default never;
               }
             </p>
           }

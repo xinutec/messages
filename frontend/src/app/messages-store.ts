@@ -4,7 +4,12 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 import { MessagesApi } from './messages-api';
 import { Conversation, ConversationKind, Me, Origin } from './models';
 
-export type ListState = 'loading' | 'loaded' | 'failed';
+/** The conversation list as the shell knows it. Only `loaded` has a list, so an
+ *  empty one means empty. */
+export type ConversationList =
+  | { state: 'loading' }
+  | { state: 'failed' }
+  | { state: 'loaded'; conversations: Conversation[] };
 
 /** Where the last-known identity is kept, so the app opens offline rather than
  *  at sign-in; the service worker keeps the list and the threads (ngsw-config). */
@@ -22,15 +27,12 @@ export class MessagesStore {
   /** `/api/me` failed other than by being signed out, with no remembered
    *  identity: offline, not sign-in. */
   readonly offline = signal(false);
-  readonly conversations = signal<Conversation[]>([]);
-  /** The worker's kept list or the network has answered. */
-  private readonly listKnown = signal(false);
-  /** The network failed with no list known; withdrawn by the next answer. */
-  private readonly listFailed = signal(false);
-  /** Whether an empty list means empty. */
-  readonly listState = computed<ListState>(() =>
-    this.listKnown() ? 'loaded' : this.listFailed() ? 'failed' : 'loading',
-  );
+  readonly list = signal<ConversationList>({ state: 'loading' });
+  /** The list's conversations; none until it has loaded. */
+  readonly conversations = computed(() => {
+    const list = this.list();
+    return list.state === 'loaded' ? list.conversations : [];
+  });
   /** The last word from the network was no network: what is on view is what
    *  the service worker kept, and the shell says so. Cleared by any answer. */
   readonly stale = signal(false);
@@ -53,10 +55,7 @@ export class MessagesStore {
     this.started = true;
     // The list as last seen, at once; the network's replaces it.
     void this.api.keptConversations().then((kept) => {
-      if (kept != null && !this.fresh) {
-        this.conversations.set(kept);
-        this.listKnown.set(true);
-      }
+      if (kept != null && !this.fresh) this.list.set({ state: 'loaded', conversations: kept });
     });
     this.api.me().subscribe({
       next: (m) => {
@@ -96,14 +95,12 @@ export class MessagesStore {
       next: (cs) => {
         this.fresh = true;
         this.noteAnswer();
-        this.conversations.set(cs);
-        this.listKnown.set(true);
-        this.listFailed.set(false);
+        this.list.set({ state: 'loaded', conversations: cs });
       },
       error: (e: unknown) => {
         this.noteFailure(e);
-        // A list already known stays: a stale list beats none.
-        this.listFailed.set(true);
+        // A list already loaded stays: a stale list beats none.
+        if (this.list().state !== 'loaded') this.list.set({ state: 'failed' });
       },
     });
   }

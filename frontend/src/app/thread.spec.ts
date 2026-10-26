@@ -158,7 +158,10 @@ describe('Thread', () => {
     const tg = (id: string, kind: Conversation['kind']): Conversation => ({
       origin: 'telegram', id, name: id, kind, network: null, message_count: 1, last_ts: 1, last: null, unread: 0, avatar: null,
     });
-    TestBed.inject(MessagesStore).conversations.set([tg('4242', 'dm'), tg('-77', 'group'), tg('-1055', 'channel')]);
+    TestBed.inject(MessagesStore).list.set({
+      state: 'loaded',
+      conversations: [tg('4242', 'dm'), tg('-77', 'group'), tg('-1055', 'channel')],
+    });
     const opens = (origin: string, id: string): boolean => {
       ref.setInput('origin', origin);
       ref.setInput('id', id);
@@ -1188,9 +1191,12 @@ describe('Thread copy — saying what was left out', () => {
   /** The thread as three rendered messages out of a conversation of `total`. */
   async function opened3(total: number): Promise<ComponentFixture<Thread>> {
     const f = await threeRendered();
-    TestBed.inject(MessagesStore).conversations.set([
-      { origin: 'irc', id: '7', name: '#linux', kind: 'group', network: 'xinutec', message_count: total, last_ts: 1, last: null, unread: 0, avatar: null },
-    ]);
+    TestBed.inject(MessagesStore).list.set({
+      state: 'loaded',
+      conversations: [
+        { origin: 'irc', id: '7', name: '#linux', kind: 'group', network: 'xinutec', message_count: total, last_ts: 1, last: null, unread: 0, avatar: null },
+      ],
+    });
     f.detectChanges();
     return f;
   }
