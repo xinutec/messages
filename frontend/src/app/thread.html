@@ -360,8 +360,9 @@
       <mat-icon>send</mat-icon>
     </button>
   </form>
-  @if (composer.error()) {
-    <p class="send-error">{{ composer.error() }}</p>
+  <!-- A refusal, or what a send that went still has to say; one line, quietly. -->
+  @if (composer.error() ?? composer.notice(); as said) {
+    <p class="send-status">{{ said }}</p>
   }
 }
 

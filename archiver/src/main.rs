@@ -410,8 +410,14 @@ async fn serve_outbox(ctx: Ctx) {
         };
         // Logged by row and thread, never the text.
         let row = send.id;
-        let recorded = match send_one(&ctx, &send).await {
-            Ok(Sent {
+        let target = signal_archiver::send::Target {
+            http: &ctx.http,
+            base: &ctx.http_base,
+            number: &ctx.number,
+            timeout: SEND_TIMEOUT,
+        };
+        let recorded = match signal_archiver::send::deliver(&ctx.db, &target, &send).await {
+            Ok(signal_archiver::send::Sent {
                 ts,
                 archived,
                 missed,
@@ -430,82 +436,6 @@ async fn serve_outbox(ctx: Ctx) {
             tracing::error!("could not record signal send {row}'s outcome: {e:#}");
         }
     }
-}
-
-/// A send Signal took: when, whether the archive has it, and who it missed.
-struct Sent {
-    ts: i64,
-    archived: bool,
-    missed: Option<String>,
-}
-
-/// Send one row; on success, archive it. `Err` is the reason it did not go, in
-/// words for the reader.
-async fn send_one(
-    ctx: &Ctx,
-    send: &signal_archiver::db::SignalSend,
-) -> std::result::Result<Sent, String> {
-    use signal_archiver::send::{Outcome, outcome, request_body};
-    let res = ctx
-        .http
-        .post(format!("{}/v2/send", ctx.http_base))
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .body(request_body(&ctx.number, send).to_string())
-        .timeout(SEND_TIMEOUT)
-        .send()
-        .await
-        .map_err(|e| format!("signal-cli did not answer; it may or may not have gone: {e}"))?;
-    let status = res.status().as_u16();
-    let body = res.bytes().await.map_err(|e| {
-        format!("signal-cli's answer was cut off; it may or may not have gone: {e}")
-    })?;
-    let (ts, missed) = match outcome(&send.thread, status, &body) {
-        Outcome::Sent { ts, missed } => (ts, missed),
-        Outcome::Refused(why) => return Err(why),
-    };
-    let archived = match archive_sent(ctx, send, ts).await {
-        Ok(()) => true,
-        Err(e) => {
-            tracing::error!("signal send {} went but was not archived: {e:#}", send.id);
-            false
-        }
-    };
-    Ok(Sent {
-        ts,
-        archived,
-        missed,
-    })
-}
-
-/// The row a sync of this send would have written, from the receipt, marked as
-/// this app's (migration v65).
-async fn archive_sent(ctx: &Ctx, send: &signal_archiver::db::SignalSend, ts: i64) -> Result<()> {
-    let Some(me) = ctx.db.own_uuid().await? else {
-        anyhow::bail!("this account's own uuid is not known yet");
-    };
-    let m = signal_archiver::parse::Message {
-        thread_id: send.thread.clone(),
-        sender: me,
-        server_ts: ts,
-        server_received_ts: None,
-        server_delivered_ts: None,
-        expires_in_seconds: None,
-        body: Some(send.text.clone()),
-        quote_target_ts: send.quote.as_ref().map(|q| q.ts),
-        quote_author: send.quote.as_ref().map(|q| q.author.clone()),
-        quote_text: None,
-        is_outgoing: true,
-        attachments: Vec::new(),
-        styles: Vec::new(),
-        mentions: Vec::new(),
-        previews: Vec::new(),
-        group_call: None,
-    };
-    ctx.db.upsert_conversation(&m.thread_id).await?;
-    if let Some(id) = ctx.db.insert_message(&m).await? {
-        ctx.db.mark_sent_here(id).await?;
-    }
-    Ok(())
 }
 
 /// Periodically pull group titles; the receive payload carries only the id.

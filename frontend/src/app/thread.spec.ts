@@ -218,7 +218,7 @@ describe('Thread', () => {
     thread.composer.draft.set('gone, but not seen');
     await thread.composer.send();
     expect(thread.composer.draft()).toBe('');
-    expect(thread.composer.error()).toContain('after the next import');
+    expect(thread.composer.notice()).toContain('after the next import');
 
     // Telegram has no import to wait for.
     ref.setInput('origin', 'telegram');
@@ -227,7 +227,7 @@ describe('Thread', () => {
     api.send.mockReturnValueOnce(of({ sent: true, error: null, archived: false, note: null }));
     thread.composer.draft.set('gone, but not stored');
     await thread.composer.send();
-    expect(thread.composer.error()).toBe('Sent, but not archived yet.');
+    expect(thread.composer.notice()).toBe('Sent, but not archived yet.');
   });
 
   it('drops an older page that arrives after the reader switched conversations', async () => {
@@ -1796,7 +1796,8 @@ describe('Thread — answering a message', () => {
     thread.composer.draft.set('hello all');
     await thread.composer.send();
     expect(thread.composer.draft()).toBe('');
-    expect(thread.composer.error()).toBe('not delivered to +3100 (IDENTITY_FAILURE)');
+    expect(thread.composer.notice()).toBe('not delivered to +3100 (IDENTITY_FAILURE)');
+    expect(thread.composer.error()).toBeNull();
   });
 
   it('on IRC, addresses the draft to the sender, once', async () => {

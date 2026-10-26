@@ -13,7 +13,11 @@ export class Composer {
    *  submits even when the keydown handler returned early. */
   readonly composing = signal(false);
   readonly sending = signal(false);
+  /** Why the last send did not go; the draft is kept to try again. */
   readonly error = signal<string | null>(null);
+  /** What a send that went still has to say: it is not archived yet, or a
+   *  Signal group member did not get it. */
+  readonly notice = signal<string | null>(null);
   /** The Telegram or Signal message the next send answers. IRC has no replies:
    *  there an answer is the draft starting with the nick, as every client
    *  writes one. */
@@ -42,6 +46,7 @@ export class Composer {
     this.key = key;
     this.draft.set(key == null ? '' : (this.drafts.get(key) ?? ''));
     this.error.set(null);
+    this.notice.set(null);
     this.replyingTo.set(null);
   }
 
@@ -67,6 +72,7 @@ export class Composer {
 
     this.sending.set(true);
     this.error.set(null);
+    this.notice.set(null);
     let archived = true;
     // What a send that went still has to say, such as who it missed.
     let note: string | null = null;
@@ -91,11 +97,11 @@ export class Composer {
     // What went leaves the box; what was refused stays, to try again.
     this.draft.set(lines.join('\n'));
     if (lines.length === asked) return;
-    if (note != null && this.error() == null) this.error.set(note);
-    if (archived) await this.sent();
-    else if (this.error() == null) {
-      this.error.set(w.origin === 'irc' ? 'Sent. It will appear here after the next import.' : 'Sent, but not archived yet.');
+    if (!archived) {
+      note ??= w.origin === 'irc' ? 'Sent. It will appear here after the next import.' : 'Sent, but not archived yet.';
     }
+    this.notice.set(note);
+    if (archived) await this.sent();
   }
 
   /** At a desk Enter sends and Shift+Enter breaks the line; on a touch screen
