@@ -100,7 +100,13 @@
               }
             </button>
           } @empty {
-            <p class="empty">{{ listKnown() ? 'No conversations.' : 'Loading conversations…' }}</p>
+            <p class="empty">
+              @switch (listState()) {
+                @case ('loading') { Loading conversations… }
+                @case ('failed') { Couldn't load conversations. }
+                @case ('loaded') { No conversations. }
+              }
+            </p>
           }
         </div>
       }

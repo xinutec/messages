@@ -1,4 +1,5 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { HttpErrorResponse } from '@angular/common/http';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { NavigationEnd, Router, provideRouter } from '@angular/router';
 import { provideServiceWorker } from '@angular/service-worker';
@@ -277,6 +278,27 @@ describe('App — the list before it has an answer', () => {
     fixture.detectChanges();
     expect(root.querySelector('.rows .empty')?.textContent?.trim()).toBe('Loading conversations…');
     network.next([]);
+    fixture.detectChanges();
+    expect(root.querySelector('.rows .empty')?.textContent?.trim()).toBe('No conversations.');
+  });
+
+  it('says the list could not be loaded, not that it is empty, when the fetch fails with nothing kept', async () => {
+    const conversations = vi.fn<MessagesApi['conversations']>(() =>
+      throwError(() => new HttpErrorResponse({ status: 500 })),
+    );
+    const fixture = render(appApi({ conversations }));
+    const root = fixture.nativeElement as HTMLElement;
+    const store = TestBed.inject(MessagesStore);
+    await new Promise((r) => setTimeout(r, 0));
+    fixture.detectChanges();
+    expect(root.querySelector('.rows .empty')?.textContent?.trim()).toBe("Couldn't load conversations.");
+    conversations.mockReturnValue(of([]));
+    store.refresh();
+    fixture.detectChanges();
+    expect(root.querySelector('.rows .empty')?.textContent?.trim()).toBe('No conversations.');
+    // Once known, a failed re-read does not unknow it: the list stays as it was.
+    conversations.mockReturnValue(throwError(() => new HttpErrorResponse({ status: 500 })));
+    store.refresh();
     fixture.detectChanges();
     expect(root.querySelector('.rows .empty')?.textContent?.trim()).toBe('No conversations.');
   });

@@ -1,8 +1,10 @@
 import { HttpErrorResponse } from '@angular/common/http';
-import { Injectable, inject, signal } from '@angular/core';
+import { Injectable, computed, inject, signal } from '@angular/core';
 
 import { MessagesApi } from './messages-api';
 import { Conversation, ConversationKind, Me, Origin } from './models';
+
+export type ListState = 'loading' | 'loaded' | 'failed';
 
 /** Where the last-known identity is kept, so the app opens offline rather than
  *  at sign-in; the service worker keeps the list and the threads (ngsw-config). */
@@ -21,9 +23,14 @@ export class MessagesStore {
    *  identity: offline, not sign-in. */
   readonly offline = signal(false);
   readonly conversations = signal<Conversation[]>([]);
-  /** The list has had an answer: what the worker kept, or the network's, or its
-   *  failure. Before that an empty list is not yet known to be empty. */
-  readonly listKnown = signal(false);
+  /** The worker's kept list or the network has answered. */
+  private readonly listKnown = signal(false);
+  /** The network failed with no list known; withdrawn by the next answer. */
+  private readonly listFailed = signal(false);
+  /** Whether an empty list means empty. */
+  readonly listState = computed<ListState>(() =>
+    this.listKnown() ? 'loaded' : this.listFailed() ? 'failed' : 'loading',
+  );
   /** The last word from the network was no network: what is on view is what
    *  the service worker kept, and the shell says so. Cleared by any answer. */
   readonly stale = signal(false);
@@ -91,10 +98,12 @@ export class MessagesStore {
         this.noteAnswer();
         this.conversations.set(cs);
         this.listKnown.set(true);
+        this.listFailed.set(false);
       },
       error: (e: unknown) => {
         this.noteFailure(e);
-        this.listKnown.set(true);
+        // A list already known stays: a stale list beats none.
+        this.listFailed.set(true);
       },
     });
   }
