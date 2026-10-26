@@ -49,8 +49,9 @@ pub enum Outcome {
     Refused(String),
 }
 
-/// Read a response. A DM reaches one person, so a refusal for them is no send;
-/// a group's send stands for the members it reached.
+/// Read a response: a 201's body is a list with one response per kind of
+/// recipient, and a send names one. A DM reaches one person, so a refusal for
+/// them is no send; a group's send stands for the members it reached.
 pub fn outcome(thread: &ThreadId, status: u16, body: &[u8]) -> Outcome {
     let parsed = serde_json::from_slice::<Value>(body);
     if status != 201 {
@@ -68,6 +69,15 @@ pub fn outcome(thread: &ThreadId, status: u16, body: &[u8]) -> Outcome {
             return Outcome::Refused(format!(
                 "signal-cli's answer is not JSON; it may have gone: {e}"
             ));
+        }
+    };
+    // A list, one response per kind of recipient; a send names one recipient.
+    let parsed = match parsed.as_array().map(Vec::as_slice) {
+        Some([one]) => one.clone(),
+        _ => {
+            return Outcome::Refused(
+                "signal-cli's answer is not one response; it may have gone".to_string(),
+            );
         }
     };
     let Some(ts) = parsed

@@ -1,5 +1,7 @@
 //! What a Signal send asks `/v2/send` and what its answer means
-//! (`signal_archiver::send`), against the shapes signal-cli-rest-api 0.101 sends.
+//! (`signal_archiver::send`), against the shapes signal-cli-rest-api 0.101 sends:
+//! a 201's body is a list, one response per kind of recipient (`api.go` writes
+//! `SendV2`'s `*[]SendMessageResponse` as it is).
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
@@ -61,7 +63,7 @@ fn a_reply_carries_the_quote_signal_wants() {
 #[test]
 fn a_201_with_a_timestamp_is_sent() {
     assert_eq!(
-        outcome(&dm(), 201, br#"{"timestamp":"1700000000123"}"#),
+        outcome(&dm(), 201, br#"[{"timestamp":"1700000000123"}]"#),
         Outcome::Sent {
             ts: 1_700_000_000_123,
             missed: None
@@ -71,7 +73,7 @@ fn a_201_with_a_timestamp_is_sent() {
 
 #[test]
 fn a_dm_refused_for_its_one_recipient_did_not_go() {
-    let body = br#"{"timestamp":"1700000000123","errors":{"recipients":[{"uuid":"ab-cd","reason":"UNREGISTERED_FAILURE"}]}}"#;
+    let body = br#"[{"timestamp":"1700000000123","errors":{"recipients":[{"uuid":"ab-cd","reason":"UNREGISTERED_FAILURE"}]}}]"#;
     assert_eq!(
         outcome(&dm(), 201, body),
         Outcome::Refused("not delivered: ab-cd (UNREGISTERED_FAILURE)".into())
@@ -80,7 +82,7 @@ fn a_dm_refused_for_its_one_recipient_did_not_go() {
 
 #[test]
 fn a_group_send_stands_for_those_it_reached_and_names_the_rest() {
-    let body = br#"{"timestamp":"1700000000123","errors":{"recipients":[{"number":"+3100","reason":"IDENTITY_FAILURE"}]}}"#;
+    let body = br#"[{"timestamp":"1700000000123","errors":{"recipients":[{"number":"+3100","reason":"IDENTITY_FAILURE"}]}}]"#;
     assert_eq!(
         outcome(&group(), 201, body),
         Outcome::Sent {
@@ -98,6 +100,21 @@ fn an_unreadable_answer_to_a_send_signal_took_does_not_say_it_failed() {
     assert!(why.contains("may have gone"), "{why}");
 }
 
+/// One recipient per send, so one response: anything else is not read as a send.
+#[test]
+fn an_answer_that_is_not_one_response_is_not_a_send() {
+    for body in [
+        &br#"{"timestamp":"1700000000123"}"#[..],
+        br#"[]"#,
+        br#"[{"timestamp":"1"},{"timestamp":"2"}]"#,
+    ] {
+        let Outcome::Refused(why) = outcome(&dm(), 201, body) else {
+            panic!("read as a send: {}", String::from_utf8_lossy(body));
+        };
+        assert!(why.contains("may have gone"), "{why}");
+    }
+}
+
 #[test]
 fn an_error_status_says_why() {
     assert_eq!(
@@ -109,7 +126,7 @@ fn an_error_status_says_why() {
         Outcome::Refused("signal-cli answered 500".into())
     );
     assert_eq!(
-        outcome(&dm(), 201, br#"{}"#),
+        outcome(&dm(), 201, br#"[{}]"#),
         Outcome::Refused("signal-cli gave no timestamp; it may have gone".into())
     );
 }
