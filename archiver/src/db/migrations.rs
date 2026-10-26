@@ -703,4 +703,26 @@ pub(super) const MIGRATIONS: &[&str] = &[
     // v63: the message a Telegram send answers, as Telegram's `msg_id` in the
     // same conversation; NULL for a plain message.
     r"ALTER TABLE telegram_outbox ADD COLUMN reply_to_msg_id INT NULL",
+    // v64: Signal sends the viewer asks for, served by the ingester, which holds
+    // the linked device. As `telegram_outbox`: `sending` is claimed, so a send
+    // happens at most once. `quote_ts` is the `server_ts` of the message
+    // answered, in the same thread; `sent_ts` is Signal's timestamp for the send,
+    // `archived` whether its row was written, and `note` who it did not reach.
+    r"CREATE TABLE IF NOT EXISTS signal_outbox (
+        id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        thread_id VARCHAR(255) NOT NULL,
+        text TEXT NOT NULL,
+        quote_ts BIGINT NULL,
+        state ENUM('queued','sending','sent','failed') NOT NULL DEFAULT 'queued',
+        sent_ts BIGINT NULL,
+        archived TINYINT(1) NULL,
+        note VARCHAR(255) NULL,
+        queued_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        done_at TIMESTAMP NULL,
+        INDEX idx_signal_outbox_state (state, queued_at)
+    ) DEFAULT CHARSET=utf8mb4",
+    // v65: a message this app sent. The linked device never receives its own
+    // sends, so the row is written from Signal's send receipt rather than from a
+    // frame, and the viewer says so.
+    r"ALTER TABLE messages ADD COLUMN sent_here TINYINT(1) NOT NULL DEFAULT 0",
 ];

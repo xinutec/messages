@@ -36,7 +36,7 @@ export function fakeApi(over: Partial<FakeApi> = {}): FakeApi {
     keptConversations: vi.fn<MessagesApi['keptConversations']>(() => Promise.resolve(null)),
     keptMessages: vi.fn<MessagesApi['keptMessages']>(() => Promise.resolve(null)),
     messages: vi.fn<MessagesApi['messages']>(() => of(page)),
-    send: vi.fn<MessagesApi['send']>(() => of({ sent: true, error: null, archived: true })),
+    send: vi.fn<MessagesApi['send']>(() => of({ sent: true, error: null, archived: true, note: null })),
     search: vi.fn<MessagesApi['search']>(() => of([] as SearchHit[])),
   } satisfies { [K in keyof MessagesApi]: unknown };
   return { ...defaults, ...over };

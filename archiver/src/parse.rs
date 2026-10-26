@@ -32,6 +32,15 @@ pub enum ThreadId {
 }
 
 impl ThreadId {
+    /// The stored key back, as `Display` writes it.
+    pub fn parse(key: &str) -> Option<ThreadId> {
+        if let Some(id) = key.strip_prefix("dm:") {
+            return Some(ThreadId::Dm(id.to_string()));
+        }
+        key.strip_prefix("group:")
+            .map(|id| ThreadId::Group(id.to_string()))
+    }
+
     pub fn kind(&self) -> ThreadKind {
         match self {
             ThreadId::Dm(_) => ThreadKind::Dm,

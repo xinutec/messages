@@ -414,4 +414,168 @@ impl Db {
         .await?
         .rows_affected())
     }
+    /// Take the oldest queued Signal send, marking it `sending` first, so the send
+    /// that follows happens at most once. One queued longer ago than
+    /// `fresh_secs` is failed instead: the viewer that asked has stopped waiting.
+    /// A quote is read from the archive here: Signal wants its author and text.
+    pub async fn claim_signal_send(&self, fresh_secs: i64) -> Result<Option<SignalSend>> {
+        sqlx::query(
+            "UPDATE signal_outbox SET state = 'failed', done_at = CURRENT_TIMESTAMP,
+                    note = 'expired before the ingester reached it'
+              WHERE state = 'queued' AND queued_at < CURRENT_TIMESTAMP - INTERVAL ? SECOND",
+        )
+        .bind(fresh_secs)
+        .execute(&self.pool)
+        .await?;
+        let next: Option<QueuedSignalSend> = sqlx::query_as(
+            "SELECT o.id, o.thread_id, o.text, o.quote_ts, q.sender_uuid, q.body
+                   FROM signal_outbox o
+                   LEFT JOIN messages q
+                          ON q.thread_id = o.thread_id AND q.server_ts = o.quote_ts
+                         AND q.edit_of_ts IS NULL
+                  WHERE o.state = 'queued' ORDER BY o.queued_at, o.id LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some((id, thread, text, quote_ts, author, quoted)) = next else {
+            return Ok(None);
+        };
+        // Conditional, so a viewer withdrawing it in between wins.
+        let claimed = sqlx::query(
+            "UPDATE signal_outbox SET state = 'sending' WHERE id = ? AND state = 'queued'",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        if claimed != 1 {
+            return Ok(None);
+        }
+        let Some(thread) = ThreadId::parse(&thread) else {
+            self.record_signal_send_failed(id, "not a Signal conversation")
+                .await?;
+            return Ok(None);
+        };
+        let quote = match (quote_ts, author) {
+            (None, _) => None,
+            (Some(ts), Some(author)) => Some(SignalQuote {
+                ts,
+                author,
+                text: quoted,
+            }),
+            (Some(_), None) => {
+                self.record_signal_send_failed(id, "the message it answers is not in the archive")
+                    .await?;
+                return Ok(None);
+            }
+        };
+        Ok(Some(SignalSend {
+            id,
+            thread,
+            text,
+            quote,
+        }))
+    }
+
+    /// The send went out at Signal's `sent_ts`; `archived` says whether its row
+    /// was written, and `note` who it did not reach.
+    pub async fn record_signal_sent(
+        &self,
+        id: i64,
+        sent_ts: i64,
+        archived: bool,
+        note: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE signal_outbox SET state = 'sent', sent_ts = ?, archived = ?, note = ?,
+                    done_at = CURRENT_TIMESTAMP
+              WHERE id = ? AND state = 'sending'",
+        )
+        .bind(sent_ts)
+        .bind(archived)
+        .bind(note.map(fit_note))
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// The send did not go out, or may not have.
+    pub async fn record_signal_send_failed(&self, id: i64, note: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE signal_outbox SET state = 'failed', note = ?, done_at = CURRENT_TIMESTAMP
+              WHERE id = ? AND state = 'sending'",
+        )
+        .bind(fit_note(note))
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Sends a previous run claimed and never finished: whether Signal has them
+    /// is unknown, so they are failed with that said, never retried.
+    pub async fn abandon_interrupted_signal_sends(&self) -> Result<u64> {
+        Ok(sqlx::query(
+            "UPDATE signal_outbox SET state = 'failed', done_at = CURRENT_TIMESTAMP,
+                    note = 'interrupted mid-send: it may or may not have gone; check Signal'
+              WHERE state = 'sending'",
+        )
+        .execute(&self.pool)
+        .await?
+        .rows_affected())
+    }
+
+    /// This account's own uuid, as the sender of what it sent from the phone.
+    /// `None` until one such message is archived.
+    pub async fn own_uuid(&self) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT sender_uuid FROM messages WHERE is_outgoing = 1 ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?)
+    }
+
+    /// Mark row `id` as sent by this app; see migration v65.
+    pub async fn mark_sent_here(&self, id: u64) -> Result<()> {
+        sqlx::query("UPDATE messages SET sent_here = 1 WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+}
+
+/// An outbox row as `claim_signal_send` reads it: id, thread, text, the quoted
+/// message's `server_ts`, and that message's author and text when archived.
+type QueuedSignalSend = (
+    i64,
+    String,
+    String,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+);
+
+/// A send the ingester has claimed (`Db::claim_signal_send`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignalSend {
+    /// The `signal_outbox` row.
+    pub id: i64,
+    /// Where it goes: a thread the archive holds, never the reader's word.
+    pub thread: ThreadId,
+    pub text: String,
+    pub quote: Option<SignalQuote>,
+}
+
+/// The message a send answers, as Signal's quote names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignalQuote {
+    pub ts: i64,
+    pub author: String,
+    pub text: Option<String>,
+}
+
+fn fit_note(note: &str) -> String {
+    note.chars().take(255).collect()
 }

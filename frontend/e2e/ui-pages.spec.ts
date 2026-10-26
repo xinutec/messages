@@ -926,7 +926,7 @@ test("the return key makes a line and the button sends @ phone width", async ({ 
   await page.route("**/api/conversations/*/*/send", async (r) => {
     const body: unknown = r.request().postDataJSON();
     if (typeof body === "object" && body !== null && "text" in body) sent.push(String(body.text));
-    await r.fulfill({ json: { sent: true, error: null, archived: true } satisfies SendResult });
+    await r.fulfill({ json: { sent: true, error: null, archived: true, note: null } satisfies SendResult });
   });
   await page.goto("/conversation/irc/7");
   const input = page.getByLabel("Message", { exact: true });
@@ -952,7 +952,7 @@ test.describe("at a desk", () => {
     let sends = 0;
     await page.route("**/api/conversations/*/*/send", async (r) => {
       sends += 1;
-      await r.fulfill({ json: { sent: true, error: null, archived: true } satisfies SendResult });
+      await r.fulfill({ json: { sent: true, error: null, archived: true, note: null } satisfies SendResult });
     });
     await page.goto("/conversation/irc/7");
     const input = page.getByLabel("Message", { exact: true });

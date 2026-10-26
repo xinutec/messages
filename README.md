@@ -9,7 +9,7 @@ Telegram, through the feed that holds the session.
  Browser ──VPN/login──▶ messages.xinutec.org (isis, ns: signal)
                             │  Rust/axum: Nextcloud OAuth2 (identity) + sessions
                             │  + API over the archive, + sends (IRC via ssh,
-                            │    Telegram through the feed's outbox table)
+                            │    Telegram and Signal through outbox tables)
                             ▼
                         signal MariaDB  ─ messages / conversations / reactions        (Signal)
                                         ├ gchat_messages / gchat_conversations…        (Google Chat)
@@ -38,8 +38,9 @@ source IPs survive k3s servicelb; check before relying on it.
   three write the same row.
 - `src/` — the viewer's backend. `nextcloud/identity.rs` and `session.rs` are
   the login; `routes/auth.rs` adds the allow-list; `archive/` is the
-  origin-normalising query layer, one module per origin; `irc_send.rs` and
-  `telegram_send.rs` send; `transcribe.rs` is the queue recall's transcriber
+  origin-normalising query layer, one module per origin; `irc_send.rs`,
+  `telegram_send.rs` and `signal_send.rs` send, the last two through `outbox.rs`;
+  `transcribe.rs` is the queue recall's transcriber
   polls; `config.rs` builds the database connection from `DB_*`, so the app
   reuses `signal-secret`. The app owns only `sessions`, `link_images` and
   `transcripts` (`src/db.rs`).
@@ -74,10 +75,12 @@ source IPs survive k3s servicelb; check before relying on it.
   epoch ms; the server converts it to the origin's unit.
 - `GET /api/search?q=[&origin=&id=]` — substring search, everywhere or in one
   conversation. Each hit carries a cursor that lands on it.
-- `POST /api/conversations/{irc,telegram}/{id}/send` — say something, through
-  irssi or through the Telegram feed (`src/telegram_send.rs`), to a Telegram DM
-  or group only. The body is the text only; the recipient comes from `{id}`.
-  Signal and Google Chat 404, Signal by decision (see `routes/api.rs`).
+- `POST /api/conversations/{irc,telegram,signal}/{id}/send` — say something,
+  through irssi, the Telegram feed or the Signal ingester, to a DM or group only.
+  The body is the text and, on Telegram and Signal, `reply_to`, a message in the
+  same conversation; the recipient comes from `{id}`. Google Chat 404s. A Signal
+  send is archived from Signal's receipt, as the linked device never receives
+  its own sends, and marked `sent_here` (`src/signal_send.rs`).
 - `GET /api/attachments/{id}`, `/api/gchat-attachments/{id}`,
   `/api/telegram-media/{id}` — held bytes, one route per origin since attachment
   ids are per origin. `POST /api/telegram-media/{id}/request` queues an
@@ -203,8 +206,8 @@ there; none for the Mentions shortcut). Without a read position the count is 0,
 never a guess.
 
 Sending is optional: without a usable key the app serves the archive and refuses
-to send on IRC. A Telegram send waits for the feed for 20 seconds and is
-withdrawn if the feed never took it.
+to send on IRC. A Telegram or Signal send waits 20 seconds for the process
+holding the account and is withdrawn if it never took it.
 
 ## Known limits
 - Google Chat reactors are named only as far as gchat-archive's second capture

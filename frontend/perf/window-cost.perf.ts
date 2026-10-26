@@ -26,7 +26,7 @@ function body(i: number): string {
 }
 function msg(i: number): Message {
   return { id: String(i), ts: 1_700_000_000_000 + i * 60_000, sender: "nick" + (i % 9), sender_key: "nick" + (i % 9),
-    is_outgoing: i % 5 === 0, kind: "message", body: body(i), deleted: false, edited: false,
+    is_outgoing: i % 5 === 0, kind: "message", body: body(i), deleted: false, edited: false, sent_here: false,
     reactions: i % 13 === 0 ? [{ emoji: "👍", count: 2, who: [] }] : [], attachments: [], link_images: [], edits: [],
     link_offers: [], reply_to: null, delivery: null, entities: [], album: null, previews: [] };
 }

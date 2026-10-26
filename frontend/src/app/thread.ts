@@ -668,15 +668,16 @@ export class Thread {
     }
   }
 
-  // ---- sending (IRC and Telegram) -----------------------------------------
+  // ---- sending (IRC, Telegram and Signal) ---------------------------------
 
-  /** IRC, and a Telegram DM or group: not a broadcast, which has an audience
-   *  rather than a conversation. Signal is read-only by decision. */
+  /** IRC, and a Telegram or Signal DM or group: not a broadcast, which has an
+   *  audience rather than a conversation. Google Chat is an import. */
   readonly canSend = computed(() => {
     if (!this.routed()) return false;
-    if (this.origin() === 'irc') return true;
+    const origin = this.origin();
+    if (origin === 'irc') return true;
     const kind = this.conversation()?.kind;
-    return this.origin() === 'telegram' && (kind === 'dm' || kind === 'group');
+    return (origin === 'telegram' || origin === 'signal') && (kind === 'dm' || kind === 'group');
   });
   readonly composer = new Composer(this.api, this.where, () => this.afterSend());
   private readonly draftEl = viewChild<ElementRef<HTMLTextAreaElement>>('draft');
@@ -688,7 +689,7 @@ export class Thread {
   );
 
   /** Speech still there, in a conversation this app can send to. A Telegram
-   *  service event is no message to answer; an IRC action is. */
+   *  service event or a Signal call is no message to answer; an IRC action is. */
   private replyable(m: Message | undefined): boolean {
     if (m == null || m.deleted || !this.canSend()) return false;
     return this.origin() === 'irc' || m.kind === 'message';

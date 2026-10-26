@@ -17,6 +17,7 @@ pub use migrations::{
     BACKFILL_GROUP_CALLS, BACKFILL_LINK_PREVIEWS, BACKFILL_MENTIONS, BACKFILL_PREVIEW_IMAGES,
     BACKFILL_QUOTES, BACKFILL_SERVER_TIMES, BACKFILL_TEXT_STYLES,
 };
+pub use signal::{SignalQuote, SignalSend};
 pub use telegram::{
     TelegramBackfill, TelegramDeleteScope, TelegramMediaState, TelegramReadDirection, TelegramSend,
     TelegramStored,

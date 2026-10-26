@@ -263,6 +263,12 @@
                         edited
                       </button>
                     }
+                    <!-- Signal never reads back what this app sends: the row is its receipt. -->
+                    @if (m.sent_here) {
+                      <span class="tag" title="Sent from this app: Signal confirmed it, but its copy was never read back."
+                            >sent here</span
+                      >
+                    }
                     <!-- Only once revealed; while hidden the body already says `(deleted)`. -->
                     @if (m.deleted && isRevealed(m.id)) {
                       <span class="tag">deleted</span>

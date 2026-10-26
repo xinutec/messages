@@ -15,6 +15,7 @@ export function testMessage(over: Partial<Message> = {}): Message {
     body: 'b',
     deleted: false,
     edited: false,
+    sent_here: false,
     reactions: [],
     attachments: [],
     link_images: [],

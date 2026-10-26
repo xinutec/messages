@@ -50,6 +50,7 @@ fn msg(body: &str) -> Message {
         body: Some(body.into()),
         deleted: false,
         edited: false,
+        sent_here: false,
         reactions: Vec::new(),
         attachments: Vec::new(),
         edits: Vec::new(),

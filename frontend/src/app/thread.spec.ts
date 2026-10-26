@@ -153,14 +153,21 @@ describe('Thread', () => {
     const up = resolveUp(declared, { origin: 'irc', id: '#c' }, { origin: 'irc', from: '42' });
     expect(up).toEqual(expect.objectContaining({ path: '/', query: { origin: 'irc' } }));
   });
-  it('offers a composer for IRC and a Telegram DM or group — never Signal, nor a broadcast', () => {
+  it('offers a composer for IRC and a Telegram or Signal DM or group — never a broadcast, nor Google Chat', () => {
     const { thread, ref, fixture } = setup();
     const tg = (id: string, kind: Conversation['kind']): Conversation => ({
       origin: 'telegram', id, name: id, kind, network: null, message_count: 1, last_ts: 1, last: null, unread: 0, avatar: null,
     });
     TestBed.inject(MessagesStore).list.set({
       state: 'loaded',
-      conversations: [tg('4242', 'dm'), tg('-77', 'group'), tg('-1055', 'channel')],
+      conversations: [
+        tg('4242', 'dm'),
+        tg('-77', 'group'),
+        tg('-1055', 'channel'),
+        { ...tg('dm:a', 'dm'), origin: 'signal' },
+        { ...tg('group:g', 'group'), origin: 'signal' },
+        { ...tg('gc1', 'dm'), origin: 'gchat' },
+      ],
     });
     const opens = (origin: string, id: string): boolean => {
       ref.setInput('origin', origin);
@@ -168,7 +175,9 @@ describe('Thread', () => {
       fixture.detectChanges();
       return thread.canSend();
     };
-    expect(opens('signal', 'dm:a')).toBe(false);
+    expect(opens('signal', 'dm:a')).toBe(true);
+    expect(opens('signal', 'group:g')).toBe(true);
+    expect(opens('gchat', 'gc1')).toBe(false);
     expect(opens('irc', '7')).toBe(true);
     expect(opens('telegram', '4242')).toBe(true);
     expect(opens('telegram', '-77')).toBe(true);
@@ -185,14 +194,14 @@ describe('Thread', () => {
     fixture.detectChanges();
 
     // irssi refuses, usually for want of an open tab.
-    api.send.mockReturnValueOnce(of({ sent: false, error: 'refused: no conversation open with that target', archived: false }));
+    api.send.mockReturnValueOnce(of({ sent: false, error: 'refused: no conversation open with that target', archived: false, note: null }));
     thread.composer.draft.set('please keep me');
     await thread.composer.send();
     expect(thread.composer.draft()).toBe('please keep me');
     expect(thread.composer.error()).toContain('no conversation open');
 
     // The box empties only on a real send.
-    api.send.mockReturnValueOnce(of({ sent: true, error: null, archived: true }));
+    api.send.mockReturnValueOnce(of({ sent: true, error: null, archived: true, note: null }));
     await thread.composer.send();
     expect(thread.composer.draft()).toBe('');
   });
@@ -205,7 +214,7 @@ describe('Thread', () => {
     fixture.detectChanges();
 
     // Sent, but the echo was not in irssi's log.
-    api.send.mockReturnValueOnce(of({ sent: true, error: null, archived: false }));
+    api.send.mockReturnValueOnce(of({ sent: true, error: null, archived: false, note: null }));
     thread.composer.draft.set('gone, but not seen');
     await thread.composer.send();
     expect(thread.composer.draft()).toBe('');
@@ -215,7 +224,7 @@ describe('Thread', () => {
     ref.setInput('origin', 'telegram');
     ref.setInput('id', '4242');
     fixture.detectChanges();
-    api.send.mockReturnValueOnce(of({ sent: true, error: null, archived: false }));
+    api.send.mockReturnValueOnce(of({ sent: true, error: null, archived: false, note: null }));
     thread.composer.draft.set('gone, but not stored');
     await thread.composer.send();
     expect(thread.composer.error()).toBe('Sent, but not archived yet.');
@@ -858,14 +867,14 @@ describe('Thread composer — drafts, lines and what a send does', () => {
     const api = fakeApiOf();
     open(ref, fixture, 'irc', '7');
     api.send.mockImplementation((_o: string, _i: string, text: string) =>
-      of(text === 'two' ? { sent: false, error: 'refused: flood', archived: false } : { sent: true, error: null, archived: true }),
+      of(text === 'two' ? { sent: false, error: 'refused: flood', archived: false, note: null } : { sent: true, error: null, archived: true, note: null }),
     );
     thread.composer.draft.set('one\ntwo\n\nthree');
     await thread.composer.send();
     expect(api.send.mock.calls.map((c) => String(c[2]))).toEqual(['one', 'two']);
     expect(thread.composer.draft()).toBe('two\nthree');
     expect(thread.composer.error()).toContain('flood');
-    api.send.mockImplementation(() => of({ sent: true, error: null, archived: true }));
+    api.send.mockImplementation(() => of({ sent: true, error: null, archived: true, note: null }));
     await thread.composer.send();
     expect(api.send.mock.calls.slice(2).map((c) => String(c[2]))).toEqual(['two', 'three']);
     expect(thread.composer.draft()).toBe('');
@@ -1729,15 +1738,16 @@ describe('Thread — answering a message', () => {
     fixture.detectChanges();
   }
 
-  async function opened(origin: 'telegram' | 'irc'): Promise<{ fixture: ComponentFixture<Thread>; api: FakeApi }> {
+  /** The conversation each origin is opened on. */
+  const at = { telegram: '4242', signal: 'dm:tessa', irc: '7' } as const;
+
+  async function opened(origin: keyof typeof at): Promise<{ fixture: ComponentFixture<Thread>; api: FakeApi }> {
     const { thread, ref, fixture } = setup();
     const api = fakeApiOf();
-    TestBed.inject(MessagesStore).list.set({
-      state: 'loaded',
-      conversations: [
-        { origin: 'telegram', id: '4242', name: 'Tessa', kind: 'dm', network: null, message_count: 2, last_ts: 2, last: null, unread: 0, avatar: null },
-      ],
+    const dm = (o: 'telegram' | 'signal'): Conversation => ({
+      origin: o, id: at[o], name: 'Tessa', kind: 'dm', network: null, message_count: 2, last_ts: 2, last: null, unread: 0, avatar: null,
     });
+    TestBed.inject(MessagesStore).list.set({ state: 'loaded', conversations: [dm('telegram'), dm('signal')] });
     api.messages.mockReturnValue(
       page([
         { ...msg('10', 1000), sender: 'Tessa', body: 'shall we?' },
@@ -1745,7 +1755,7 @@ describe('Thread — answering a message', () => {
       ]),
     );
     ref.setInput('origin', origin);
-    ref.setInput('id', origin === 'telegram' ? '4242' : '7');
+    ref.setInput('id', at[origin]);
     fixture.detectChanges();
     await settle(thread);
     fixture.detectChanges();
@@ -1765,6 +1775,28 @@ describe('Thread — answering a message', () => {
     fixture.detectChanges();
     expect(api.send).toHaveBeenCalledWith('telegram', '4242', 'yes', '10');
     expect(el.querySelector('.replying')).toBeNull();
+  });
+
+  it('on Signal, sends a reply to that message too', async () => {
+    const { fixture, api } = await opened('signal');
+    const thread = fixture.componentInstance;
+    swipeRight(fixture, '10');
+    expect((fixture.nativeElement as HTMLElement).querySelector('.replying .said')?.textContent).toBe('shall we?');
+    thread.composer.draft.set('yes');
+    await thread.composer.send();
+    expect(api.send).toHaveBeenCalledWith('signal', 'dm:tessa', 'yes', '10');
+  });
+
+  it('says what a send that went still has to say, such as who it missed', async () => {
+    const { fixture, api } = await opened('signal');
+    const thread = fixture.componentInstance;
+    api.send.mockReturnValueOnce(
+      of({ sent: true, error: null, archived: true, note: 'not delivered to +3100 (IDENTITY_FAILURE)' }),
+    );
+    thread.composer.draft.set('hello all');
+    await thread.composer.send();
+    expect(thread.composer.draft()).toBe('');
+    expect(thread.composer.error()).toBe('not delivered to +3100 (IDENTITY_FAILURE)');
   });
 
   it('on IRC, addresses the draft to the sender, once', async () => {
@@ -1794,5 +1826,28 @@ describe('Thread — answering a message', () => {
     const { fixture } = await opened('telegram');
     swipeRight(fixture, '11');
     expect((fixture.nativeElement as HTMLElement).querySelector('.replying')).toBeNull();
+  });
+});
+
+describe('Thread — a Signal message sent from this app', () => {
+  it('says so, and only on that message', async () => {
+    const { thread, ref, fixture } = setup();
+    const api = fakeApiOf();
+    api.messages.mockReturnValue(
+      page([
+        { ...msg('1', 1000), is_outgoing: true, body: 'from the phone' },
+        { ...msg('2', 2000), is_outgoing: true, body: 'from the app', sent_here: true },
+      ]),
+    );
+    ref.setInput('origin', 'signal');
+    ref.setInput('id', 'dm:a');
+    fixture.detectChanges();
+    await settle(thread);
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    const tags = (id: string) =>
+      [...el.querySelectorAll(`.msg[data-id="${id}"] .meta .tag`)].map((t) => t.textContent?.trim());
+    expect(tags('1')).not.toContain('sent here');
+    expect(tags('2')).toContain('sent here');
   });
 });

@@ -11,6 +11,6 @@ export type SendRequest = {
 text: string, 
 /**
  * The message this answers, by its `Message.id`, in the same conversation.
- * Telegram only: IRC has no replies.
+ * Telegram and Signal: IRC has no replies.
  */
 reply_to?: string, };

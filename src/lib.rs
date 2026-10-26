@@ -1,8 +1,8 @@
 //! messages — the viewer's backend, over the Signal, Google Chat, IRC and
 //! Telegram archive in the `signal` MariaDB.
 //!
-//! ⚠ It can send on IRC and Telegram, as the user, to other people;
-//! [`irc_send`] and [`telegram_send`] say what bounds that.
+//! ⚠ It can send on IRC, Telegram and Signal, as the user, to other people;
+//! [`irc_send`], [`telegram_send`] and [`signal_send`] say what bounds that.
 
 pub mod archive;
 pub mod avatars;
@@ -13,9 +13,11 @@ pub mod irc_send;
 pub mod link_fetch;
 pub mod link_image;
 pub mod nextcloud;
+pub mod outbox;
 pub mod pending_login;
 pub mod routes;
 pub mod session;
+pub mod signal_send;
 pub mod state;
 pub mod telegram_send;
 pub mod transcribe;

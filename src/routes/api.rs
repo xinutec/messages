@@ -15,6 +15,7 @@ use crate::archive;
 use crate::avatars;
 use crate::error::AppError;
 use crate::link_fetch;
+use crate::outbox::{Outbox, Outcome};
 use crate::session::AuthUser;
 use crate::state::AppState;
 
@@ -382,33 +383,38 @@ pub struct SendRequest {
     /// a request cannot address anyone the archive has not seen.
     pub text: String,
     /// The message this answers, by its `Message.id`, in the same conversation.
-    /// Telegram only: IRC has no replies.
+    /// Telegram and Signal: IRC has no replies.
     #[serde(default)]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub reply_to: Option<String>,
 }
 
-/// What happened, in the words of the irssi or Telegram feed that did it.
+/// What happened, in the words of irssi, the Telegram feed or the Signal
+/// ingester.
 #[derive(Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct SendResult {
-    /// True only when the message went: irssi put it on the wire, or Telegram
-    /// took it.
+    /// True only when the message went: irssi put it on the wire, or Telegram or
+    /// Signal took it.
     pub sent: bool,
     /// Why not, or why the outcome is not known yet.
     pub error: Option<String>,
     /// Whether the message is already archived, visible without waiting for the
     /// import. A send can succeed with this false.
     pub archived: bool,
+    /// What the reader should still know about a send that went, such as the
+    /// members of a Signal group it did not reach.
+    pub note: Option<String>,
 }
 
 impl SendResult {
-    fn sent(archived: bool) -> Self {
+    fn sent(archived: bool, note: Option<String>) -> Self {
         SendResult {
             sent: true,
             error: None,
             archived,
+            note,
         }
     }
 
@@ -417,33 +423,35 @@ impl SendResult {
             sent: false,
             error: Some(why.into()),
             archived: false,
+            note: None,
         }
     }
 }
 
-/// POST /api/conversations/{irc,telegram}/{id}/send → say something.
+/// POST /api/conversations/{irc,telegram,signal}/{id}/send → say something.
 ///
 /// The app's one outward write. Bounded by the allow-listed session; the
-/// recipient is always a conversation the archive holds.
+/// recipient is always a conversation the archive holds. A Signal send is
+/// archived from Signal's receipt, as the linked device never receives its own
+/// (`signal_send`); Google Chat is an import and has no sender.
 pub async fn send(
     State(app): State<AppState>,
     AuthUser(_user): AuthUser,
     Path((origin, id)): Path<(String, String)>,
     Json(req): Json<SendRequest>,
 ) -> Result<Json<SendResult>, AppError> {
-    // Signal is read-only by decision: an IRC or Telegram message is confirmed
-    // by irssi's log or by Telegram, while a Signal echo would be the only
-    // evidence the message existed.
     match archive::Origin::parse(&origin) {
         Some(archive::Origin::Irc) => send_irc(&app, &id, &req).await,
-        Some(archive::Origin::Telegram) => send_telegram(&app, &id, &req).await,
+        Some(archive::Origin::Telegram) => send_queued(&app, Outbox::Telegram, &id, &req).await,
+        Some(archive::Origin::Signal) => send_queued(&app, Outbox::Signal, &id, &req).await,
         _ => Err(AppError::NotFound),
     }
 }
 
-/// Through the feed that holds the session.
-async fn send_telegram(
+/// Queued for the process that holds the account, and waited for.
+async fn send_queued(
     app: &AppState,
+    outbox: Outbox,
     id: &str,
     req: &SendRequest,
 ) -> Result<Json<SendResult>, AppError> {
@@ -452,19 +460,27 @@ async fn send_telegram(
         Some(Ok(row)) => Some(row),
         Some(Err(_)) => return Err(AppError::BadRequest("reply_to is not a message id".into())),
     };
-    let Some(row) = crate::telegram_send::queue(&app.pool, id, &req.text, reply_to).await? else {
+    let queued = match outbox {
+        Outbox::Telegram => crate::telegram_send::queue(&app.pool, id, &req.text, reply_to).await?,
+        Outbox::Signal => crate::signal_send::queue(&app.pool, id, &req.text, reply_to).await?,
+    };
+    let Some(row) = queued else {
         return Err(AppError::NotFound);
     };
-    let outcome = crate::telegram_send::wait(&app.pool, row).await?;
+    let outcome = crate::outbox::wait(&app.pool, outbox, row).await?;
     // Logged by conversation and row, never the message.
-    tracing::info!("telegram send {row} to {id}: {outcome:?}");
-    use crate::telegram_send::Outcome;
+    tracing::info!("{outbox:?} send {row} to {id}: {outcome:?}");
     Ok(Json(match outcome {
-        Outcome::Sent { archived } => SendResult::sent(archived),
+        Outcome::Sent { archived, note } => SendResult::sent(archived, note),
         Outcome::Refused(why) => SendResult::not_sent(why),
-        Outcome::Unanswered => SendResult::not_sent(
-            "Telegram has not answered yet: it may still go. Check before sending again.",
-        ),
+        Outcome::Unanswered => SendResult::not_sent(match outbox {
+            Outbox::Telegram => {
+                "Telegram has not answered yet: it may still go. Check before sending again."
+            }
+            Outbox::Signal => {
+                "Signal has not answered yet: it may still go. Check before sending again."
+            }
+        }),
     }))
 }
 
@@ -525,7 +541,7 @@ async fn send_irc(
                     "echo not archived, waits for the next import"
                 }
             );
-            Ok(Json(SendResult::sent(archived)))
+            Ok(Json(SendResult::sent(archived, None)))
         }
     }
 }

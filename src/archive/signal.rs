@@ -140,7 +140,7 @@ pub(super) async fn page(
             r"SELECT m.id AS id, m.server_ts AS ts,
                  COALESCE(ct.display_name, m.sender_uuid) AS sender, m.sender_uuid AS sender_key,
                  m.is_outgoing AS is_outgoing, m.body AS body,
-                 m.deleted AS deleted, m.edited AS edited,
+                 m.deleted AS deleted, m.edited AS edited, m.sent_here AS sent_here,
                  m.quote_target_ts AS quote_target_ts, m.quote_text AS quote_text,
                  COALESCE(qa.display_name, m.quote_author_uuid) AS quote_author,
                  m.group_call_era AS group_call_era
@@ -161,7 +161,7 @@ pub(super) async fn page(
             r"SELECT m.id AS id, m.server_ts AS ts,
                  COALESCE(ct.display_name, m.sender_uuid) AS sender, m.sender_uuid AS sender_key,
                  m.is_outgoing AS is_outgoing, m.body AS body,
-                 m.deleted AS deleted, m.edited AS edited,
+                 m.deleted AS deleted, m.edited AS edited, m.sent_here AS sent_here,
                  m.quote_target_ts AS quote_target_ts, m.quote_text AS quote_text,
                  COALESCE(qa.display_name, m.quote_author_uuid) AS quote_author,
                  m.group_call_era AS group_call_era
@@ -182,7 +182,7 @@ pub(super) async fn page(
             r"SELECT m.id AS id, m.server_ts AS ts,
                  COALESCE(ct.display_name, m.sender_uuid) AS sender, m.sender_uuid AS sender_key,
                  m.is_outgoing AS is_outgoing, m.body AS body,
-                 m.deleted AS deleted, m.edited AS edited,
+                 m.deleted AS deleted, m.edited AS edited, m.sent_here AS sent_here,
                  m.quote_target_ts AS quote_target_ts, m.quote_text AS quote_text,
                  COALESCE(qa.display_name, m.quote_author_uuid) AS quote_author,
                  m.group_call_era AS group_call_era
@@ -230,6 +230,7 @@ pub(super) async fn page(
         msgs.push(Message {
             deleted: r.try_get("deleted")?,
             edited: r.try_get("edited")?,
+            sent_here: r.try_get("sent_here")?,
             kind: if call {
                 MessageKind::Action
             } else {

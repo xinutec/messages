@@ -463,6 +463,9 @@ pub struct Message {
     pub body: Option<String>,
     pub deleted: bool,
     pub edited: bool,
+    /// Sent from this app, and archived from Signal's receipt rather than read
+    /// back; Signal only (archiver migration v65).
+    pub sent_here: bool,
     pub reactions: Vec<Reaction>,
     pub attachments: Vec<Attachment>,
     /// Pictures we hold for links in `body`.
@@ -507,6 +510,7 @@ impl Message {
             body,
             deleted: false,
             edited: false,
+            sent_here: false,
             reactions: Vec::new(),
             attachments: Vec::new(),
             link_images: Vec::new(),

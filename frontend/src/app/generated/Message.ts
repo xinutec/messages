@@ -24,7 +24,12 @@ sender_key: string, is_outgoing: boolean,
 /**
  * Said or done. `action` only on IRC and for Telegram service events.
  */
-kind: MessageKind, body: string | null, deleted: boolean, edited: boolean, reactions: Array<Reaction>, attachments: Array<Attachment>, 
+kind: MessageKind, body: string | null, deleted: boolean, edited: boolean, 
+/**
+ * Sent from this app, and archived from Signal's receipt rather than read
+ * back; Signal only (archiver migration v65).
+ */
+sent_here: boolean, reactions: Array<Reaction>, attachments: Array<Attachment>, 
 /**
  * Pictures we hold for links in `body`.
  */

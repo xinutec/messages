@@ -3509,6 +3509,153 @@ async fn a_telegram_reply_answers_a_message_in_the_same_conversation() {
     );
 }
 
+/// A Signal send is queued only for a thread the archive holds; a reply names
+/// the answered message by its Signal timestamp, and only within the thread.
+#[tokio::test]
+async fn a_signal_send_is_queued_for_a_held_thread_and_replies_within_it() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    use messages::signal_send::queue;
+    let first_in = async |thread: &str| -> (i64, i64) {
+        sqlx::query_as("SELECT id, server_ts FROM messages WHERE thread_id = ? ORDER BY id LIMIT 1")
+            .bind(thread)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    assert!(
+        queue(&pool, "dm:alice", "hi", None)
+            .await
+            .unwrap()
+            .is_some(),
+        "the DM"
+    );
+    assert!(
+        queue(&pool, "group:g1", "hi", None)
+            .await
+            .unwrap()
+            .is_some(),
+        "the group"
+    );
+    assert!(
+        queue(&pool, "dm:nobody", "hi", None)
+            .await
+            .unwrap()
+            .is_none(),
+        "unseen"
+    );
+
+    let (row, ts) = first_in("dm:alice").await;
+    let queued = queue(&pool, "dm:alice", "yes", Some(row))
+        .await
+        .unwrap()
+        .unwrap();
+    let quote_ts: Option<i64> =
+        sqlx::query_scalar("SELECT quote_ts FROM signal_outbox WHERE id = ?")
+            .bind(queued)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(quote_ts, Some(ts), "Signal's timestamp, not the row");
+
+    let (elsewhere, _) = first_in("group:g1").await;
+    assert!(
+        queue(&pool, "dm:alice", "yes", Some(elsewhere))
+            .await
+            .unwrap()
+            .is_none(),
+        "a message in another thread"
+    );
+}
+
+/// The ingester's answer reaches the reader: who a group send missed, and
+/// whether its row was written.
+#[tokio::test]
+async fn a_signal_send_reports_the_ingesters_answer() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    use messages::outbox::{Outbox, Outcome, wait_for};
+    use messages::signal_send::queue;
+    let patience = std::time::Duration::from_millis(600);
+    let answer = async |row: i64, archived: bool, note: Option<&str>| {
+        sqlx::query("UPDATE signal_outbox SET state = 'sent', archived = ?, note = ? WHERE id = ?")
+            .bind(archived)
+            .bind(note)
+            .bind(row)
+            .execute(&pool)
+            .await
+            .unwrap();
+    };
+
+    let row = queue(&pool, "group:g1", "hi", None).await.unwrap().unwrap();
+    answer(row, true, Some("not delivered to +3100 (IDENTITY_FAILURE)")).await;
+    assert_eq!(
+        wait_for(&pool, Outbox::Signal, row, patience)
+            .await
+            .unwrap(),
+        Outcome::Sent {
+            archived: true,
+            note: Some("not delivered to +3100 (IDENTITY_FAILURE)".to_owned())
+        }
+    );
+
+    let row = queue(&pool, "dm:alice", "hi", None).await.unwrap().unwrap();
+    answer(row, false, None).await;
+    assert_eq!(
+        wait_for(&pool, Outbox::Signal, row, patience)
+            .await
+            .unwrap(),
+        Outcome::Sent {
+            archived: false,
+            note: None
+        }
+    );
+
+    // Never reached: withdrawn, and said so in Signal's words.
+    let row = queue(&pool, "dm:alice", "hi", None).await.unwrap().unwrap();
+    assert_eq!(
+        wait_for(&pool, Outbox::Signal, row, patience)
+            .await
+            .unwrap(),
+        Outcome::Refused("The Signal ingester did not answer; not sent.".to_owned())
+    );
+}
+
+/// A Signal message this app sent says so on the page; one from the phone does
+/// not.
+#[tokio::test]
+async fn a_signal_message_sent_here_says_so() {
+    let Some(pool) = seeded_pool().await else {
+        return;
+    };
+    let thread = "dm:sent-here";
+    sqlx::query("INSERT INTO conversations (thread_id, type, name) VALUES (?, 'dm', 'Here')")
+        .bind(thread)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO messages (thread_id, sender_uuid, server_ts, body, is_outgoing, sent_here)
+         VALUES (?, 'me', 41000, 'from the phone', 1, 0), (?, 'me', 42000, 'from the app', 1, 1)",
+    )
+    .bind(thread)
+    .bind(thread)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let page = archive::messages_page(&pool, Origin::Signal, thread, None, 10, PageDir::Older)
+        .await
+        .unwrap();
+    let marks: Vec<_> = page
+        .messages
+        .iter()
+        .map(|m| (m.body.as_deref().unwrap_or(""), m.sent_here))
+        .collect();
+    assert_eq!(marks, [("from the phone", false), ("from the app", true)]);
+}
+
 /// The viewer reports what the feed answered; a send the feed never reached is
 /// withdrawn, so it cannot go after the reader was told it did not; and one the
 /// feed took but has not answered is reported as unknown, not as unsent.
@@ -3517,7 +3664,8 @@ async fn a_telegram_send_reports_the_feeds_answer() {
     let Some(pool) = seeded_pool().await else {
         return;
     };
-    use messages::telegram_send::{Outcome, queue, wait_for};
+    use messages::outbox::{Outbox, Outcome, wait_for};
+    use messages::telegram_send::queue;
     let patience = std::time::Duration::from_millis(600);
     async fn answer(pool: &MySqlPool, row: i64, state: &str, note: Option<&str>) {
         sqlx::query("UPDATE telegram_outbox SET state = ?, note = ? WHERE id = ?")
@@ -3532,21 +3680,33 @@ async fn a_telegram_send_reports_the_feeds_answer() {
     let row = queue(&pool, "4242", "hi", None).await.unwrap().unwrap();
     answer(&pool, row, "sent", None).await;
     assert_eq!(
-        wait_for(&pool, row, patience).await.unwrap(),
-        Outcome::Sent { archived: true }
+        wait_for(&pool, Outbox::Telegram, row, patience)
+            .await
+            .unwrap(),
+        Outcome::Sent {
+            archived: true,
+            note: None
+        }
     );
 
     let row = queue(&pool, "4242", "hi", None).await.unwrap().unwrap();
     answer(&pool, row, "sent", Some("sent, but not stored")).await;
     assert_eq!(
-        wait_for(&pool, row, patience).await.unwrap(),
-        Outcome::Sent { archived: false }
+        wait_for(&pool, Outbox::Telegram, row, patience)
+            .await
+            .unwrap(),
+        Outcome::Sent {
+            archived: false,
+            note: None
+        }
     );
 
     let row = queue(&pool, "4242", "hi", None).await.unwrap().unwrap();
     answer(&pool, row, "failed", Some("telegram refused it")).await;
     assert_eq!(
-        wait_for(&pool, row, patience).await.unwrap(),
+        wait_for(&pool, Outbox::Telegram, row, patience)
+            .await
+            .unwrap(),
         Outcome::Refused("telegram refused it".to_owned())
     );
 
@@ -3560,16 +3720,26 @@ async fn a_telegram_send_reports_the_feeds_answer() {
         })
     };
     assert_eq!(
-        wait_for(&pool, row, std::time::Duration::from_secs(5))
-            .await
-            .unwrap(),
-        Outcome::Sent { archived: true }
+        wait_for(
+            &pool,
+            Outbox::Telegram,
+            row,
+            std::time::Duration::from_secs(5)
+        )
+        .await
+        .unwrap(),
+        Outcome::Sent {
+            archived: true,
+            note: None
+        }
     );
     later.await.unwrap();
 
     let row = queue(&pool, "4242", "hi", None).await.unwrap().unwrap();
     assert!(matches!(
-        wait_for(&pool, row, patience).await.unwrap(),
+        wait_for(&pool, Outbox::Telegram, row, patience)
+            .await
+            .unwrap(),
         Outcome::Refused(_)
     ));
     let state: String =
@@ -3583,7 +3753,9 @@ async fn a_telegram_send_reports_the_feeds_answer() {
     let row = queue(&pool, "4242", "hi", None).await.unwrap().unwrap();
     answer(&pool, row, "sending", None).await;
     assert_eq!(
-        wait_for(&pool, row, patience).await.unwrap(),
+        wait_for(&pool, Outbox::Telegram, row, patience)
+            .await
+            .unwrap(),
         Outcome::Unanswered
     );
 }

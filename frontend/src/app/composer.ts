@@ -1,5 +1,5 @@
-// Sending on IRC or Telegram: the draft, kept per conversation, the send, and
-// the answer of irssi or of the Telegram feed.
+// Sending on IRC, Telegram or Signal: the draft, kept per conversation, the
+// send, and the answer of irssi, the Telegram feed or the Signal ingester.
 
 import { type Signal, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
@@ -14,8 +14,9 @@ export class Composer {
   readonly composing = signal(false);
   readonly sending = signal(false);
   readonly error = signal<string | null>(null);
-  /** The Telegram message the next send answers. IRC has no replies: there an
-   *  answer is the draft starting with the nick, as every client writes one. */
+  /** The Telegram or Signal message the next send answers. IRC has no replies:
+   *  there an answer is the draft starting with the nick, as every client
+   *  writes one. */
   readonly replyingTo = signal<Message | null>(null);
   /** What was left mid-sentence in other conversations, by `origin:id`, as
    *  Signal keeps it; never sent anywhere but where it was typed. */
@@ -44,8 +45,8 @@ export class Composer {
     this.replyingTo.set(null);
   }
 
-  /** Answer `m`: on Telegram the send will quote it; on IRC the draft is
-   *  addressed to its sender, once. */
+  /** Answer `m`: on Telegram and Signal the send will quote it; on IRC the
+   *  draft is addressed to its sender, once. */
   replyTo(m: Message, origin: Origin): void {
     if (origin === 'irc') {
       const to = `${m.sender}: `;
@@ -67,6 +68,8 @@ export class Composer {
     this.sending.set(true);
     this.error.set(null);
     let archived = true;
+    // What a send that went still has to say, such as who it missed.
+    let note: string | null = null;
     try {
       while (lines.length > 0) {
         const res = await firstValueFrom(this.api.send(w.origin, w.id, lines[0], this.replyingTo()?.id));
@@ -76,6 +79,7 @@ export class Composer {
         }
         lines.shift();
         archived &&= res.archived;
+        note = res.note ?? note;
         // The answer went: what follows is a message of its own.
         this.replyingTo.set(null);
       }
@@ -87,6 +91,7 @@ export class Composer {
     // What went leaves the box; what was refused stays, to try again.
     this.draft.set(lines.join('\n'));
     if (lines.length === asked) return;
+    if (note != null && this.error() == null) this.error.set(note);
     if (archived) await this.sent();
     else if (this.error() == null) {
       this.error.set(w.origin === 'irc' ? 'Sent. It will appear here after the next import.' : 'Sent, but not archived yet.');

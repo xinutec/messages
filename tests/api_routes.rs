@@ -147,14 +147,14 @@ async fn an_unknown_origin_is_not_found() {
     );
 }
 
-/// Only IRC and Telegram can be sent to. Signal is read-only by decision (see
-/// `api::send`). These are real origins: the claim is that a known origin that
-/// cannot send is refused, and Telegram refuses an id that names no conversation.
+/// Google Chat cannot be sent to: it is an import. Telegram and Signal refuse an
+/// id that names no conversation. These are real origins: the claim is that a
+/// known origin refuses, not that the route is missing.
 #[tokio::test]
-async fn sending_is_refused_for_signal_gchat_and_no_telegram_conversation() {
+async fn sending_is_refused_for_gchat_and_for_no_conversation() {
     let Some(pool) = pool().await else { return };
     let cookie = signed_in(&pool).await;
-    for origin in ["signal", "gchat", "telegram"] {
+    for origin in ["gchat", "telegram", "signal"] {
         assert_eq!(
             go(
                 &pool,
