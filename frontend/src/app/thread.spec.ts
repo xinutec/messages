@@ -1709,3 +1709,90 @@ describe('an origin the app does not know', () => {
     expect(api.messages).not.toHaveBeenCalled();
   });
 });
+
+// ---- answering a message ----------------------------------------------------
+
+describe('Thread — answering a message', () => {
+  /** A finger on a bubble, as the host's listeners hear it. */
+  function finger(el: Element, type: string, clientX: number, clientY = 300): void {
+    const e = new MouseEvent(type, { bubbles: true, clientX, clientY });
+    Object.defineProperty(e, 'pointerType', { value: 'touch' });
+    el.dispatchEvent(e);
+  }
+
+  function swipeRight(fixture: ComponentFixture<Thread>, id: string): void {
+    const el = (fixture.nativeElement as HTMLElement).querySelector(`.msg[data-id="${id}"]`)!;
+    finger(el, 'pointerdown', 100);
+    finger(el, 'pointermove', 140);
+    finger(el, 'pointermove', 200);
+    finger(el, 'pointerup', 200);
+    fixture.detectChanges();
+  }
+
+  async function opened(origin: 'telegram' | 'irc'): Promise<{ fixture: ComponentFixture<Thread>; api: FakeApi }> {
+    const { thread, ref, fixture } = setup();
+    const api = fakeApiOf();
+    TestBed.inject(MessagesStore).list.set({
+      state: 'loaded',
+      conversations: [
+        { origin: 'telegram', id: '4242', name: 'Tessa', kind: 'dm', network: null, message_count: 2, last_ts: 2, last: null, unread: 0, avatar: null },
+      ],
+    });
+    api.messages.mockReturnValue(
+      page([
+        { ...msg('10', 1000), sender: 'Tessa', body: 'shall we?' },
+        { ...msg('11', 2000), sender: 'Tessa', kind: 'action', body: 'changed the photo' },
+      ]),
+    );
+    ref.setInput('origin', origin);
+    ref.setInput('id', origin === 'telegram' ? '4242' : '7');
+    fixture.detectChanges();
+    await settle(thread);
+    fixture.detectChanges();
+    return { fixture, api };
+  }
+
+  it('on Telegram, shows what the answer quotes, and sends it as a reply to that message', async () => {
+    const { fixture, api } = await opened('telegram');
+    const thread = fixture.componentInstance;
+    swipeRight(fixture, '10');
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('.replying .who')?.textContent).toBe('Tessa');
+    expect(el.querySelector('.replying .said')?.textContent).toBe('shall we?');
+
+    thread.composer.draft.set('yes');
+    await thread.composer.send();
+    fixture.detectChanges();
+    expect(api.send).toHaveBeenCalledWith('telegram', '4242', 'yes', '10');
+    expect(el.querySelector('.replying')).toBeNull();
+  });
+
+  it('on IRC, addresses the draft to the sender, once', async () => {
+    const { fixture } = await opened('irc');
+    const thread = fixture.componentInstance;
+    thread.composer.draft.set('hm');
+    swipeRight(fixture, '10');
+    swipeRight(fixture, '10');
+    expect(thread.composer.draft()).toBe('Tessa: hm');
+    expect((fixture.nativeElement as HTMLElement).querySelector('.replying')).toBeNull();
+  });
+
+  it('can be called off before sending', async () => {
+    const { fixture, api } = await opened('telegram');
+    const thread = fixture.componentInstance;
+    swipeRight(fixture, '10');
+    const el = fixture.nativeElement as HTMLElement;
+    el.querySelector<HTMLButtonElement>('.replying button')!.click();
+    fixture.detectChanges();
+    expect(el.querySelector('.replying')).toBeNull();
+    thread.composer.draft.set('just this');
+    await thread.composer.send();
+    expect(api.send).toHaveBeenCalledWith('telegram', '4242', 'just this', undefined);
+  });
+
+  it('does not answer a Telegram service event', async () => {
+    const { fixture } = await opened('telegram');
+    swipeRight(fixture, '11');
+    expect((fixture.nativeElement as HTMLElement).querySelector('.replying')).toBeNull();
+  });
+});

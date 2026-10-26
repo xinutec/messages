@@ -1,64 +1,68 @@
 // What a bubble carries: its words and their formatting, the message it
 // replied to, its tags and earlier versions, a retraction's reveal, and
 // reactions. Apart from thread.scss to keep each stylesheet in budget.
-.msg {
-  // What a message replied to, as a quiet one-line quote above it. The rule is
-  // on the left in both directions.
-  .reply-quote {
-    display: flex;
-    gap: 0.4rem;
-    align-items: baseline;
-    width: 100%;
-    margin-bottom: 0.25rem;
-    padding: 0.1rem 0 0.1rem 0.4rem;
-    border: 0;
-    border-left: 2px solid color-mix(in srgb, var(--mat-sys-on-surface) 35%, transparent);
-    background: none;
-    color: inherit;
-    font: var(--mat-sys-label-small);
-    text-align: left;
-    opacity: 0.75;
-    overflow: hidden;
 
-    // `min-width: 0`: a flex item's minimum is its min-content width, and the
-    // nowrap children would push the bubble off the screen. The nowrap is on the
-    // children, which opt out of the minimum in turn.
+// What a message replied to, as a quiet one-line quote above it, and what an
+// answer being written will quote. The rule is on the left in both directions.
+:is(.msg, .replying) .reply-quote {
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
+  width: 100%;
+  margin-bottom: 0.25rem;
+  padding: 0.1rem 0 0.1rem 0.4rem;
+  border: 0;
+  border-left: 2px solid color-mix(in srgb, var(--mat-sys-on-surface) 35%, transparent);
+  background: none;
+  color: inherit;
+  font: var(--mat-sys-label-small);
+  text-align: left;
+  opacity: 0.75;
+  overflow: hidden;
+
+  // `min-width: 0`: a flex item's minimum is its min-content width, and the
+  // nowrap children would push the bubble off the screen. The nowrap is on the
+  // children, which opt out of the minimum in turn.
+  min-width: 0;
+
+  %clipped-line {
     min-width: 0;
-
-    %clipped-line {
-      min-width: 0;
-      overflow: hidden;
-      white-space: nowrap;
-      text-overflow: ellipsis;
-    }
-    // Neither half grows, so a short quote does not spread across the bubble.
-    // The name does not shrink either: it identifies the message, so the excerpt
-    // absorbs the squeeze and `max-width` caps an absurd name.
-    .who {
-      @extend %clipped-line;
-      flex: 0 0 auto;
-      max-width: 40%;
-      font-weight: 700;
-    }
-    .said {
-      @extend %clipped-line;
-      flex: 0 1 auto;
-      &.absent {
-        font-style: italic;
-        opacity: 0.8;
-      }
-    }
-
-    // Clickable only when the archive holds the target.
-    &:not(.missing) {
-      cursor: pointer;
-      &:hover,
-      &:focus-visible {
-        opacity: 1;
-        border-left-color: var(--mat-sys-primary);
-      }
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  // Neither half grows, so a short quote does not spread across the bubble.
+  // The name does not shrink either: it identifies the message, so the excerpt
+  // absorbs the squeeze and `max-width` caps an absurd name.
+  .who {
+    @extend %clipped-line;
+    flex: 0 0 auto;
+    max-width: 40%;
+    font-weight: 700;
+  }
+  .said {
+    @extend %clipped-line;
+    flex: 0 1 auto;
+    &.absent {
+      font-style: italic;
+      opacity: 0.8;
     }
   }
+
+  // Clickable only when the archive holds the target: then it is a button.
+  &:is(button) {
+    cursor: pointer;
+    &:hover,
+    &:focus-visible {
+      opacity: 1;
+      border-left-color: var(--mat-sys-primary);
+    }
+  }
+}
+.msg {
+  // A sideways drag is the reply swipe's (reply-swipe.ts); scrolling and zooming
+  // stay the browser's.
+  touch-action: pan-y pinch-zoom;
   // A button inside the line of text, as a link would be: `edited` with a
   // history behind it, a deletion to reveal or hide again. Real buttons, so they
   // work from the keyboard; Material's are too big for a line of text. The
@@ -192,5 +196,21 @@
     &:not(:hover):not(:focus) {
       color: transparent;
     }
+  }
+}
+
+// The message an answer will quote, over the composer, with a way out.
+.replying {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 1.5rem 0;
+  @media (max-width: 767px) {
+    padding-inline: 0.9rem;
+  }
+  .reply-quote {
+    flex: 1;
+    margin: 0;
   }
 }

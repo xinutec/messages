@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { Conversation, LinkImageState, Me, MessagesPage, Origin, SearchHit, SendResult, MediaState } from './models';
+import { Conversation, LinkImageState, Me, MessagesPage, Origin, SearchHit, SendRequest, SendResult, MediaState } from './models';
 
 /** Client for the messages backend: same-origin in prod, via proxy.conf.json in
  *  `ng serve`. */
@@ -79,8 +79,10 @@ export class MessagesApi {
   /** Say something on IRC or Telegram. The recipient comes from the
    *  conversation, server-side. A refusal resolves with `sent: false`; only a
    *  transport failure errors. */
-  send(origin: Origin, id: string, text: string): Observable<SendResult> {
-    return this.http.post<SendResult>(`${conversationUrl(origin, id)}/send`, { text });
+  /** `replyTo` is the `Message.id` this answers; Telegram only. */
+  send(origin: Origin, id: string, text: string, replyTo?: string): Observable<SendResult> {
+    const body: SendRequest = replyTo == null ? { text } : { text, reply_to: replyTo };
+    return this.http.post<SendResult>(`${conversationUrl(origin, id)}/send`, body);
   }
 
   /** Search everywhere, or inside one conversation: `origin` and `id` together

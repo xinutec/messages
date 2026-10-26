@@ -5,7 +5,7 @@ import { type Signal, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 
 import { MessagesApi } from './messages-api';
-import { Origin } from './models';
+import { Message, Origin } from './models';
 
 export class Composer {
   readonly draft = signal('');
@@ -14,6 +14,9 @@ export class Composer {
   readonly composing = signal(false);
   readonly sending = signal(false);
   readonly error = signal<string | null>(null);
+  /** The Telegram message the next send answers. IRC has no replies: there an
+   *  answer is the draft starting with the nick, as every client writes one. */
+  readonly replyingTo = signal<Message | null>(null);
   /** What was left mid-sentence in other conversations, by `origin:id`, as
    *  Signal keeps it; never sent anywhere but where it was typed. */
   private readonly drafts = new Map<string, string>();
@@ -38,6 +41,18 @@ export class Composer {
     this.key = key;
     this.draft.set(key == null ? '' : (this.drafts.get(key) ?? ''));
     this.error.set(null);
+    this.replyingTo.set(null);
+  }
+
+  /** Answer `m`: on Telegram the send will quote it; on IRC the draft is
+   *  addressed to its sender, once. */
+  replyTo(m: Message, origin: Origin): void {
+    if (origin === 'irc') {
+      const to = `${m.sender}: `;
+      if (!this.draft().startsWith(to)) this.draft.set(to + this.draft());
+    } else {
+      this.replyingTo.set(m);
+    }
   }
 
   async send(): Promise<void> {
@@ -54,13 +69,15 @@ export class Composer {
     let archived = true;
     try {
       while (lines.length > 0) {
-        const res = await firstValueFrom(this.api.send(w.origin, w.id, lines[0]));
+        const res = await firstValueFrom(this.api.send(w.origin, w.id, lines[0], this.replyingTo()?.id));
         if (!res.sent) {
           this.error.set(res.error ?? 'Not sent.');
           break;
         }
         lines.shift();
         archived &&= res.archived;
+        // The answer went: what follows is a message of its own.
+        this.replyingTo.set(null);
       }
     } catch {
       this.error.set('Could not reach the server.');

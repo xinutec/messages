@@ -18,6 +18,7 @@ import { firstValueFrom } from 'rxjs';
 import { attachmentName, attachmentNoun, isAudio, isImage, isVideo } from './attachment';
 import { Avatar } from './avatar';
 import { FetchRequests } from './fetch-requests';
+import { ReplySwipe } from './reply-swipe';
 import { segments } from './formatting';
 import { hue, isOrigin } from './list-row';
 import { clipboardOf, writeClipboard } from './copy-log';
@@ -73,6 +74,11 @@ const SCROLL_KEYS = new Set(['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'Ar
     '(contextmenu)': 'picking.press($event)',
     '(click)': 'picking.tap($event)',
     '(document:keydown.escape)': 'picking.clear()',
+    // Swiping a bubble right answers it; see `swipe`.
+    '(pointerdown)': 'swipe.down($event)',
+    '(pointermove)': 'swipe.move($event)',
+    '(pointerup)': 'swipe.up($event)',
+    '(pointercancel)': 'swipe.end()',
   },
   imports: [
     NgTemplateOutlet,
@@ -673,6 +679,29 @@ export class Thread {
     return this.origin() === 'telegram' && (kind === 'dm' || kind === 'group');
   });
   readonly composer = new Composer(this.api, this.where, () => this.afterSend());
+  private readonly draftEl = viewChild<ElementRef<HTMLTextAreaElement>>('draft');
+
+  /** Swiping a bubble right answers it, where this conversation can send. */
+  protected readonly swipe = new ReplySwipe(
+    (id) => this.replyable(this.messages().find((m) => m.id === id)),
+    (id) => this.answer(id),
+  );
+
+  /** Speech still there, in a conversation this app can send to. A Telegram
+   *  service event is no message to answer; an IRC action is. */
+  private replyable(m: Message | undefined): boolean {
+    if (m == null || m.deleted || !this.canSend()) return false;
+    return this.origin() === 'irc' || m.kind === 'message';
+  }
+
+  /** Start an answer to `id`, and put the keyboard up for it. */
+  private answer(id: string): void {
+    const m = this.messages().find((x) => x.id === id);
+    const origin = this.origin();
+    if (origin == null || !this.replyable(m) || m == null) return;
+    this.composer.replyTo(m, origin);
+    this.draftEl()?.nativeElement.focus();
+  }
 
   /** Show what was just sent: the newest page merged in and the view at the
    *  end, with no reload; a window floating in the past is reloaded into the

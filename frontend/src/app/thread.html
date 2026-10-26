@@ -106,7 +106,7 @@
             <!-- An album is one set: its members share a grid and one meta line. -->
             <div class="run" [class.album]="run.length > 1" [class.out]="run[0].is_outgoing">
               @for (m of run; track m.id) {
-                <div class="msg" [class.out]="m.is_outgoing" [class.first]="startsRun().has(m.id)" [class.plain]="isPlain(m)" [class.landed]="landedId() === m.id" [class.picked]="picking.ids().has(m.id)" [attr.data-id]="m.id" [attr.data-ts]="m.ts">
+                <div class="msg" [class.out]="m.is_outgoing" [class.first]="startsRun().has(m.id)" [class.plain]="isPlain(m)" [class.landed]="landedId() === m.id" [class.picked]="picking.ids().has(m.id)" [attr.data-id]="m.id" [attr.data-ts]="m.ts" [style.translate]="swipe.shift(m.id)">
                   <!-- Who speaks, once per run, and only where the bar does not already say. -->
                   @if (!m.is_outgoing && namesSenders() && startsRun().has(m.id)) {
                     <!-- Coloured by who it is, not what they are called: see `senderHue`. -->
@@ -126,12 +126,12 @@
                       </button>
                     } @else if (r.excerpt) {
                       <!-- Not held, but the quote carried who and what. -->
-                      <div class="reply-quote missing">
+                      <div class="reply-quote">
                         @if (r.sender) { <span class="who">{{ r.sender }}</span> }
                         <span class="said">{{ r.excerpt }}</span>
                       </div>
                     } @else {
-                      <div class="reply-quote missing">
+                      <div class="reply-quote">
                         <span class="said absent">a message this archive doesn't hold</span>
                         @if (r.ts) { <span class="who">{{ r.ts | date: 'short' }}</span> }
                       </div>
@@ -320,6 +320,18 @@
 <!-- IRC and Telegram. Outside the loading branch, so it stays put while a send reloads the
      thread. -->
 @if (routed() && canSend() && !threadError()) {
+  <!-- The message the next send answers; a swipe on a bubble starts one. -->
+  @if (composer.replyingTo(); as r) {
+    <div class="replying">
+      <div class="reply-quote">
+        <span class="who">{{ r.is_outgoing ? 'You' : r.sender }}</span>
+        <span class="said" [class.absent]="!r.body">{{ r.body || '(no text)' }}</span>
+      </div>
+      <button matIconButton type="button" (click)="composer.replyingTo.set(null)" aria-label="Cancel the reply">
+        <mat-icon>close</mat-icon>
+      </button>
+    </div>
+  }
   <form class="composer" (submit)="$event.preventDefault(); composer.send()">
     <!-- Grows with the draft, to six lines. Never disabled: a disabled box loses
          focus, and with it the phone's keyboard, on every send. -->
