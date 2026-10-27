@@ -11,7 +11,7 @@ futures = "0.3"
 # Plaintext ws:// to the in-cluster signal-cli-rest-api — no TLS feature needed.
 tokio-tungstenite = "0.29"
 serde_json = "1"
-base64 = "0.22"
+base64 = "0.23"
 # `derive`, for the irssi plugin's typed tail reply.
 serde = { version = "1", features = ["derive"] }
 # Plaintext HTTP to signal-cli-rest-api; no TLS. `stream` writes attachments
