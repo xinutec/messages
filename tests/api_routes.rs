@@ -375,6 +375,18 @@ async fn a_used_session_lasts_a_month_from_its_last_use() {
         .await
         .expect("moving the expiry");
 
+    assert!(
+        session::renew(&pool, SECRET, &signed)
+            .await
+            .expect("renewing"),
+        "a used session renews"
+    );
+    assert!(
+        !session::renew(&pool, SECRET, &signed)
+            .await
+            .expect("renewing"),
+        "at most hourly"
+    );
     let got = session::get_session(&pool, SECRET, &signed)
         .await
         .expect("reading");

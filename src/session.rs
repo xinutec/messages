@@ -95,18 +95,30 @@ pub async fn get_session(
             .await?;
         return Ok(None);
     }
-    let fresh = now + Duration::days(SESSION_TTL_DAYS);
-    if fresh - row.expires_at > Duration::hours(RENEW_INTERVAL_HOURS) {
-        sqlx::query("UPDATE sessions SET expires_at = ? WHERE id = ?")
-            .bind(fresh)
-            .bind(&id)
-            .execute(pool)
-            .await?;
-    }
     Ok(Some(UserSession {
         user_id: row.user_id,
         display_name: row.display_name,
     }))
+}
+
+/// Slide a used session's expiry to a month from now, at most hourly; `true`
+/// when it moved, so the cookie goes back with a fresh `Max-Age`.
+pub async fn renew(pool: &MySqlPool, secret: &str, signed: &str) -> Result<bool> {
+    let Some(id) = verify_value(secret, signed) else {
+        return Ok(false);
+    };
+    let now = Utc::now().naive_utc();
+    let fresh = now + Duration::days(SESSION_TTL_DAYS);
+    let moved = sqlx::query(
+        "UPDATE sessions SET expires_at = ? WHERE id = ? AND expires_at >= ? AND expires_at < ?",
+    )
+    .bind(fresh)
+    .bind(&id)
+    .bind(now)
+    .bind(fresh - Duration::hours(RENEW_INTERVAL_HOURS))
+    .execute(pool)
+    .await?;
+    Ok(moved.rows_affected() > 0)
 }
 
 /// Delete the session backing a signed cookie (logout).

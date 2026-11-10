@@ -137,5 +137,10 @@ pub fn router(state: AppState) -> Router {
         app
     };
 
-    app.with_state(state)
+    // A used session slides and its cookie goes back renewed.
+    app.layer(axum::middleware::from_fn_with_state(
+        state.clone(),
+        auth::renew_session,
+    ))
+    .with_state(state)
 }
