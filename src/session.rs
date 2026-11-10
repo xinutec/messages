@@ -18,7 +18,11 @@ use crate::state::AppState;
 type HmacSha256 = Hmac<Sha256>;
 
 /// How long a login lasts: the session row and its cookie both.
-pub const SESSION_TTL_DAYS: i64 = 7;
+/// An idle timeout, not a cap: the expiry slides on every request.
+pub const SESSION_TTL_DAYS: i64 = 30;
+
+/// The expiry is rewritten only when it would move by more than this.
+const RENEW_INTERVAL_HOURS: i64 = 1;
 pub const COOKIE_NAME: &str = "session";
 
 #[derive(Clone, Debug)]
@@ -83,12 +87,21 @@ pub async fn get_session(
             .fetch_optional(pool)
             .await?;
     let Some(row) = row else { return Ok(None) };
-    if row.expires_at < Utc::now().naive_utc() {
+    let now = Utc::now().naive_utc();
+    if row.expires_at < now {
         sqlx::query("DELETE FROM sessions WHERE id = ?")
             .bind(&id)
             .execute(pool)
             .await?;
         return Ok(None);
+    }
+    let fresh = now + Duration::days(SESSION_TTL_DAYS);
+    if fresh - row.expires_at > Duration::hours(RENEW_INTERVAL_HOURS) {
+        sqlx::query("UPDATE sessions SET expires_at = ? WHERE id = ?")
+            .bind(fresh)
+            .bind(&id)
+            .execute(pool)
+            .await?;
     }
     Ok(Some(UserSession {
         user_id: row.user_id,

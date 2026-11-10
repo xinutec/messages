@@ -360,3 +360,33 @@ async fn the_transcriber_routes_take_its_token_and_nothing_else() {
         StatusCode::BAD_REQUEST
     );
 }
+
+/// A used session slides: one a day from expiry, read, lasts a month from now.
+#[tokio::test]
+async fn a_used_session_lasts_a_month_from_its_last_use() {
+    let Some(pool) = pool().await else { return };
+    let signed = signed_in(&pool).await;
+    let id = session::verify_value(SECRET, &signed).expect("signed cookie");
+    let nearly_up = chrono::Utc::now().naive_utc() + chrono::Duration::days(1);
+    sqlx::query("UPDATE sessions SET expires_at = ? WHERE id = ?")
+        .bind(nearly_up)
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .expect("moving the expiry");
+
+    let got = session::get_session(&pool, SECRET, &signed)
+        .await
+        .expect("reading");
+    assert_eq!(got.map(|u| u.user_id).as_deref(), Some("user"));
+    let (slid,): (chrono::NaiveDateTime,) =
+        sqlx::query_as("SELECT expires_at FROM sessions WHERE id = ?")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .expect("the session row");
+    assert!(
+        slid > chrono::Utc::now().naive_utc() + chrono::Duration::days(29),
+        "used, the session must last a month from now: {slid}"
+    );
+}

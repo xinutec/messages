@@ -14,7 +14,7 @@ use serde::Deserialize;
 use crate::error::AppError;
 use crate::nextcloud::identity;
 use crate::pending_login::{self, Callback};
-use crate::session::{COOKIE_NAME, SESSION_TTL_DAYS, UserSession, create_session, destroy_session};
+use crate::session::{COOKIE_NAME, UserSession, create_session, destroy_session};
 use crate::state::AppState;
 
 /// Both cookies are `Lax`: the callback arrives as a top-level navigation from
@@ -30,7 +30,8 @@ fn cookie(name: &'static str, value: String, max_age: time::Duration) -> Cookie<
 }
 
 fn session_cookie(value: String) -> Cookie<'static> {
-    cookie(COOKIE_NAME, value, time::Duration::days(SESSION_TTL_DAYS))
+    // 400 days, the most a browser keeps: the row's expiry decides, and slides.
+    cookie(COOKIE_NAME, value, time::Duration::days(400))
 }
 
 /// Clears a cookie this module set. At `Path=/`, where both were set: without a
