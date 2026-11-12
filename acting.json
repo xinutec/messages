@@ -1,17 +1,12 @@
 {
   "ceilings": {
-    "acts": 2,
+    "acts": 1,
     "bootstrap": 2,
     "by_design": 0,
     "observer_checks": 0,
     "observes": 0
   },
   "subjects": [
-    {
-      "class": "Acts",
-      "path": "android/deploy.sh",
-      "why": "builds the APK and installs it on a phone over adb: the phone-shells plan's target (automation-model item 14)"
-    },
     {
       "class": "OutOfScope",
       "path": "archiver/tools/check_known_truths.py",

@@ -34,12 +34,9 @@ nix develop ~/Code/recall#android --command ./gradlew :app:assembleDebug
 # → app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Install onto the Pixel 9 with `deploy.sh`, which connects over the VPN or LAN,
-checks the device model, and installs by serial:
-
-```sh
-nix develop ~/Code/recall#android --command ./deploy.sh [<ip[:port]>]
-```
+The Pixel 9 gets the committed build from xinutec-infra's android plan
+(`plan-run android-pixel9 --apply`), on the phone that reports the model `Pixel 9`
+and no other.
 
 The APK is signed with the auto-generated debug key — fine for sideloading, the
 only distribution path.

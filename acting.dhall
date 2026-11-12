@@ -15,18 +15,14 @@ let Class = A.Class
 in  { ceilings =
         -- acts: each row names what it becomes (automation-model items 13-15)
         -- bootstrap: one-off imports and enrolments
-      { acts = 2
+      { acts = 1
       , bootstrap = 2
       , by_design = 0
       , observes = 0
       , observer_checks = 0
       }
     , subjects =
-      [ subject
-              "android/deploy.sh"
-              Class.Acts
-              "builds the APK and installs it on a phone over adb: the phone-shells plan's target (automation-model item 14)"
-          , subject "archiver/tools/check_known_truths.py" Class.OutOfScope ""
+      [ subject "archiver/tools/check_known_truths.py" Class.OutOfScope ""
           , subject
               "archiver/tools/import_gchat.py"
               Class.Acts
