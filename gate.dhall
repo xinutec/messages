@@ -151,4 +151,5 @@ in  { name = "messages"
       , G.checkTable "../dev-lint"
       , G.devLint "../"
       ]
+      # G.acting "../dev-lint"
     }

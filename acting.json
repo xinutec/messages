@@ -1,0 +1,46 @@
+{
+  "ceilings": {
+    "acts": 2,
+    "bootstrap": 2,
+    "by_design": 0,
+    "observer_checks": 0,
+    "observes": 0
+  },
+  "subjects": [
+    {
+      "class": "Acts",
+      "path": "android/deploy.sh",
+      "why": "builds the APK and installs it on a phone over adb: the phone-shells plan's target (automation-model item 14)"
+    },
+    {
+      "class": "OutOfScope",
+      "path": "archiver/tools/check_known_truths.py",
+      "why": ""
+    },
+    {
+      "class": "Acts",
+      "path": "archiver/tools/import_gchat.py",
+      "why": "writes the Google Chat archive into the signal database"
+    },
+    {
+      "class": "Bootstrap",
+      "path": "archiver/tools/import_jsonl.py",
+      "why": "imports one Signal export into the database, once per export"
+    },
+    {
+      "class": "Bootstrap",
+      "path": "archiver/tools/reconcile_groups.py",
+      "why": "a one-time merge of group threads keyed by masterKey"
+    },
+    {
+      "class": "OutOfScope",
+      "path": "scripts/gen-types.sh",
+      "why": ""
+    },
+    {
+      "class": "OutOfScope",
+      "path": "scripts/setup-hooks.sh",
+      "why": ""
+    }
+  ]
+}
